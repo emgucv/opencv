@@ -10,7 +10,9 @@
 
 #define NOMINMAX
 
-#ifdef _WIN32
+#if defined( WINRT )
+#include <WinSock2.h>
+#elif defined( _WIN32 )
 #include <winsock.h>      // htonl, ntohl
 #else
 #include <netinet/in.h>   // htonl, ntohl

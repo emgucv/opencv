@@ -907,6 +907,10 @@ macro(ocv_create_module)
   endif()
 
   if(WINRT AND BUILD_TESTS)
+    if(WINRT_8_1 OR WINRT_10_0)
+      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /ZW")
+    endif()
+  
     # removing APPCONTAINER from modules to run from console
     # in case of usual starting of WinRT test apps output is missing
     # so starting of console version w/o APPCONTAINER is required to get test results
@@ -1023,12 +1027,16 @@ macro(_ocv_create_module)
     DEBUG_POSTFIX "${OPENCV_DEBUG_POSTFIX}"
     COMPILE_PDB_NAME "${the_module}${OPENCV_DLLVERSION}"
     COMPILE_PDB_NAME_DEBUG "${the_module}${OPENCV_DLLVERSION}${OPENCV_DEBUG_POSTFIX}"
-    ARCHIVE_OUTPUT_DIRECTORY ${LIBRARY_OUTPUT_PATH}
+    ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin${UNMANAGED_LIBRARY_OUTPUT_SUBFOLDER}
     COMPILE_PDB_OUTPUT_DIRECTORY ${LIBRARY_OUTPUT_PATH}
-    LIBRARY_OUTPUT_DIRECTORY ${LIBRARY_OUTPUT_PATH}
-    RUNTIME_OUTPUT_DIRECTORY ${EXECUTABLE_OUTPUT_PATH}
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin${UNMANAGED_LIBRARY_OUTPUT_SUBFOLDER}
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin${UNMANAGED_LIBRARY_OUTPUT_SUBFOLDER}
     DEFINE_SYMBOL CVAPI_EXPORTS
   )
+
+  IF(DEFINED EMGUCV_PLATFORM_TOOLSET)
+    set_target_properties(${the_module} PROPERTIES PLATFORM_TOOLSET ${EMGUCV_PLATFORM_TOOLSET})
+  ENDIF()
 
   if(BUILD_FAT_JAVA_LIB)  # force exports from static modules too
     if(BUILD_SHARED_LIBS)
@@ -1062,14 +1070,14 @@ macro(_ocv_create_module)
   if(OPENCV_MODULE_${the_module}_CLASS STREQUAL "PUBLIC" AND
       ("${_target_type}" STREQUAL "SHARED_LIBRARY" OR (NOT BUILD_SHARED_LIBS OR NOT INSTALL_CREATE_DISTRIB)))
     ocv_install_target(${the_module} EXPORT OpenCVModules OPTIONAL
-      RUNTIME DESTINATION ${OPENCV_BIN_INSTALL_PATH} COMPONENT libs
-      LIBRARY DESTINATION ${OPENCV_LIB_INSTALL_PATH} COMPONENT libs NAMELINK_SKIP
+      RUNTIME DESTINATION libs${UNMANAGED_LIBRARY_OUTPUT_SUBFOLDER} COMPONENT libs
+      LIBRARY DESTINATION libs${UNMANAGED_LIBRARY_OUTPUT_SUBFOLDER} COMPONENT libs NAMELINK_SKIP
       ARCHIVE DESTINATION ${OPENCV_LIB_ARCHIVE_INSTALL_PATH} COMPONENT dev
       )
   endif()
   if("${_target_type}" STREQUAL "SHARED_LIBRARY")
     install(TARGETS ${the_module}
-      LIBRARY DESTINATION ${OPENCV_LIB_INSTALL_PATH} COMPONENT dev NAMELINK_ONLY)
+      LIBRARY DESTINATION libs${UNMANAGED_LIBRARY_OUTPUT_SUBFOLDER} COMPONENT dev NAMELINK_ONLY)
   endif()
 
   # only "public" headers need to be installed
@@ -1255,6 +1263,11 @@ function(ocv_add_perf_tests)
         DEBUG_POSTFIX "${OPENCV_DEBUG_POSTFIX}"
         RUNTIME_OUTPUT_DIRECTORY "${EXECUTABLE_OUTPUT_PATH}"
       )
+	  
+	  IF(DEFINED EMGUCV_PLATFORM_TOOLSET)
+        set_target_properties(${the_target} PROPERTIES PLATFORM_TOOLSET ${EMGUCV_PLATFORM_TOOLSET})
+      ENDIF()
+
       if(ENABLE_SOLUTION_FOLDERS)
         set_target_properties(${the_target} PROPERTIES FOLDER "tests performance")
       endif()
@@ -1354,6 +1367,10 @@ function(ocv_add_accuracy_tests)
         RUNTIME_OUTPUT_DIRECTORY "${EXECUTABLE_OUTPUT_PATH}"
       )
 
+	  IF(DEFINED EMGUCV_PLATFORM_TOOLSET)
+        set_target_properties(${the_target} PROPERTIES PLATFORM_TOOLSET ${EMGUCV_PLATFORM_TOOLSET})
+      ENDIF()
+	  
       ocv_append_target_property(${the_target} COMPILE_DEFINITIONS "__OPENCV_TESTS=1")
 
       if(ENABLE_SOLUTION_FOLDERS)
@@ -1413,6 +1430,9 @@ function(ocv_add_samples)
           LABELS "${OPENCV_MODULE_${the_module}_LABEL};Sample")
         set_source_files_properties("${source}" PROPERTIES
           LABELS "${OPENCV_MODULE_${the_module}_LABEL};Sample")
+		IF(DEFINED EMGUCV_PLATFORM_TOOLSET)
+          set_target_properties(${the_target} PROPERTIES PLATFORM_TOOLSET ${EMGUCV_PLATFORM_TOOLSET})
+        ENDIF()
         if(ENABLE_SOLUTION_FOLDERS)
           set_target_properties(${the_target} PROPERTIES
             FOLDER "samples/${module_id}")

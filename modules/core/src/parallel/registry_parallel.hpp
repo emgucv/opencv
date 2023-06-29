@@ -18,7 +18,7 @@ struct ParallelBackendInfo
     std::shared_ptr<IParallelBackendFactory> backendFactory;
 };
 
-const std::vector<ParallelBackendInfo>& getParallelBackendsInfo();
+CV_EXPORTS_W const std::vector<ParallelBackendInfo>& getParallelBackendsInfo();
 
 }} // namespace
 

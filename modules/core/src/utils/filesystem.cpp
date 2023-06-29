@@ -21,6 +21,50 @@
 #endif
 
 
+namespace cv {
+	namespace utils {
+		namespace fs {
+
+#ifdef _WIN32
+			static const char native_separator = '\\';
+#else
+			static const char native_separator = '/';
+#endif
+
+			static inline
+				bool isPathSeparator(char c)
+			{
+				return c == '/' || c == '\\';
+			}
+
+			cv::String join(const cv::String& base, const cv::String& path)
+			{
+				if (base.empty())
+					return path;
+				if (path.empty())
+					return base;
+
+				bool baseSep = isPathSeparator(base[base.size() - 1]);
+				bool pathSep = isPathSeparator(path[0]);
+				String result;
+				if (baseSep && pathSep)
+				{
+					result = base + path.substr(1);
+				}
+				else if (!baseSep && !pathSep)
+				{
+					result = base + native_separator + path;
+				}
+				else
+				{
+					result = base + path;
+				}
+				return result;
+			}
+		}
+	}
+}
+
 #if OPENCV_HAVE_FILESYSTEM_SUPPORT
 
 #ifdef _WIN32
@@ -45,43 +89,6 @@
 #endif // OPENCV_HAVE_FILESYSTEM_SUPPORT
 
 namespace cv { namespace utils { namespace fs {
-
-#ifdef _WIN32
-static const char native_separator = '\\';
-#else
-static const char native_separator = '/';
-#endif
-
-static inline
-bool isPathSeparator(char c)
-{
-    return c == '/' || c == '\\';
-}
-
-cv::String join(const cv::String& base, const cv::String& path)
-{
-    if (base.empty())
-        return path;
-    if (path.empty())
-        return base;
-
-    bool baseSep = isPathSeparator(base[base.size() - 1]);
-    bool pathSep = isPathSeparator(path[0]);
-    String result;
-    if (baseSep && pathSep)
-    {
-        result = base + path.substr(1);
-    }
-    else if (!baseSep && !pathSep)
-    {
-        result = base + native_separator + path;
-    }
-    else
-    {
-        result = base + path;
-    }
-    return result;
-}
 
 CV_EXPORTS cv::String getParent(const cv::String &path)
 {
@@ -221,10 +228,11 @@ bool createDirectory(const cv::String& path)
     CV_INSTRUMENT_REGION();
 #if defined WIN32 || defined _WIN32 || defined WINCE
 #ifdef WINRT
-    wchar_t wpath[MAX_PATH];
-    size_t copied = mbstowcs(wpath, path.c_str(), MAX_PATH);
-    CV_Assert((copied != MAX_PATH) && (copied != (size_t)-1));
-    int result = CreateDirectoryA(wpath, NULL) ? 0 : -1;
+	int result = CreateDirectoryA(path.c_str(), NULL) ? 0 : -1;
+	//wchar_t wpath[MAX_PATH];
+	//size_t copied = mbstowcs(wpath, path.c_str(), MAX_PATH);
+	//CV_Assert((copied != MAX_PATH) && (copied != (size_t)-1));
+	//int result = CreateDirectoryA(wpath, NULL) ? 0 : -1;
 #else
     int result = _mkdir(path.c_str());
 #endif
@@ -282,6 +290,10 @@ struct FileLock::Impl
 {
     Impl(const char* fname)
     {
+#if defined(WINAPI)
+		cv::error(cv::Exception(CV_StsAssert, "Opening lock file is not implemented on WINAPI", __FUNCTION__, __FILE__, __LINE__));
+		//CV_ErrorNoReturn_(Error::StsAssert, ("Opening lock file %s is not implemented on WINAPI", fname));
+#else
         // http://support.microsoft.com/kb/316609
         int numRetries = 5;
         do
@@ -303,6 +315,7 @@ struct FileLock::Impl
             }
             break;
         } while (numRetries > 0);
+#endif
     }
     ~Impl()
     {
@@ -439,7 +452,15 @@ cv::String getCacheDirectory(const char* sub_directory_name, const char* configu
         cv::String default_cache_path;
 #ifdef _WIN32
         char tmp_path_buf[MAX_PATH+1] = {0};
+#ifdef WINAPI
+		//wchar_t wtext[MAX_PATH+1];
+		//mbstowcs(wtext, tmp_path_buf, strlen(tmp_path_buf) + 1);//Plus null
+		//LPWSTR wtmp_path_buf = wtext;
+		//DWORD res = GetTempPath(MAX_PATH, wtmp_path_buf);
+		DWORD res = 0;
+#else
         DWORD res = GetTempPath(MAX_PATH, tmp_path_buf);
+#endif
         if (res > 0 && res <= MAX_PATH)
         {
             default_cache_path = tmp_path_buf;
