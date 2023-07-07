@@ -252,9 +252,13 @@ ocv_create_module()
 
 ocv_target_link_libraries(${the_module} PRIVATE ade)
 
-if(TARGET ocv.3rdparty.openvino AND OPENCV_GAPI_WITH_OPENVINO)
+if((TARGET ocv.3rdparty.openvino) AND OPENCV_GAPI_WITH_OPENVINO)
   ocv_target_link_libraries(${the_module} PRIVATE ocv.3rdparty.openvino)
-  ocv_install_used_external_targets(ocv.3rdparty.openvino)
+  IF ("${OpenVINO_DIR}" STREQUAL "")
+    ocv_install_used_external_targets(ocv.3rdparty.openvino)
+  ELSE()
+    MESSAGE(STATUS "Using prebuild OpenVINO, we will skip ocv_install_used_external_targets(ocv.3rdparty.openvino) in gapi module")
+  ENDIF()
 endif()
 
 if(HAVE_TBB)
