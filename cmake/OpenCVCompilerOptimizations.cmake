@@ -245,10 +245,12 @@ if(X86 OR X86_64)
     ocv_intel_compiler_optimization_option(FMA3 "" "")
     ocv_intel_compiler_optimization_option(POPCNT "-mpopcnt" "")  # -mpopcnt is available since ICC 19.0.0
     ocv_intel_compiler_optimization_option(SSE4_2 "-msse4.2" "/arch:SSE4.2")
-    ocv_intel_compiler_optimization_option(SSE4_1 "-msse4.1" "/arch:SSE4.1")
-    ocv_intel_compiler_optimization_option(SSE3 "-msse3" "/arch:SSE3")
+    ocv_intel_compiler_optimization_option(SSE4_1 "-msse4.1" "/arch:SSE4.1")    
     ocv_intel_compiler_optimization_option(SSSE3 "-mssse3" "/arch:SSSE3")
-    ocv_intel_compiler_optimization_option(SSE2 "-msse2" "/arch:SSE2")
+	if(NOT (X86_64 AND WIN32)) # Intel C++ x64 compiler doesn't support /arch:sse2 or /arch:sse3
+		ocv_intel_compiler_optimization_option(SSE2 "-msse2" "/arch:SSE2")
+		ocv_intel_compiler_optimization_option(SSE3 "-msse3" "/arch:SSE3")
+	ENDIF()
     if(NOT X86_64) # x64 compiler doesn't support /arch:sse
       ocv_intel_compiler_optimization_option(SSE "-msse" "/arch:SSE")
     endif()

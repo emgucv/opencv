@@ -280,7 +280,11 @@ cv::String findDataFile(const cv::String& relative_path,
 
 
     // Steps: 4, 5, 6
+#if OPENCV_HAVE_FILESYSTEM_SUPPORT
     cv::String cwd = utils::fs::getcwd();
+#else
+    cv::String cwd;
+#endif
     cv::String build_dir(OPENCV_BUILD_DIR);
     bool has_tested_build_directory = false;
     if (isSubDirectory(build_dir, cwd) || isSubDirectory(utils::fs::canonical(build_dir), utils::fs::canonical(cwd)))

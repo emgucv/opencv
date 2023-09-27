@@ -8,26 +8,14 @@ if(WITH_OPENVINO)
   if(OpenVINO_FOUND)
     message(STATUS "OpenVINO FOUND: ${OpenVINO_VERSION}")
     math(EXPR ver "${OpenVINO_VERSION_MAJOR} * 1000000 + ${OpenVINO_VERSION_MINOR} * 10000 + ${OpenVINO_VERSION_PATCH} * 100")
+    SET(BUILD_SHARED_LIBS_CACHE ${BUILD_SHARED_LIBS})
+    SET(BUILD_SHARED_LIBS TRUE)
     ocv_add_external_target(openvino "" "openvino::runtime" "INF_ENGINE_RELEASE=${ver};HAVE_NGRAPH;HAVE_DNN_NGRAPH;HAVE_INF_ENGINE")
+    SET(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_CACHE})
     set(HAVE_OPENVINO 1)
     return()
   endif()
 endif()
-
-# ======================
-
-if(WITH_OPENVINO)
-  find_package(OpenVINO QUIET)
-  if(OpenVINO_FOUND)
-    message(STATUS "OpenVINO FOUND: ${OpenVINO_VERSION}")
-    math(EXPR ver "${OpenVINO_VERSION_MAJOR} * 1000000 + ${OpenVINO_VERSION_MINOR} * 10000 + ${OpenVINO_VERSION_PATCH} * 100")
-    ocv_add_external_target(openvino "" "openvino::runtime" "INF_ENGINE_RELEASE=${ver};HAVE_NGRAPH;HAVE_DNN_NGRAPH;HAVE_INF_ENGINE")
-    set(HAVE_OPENVINO 1)
-    return()
-  endif()
-endif()
-
-# ======================
 
 find_package(InferenceEngine QUIET)
 if(InferenceEngine_FOUND)
@@ -77,3 +65,4 @@ if(WITH_NGRAPH OR NOT DEFINED WITH_NGRAPH)
 endif()
 
 ocv_add_external_target(openvino "" "${tgts}" "${defs}")
+install(TARGETS ocv.3rdparty.openvino EXPORT OpenCVModules)

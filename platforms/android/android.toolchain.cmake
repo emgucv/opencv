@@ -1292,6 +1292,10 @@ if( NOT ANDROID_COMPILER_VERSION VERSION_LESS "4.6" )
  set( ANDROID_CXX_FLAGS "${ANDROID_CXX_FLAGS} -no-canonical-prefixes" ) # see https://android-review.googlesource.com/#/c/47564/
 endif()
 
+#enable C++ 11
+set( ANDROID_CXX_FLAGS "${ANDROID_CXX_FLAGS} -std=c++11" ) 
+
+
 # ABI-specific flags
 if( ARMEABI_V7A_HARD )
  set( ANDROID_CXX_FLAGS "${ANDROID_CXX_FLAGS} -march=armv7-a -mfloat-abi=hard -mhard-float -D_NDK_MATH_NO_SOFTFP=1" )

@@ -3,7 +3,7 @@
 #
 # ----------------------------------------------------------------------------
 
-if(ENABLE_NEON)
+if(ENABLE_NEON AND NOT APPLE) #PNG neon optimization is not able to compile for iOS
   project(${PNG_LIBRARY} C ASM)
 else()
   project(${PNG_LIBRARY} C)
@@ -94,6 +94,10 @@ set_target_properties(${PNG_LIBRARY}
 if(ENABLE_SOLUTION_FOLDERS)
   set_target_properties(${PNG_LIBRARY} PROPERTIES FOLDER "3rdparty")
 endif()
+
+IF(DEFINED EMGUCV_PLATFORM_TOOLSET)
+  set_target_properties(${PNG_LIBRARY} PROPERTIES PLATFORM_TOOLSET ${EMGUCV_PLATFORM_TOOLSET})
+ENDIF()
 
 if(NOT BUILD_SHARED_LIBS)
   ocv_install_target(${PNG_LIBRARY} EXPORT OpenCVModules ARCHIVE DESTINATION ${OPENCV_3P_LIB_INSTALL_PATH} COMPONENT dev OPTIONAL)
