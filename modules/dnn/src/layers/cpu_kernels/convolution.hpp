@@ -15,7 +15,9 @@
 
 // The FP16 can only be supported by ARM64 and with FP16 FMA supported.
 #ifdef __ARM_FEATURE_FP16_VECTOR_ARITHMETIC // check FP16 FMA.
+#if CV_NEON && CV_NEON_AARCH64 && CV_FP16
 #define CONV_ARM_FP16 1
+#endif
 #endif
 
 #ifdef CONV_ARM_FP16
