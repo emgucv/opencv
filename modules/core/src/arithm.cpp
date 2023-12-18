@@ -329,7 +329,7 @@ static void binary_op( InputArray _src1, InputArray _src2, OutputArray _dst,
 
 static BinaryFuncC* getMaxTab()
 {
-    static BinaryFuncC maxTab[] =
+    static BinaryFuncC maxTab[CV_DEPTH_MAX] =
     {
         (BinaryFuncC)GET_OPTIMIZED(cv::hal::max8u), (BinaryFuncC)GET_OPTIMIZED(cv::hal::max8s),
         (BinaryFuncC)GET_OPTIMIZED(cv::hal::max16u), (BinaryFuncC)GET_OPTIMIZED(cv::hal::max16s),
@@ -343,7 +343,7 @@ static BinaryFuncC* getMaxTab()
 
 static BinaryFuncC* getMinTab()
 {
-    static BinaryFuncC minTab[] =
+    static BinaryFuncC minTab[CV_DEPTH_MAX] =
     {
         (BinaryFuncC)GET_OPTIMIZED(cv::hal::min8u), (BinaryFuncC)GET_OPTIMIZED(cv::hal::min8s),
         (BinaryFuncC)GET_OPTIMIZED(cv::hal::min16u), (BinaryFuncC)GET_OPTIMIZED(cv::hal::min16s),
@@ -489,7 +489,7 @@ static bool ocl_arithm_op(InputArray _src1, InputArray _src2, OutputArray _dst,
     int kercn = haveMask || haveScalar ? cn : ocl::predictOptimalVectorWidth(_src1, _src2, _dst);
     int scalarcn = kercn == 3 ? 4 : kercn, rowsPerWI = d.isIntel() ? 4 : 1;
 
-    char cvtstr[4][32], opts[1024];
+    char cvtstr[4][50], opts[1024];
     snprintf(opts, sizeof(opts), "-D %s%s -D %s -D srcT1=%s -D srcT1_C1=%s -D srcT2=%s -D srcT2_C1=%s "
             "-D dstT=%s -D DEPTH_dst=%d -D dstT_C1=%s -D workT=%s -D workST=%s -D scaleT=%s -D wdepth=%d -D convertToWT1=%s "
             "-D convertToWT2=%s -D convertToDT=%s%s -D cn=%d -D rowsPerWI=%d -D convertFromU=%s",
@@ -500,12 +500,12 @@ static bool ocl_arithm_op(InputArray _src1, InputArray _src2, OutputArray _dst,
             ocl::typeToStr(ddepth), ocl::typeToStr(CV_MAKETYPE(wdepth, kercn)),
             ocl::typeToStr(CV_MAKETYPE(wdepth, scalarcn)),
             ocl::typeToStr(wdepth), wdepth,
-            ocl::convertTypeStr(depth1, wdepth, kercn, cvtstr[0]),
-            ocl::convertTypeStr(depth2, wdepth, kercn, cvtstr[1]),
-            ocl::convertTypeStr(wdepth, ddepth, kercn, cvtstr[2]),
+            ocl::convertTypeStr(depth1, wdepth, kercn, cvtstr[0], sizeof(cvtstr[0])),
+            ocl::convertTypeStr(depth2, wdepth, kercn, cvtstr[1], sizeof(cvtstr[1])),
+            ocl::convertTypeStr(wdepth, ddepth, kercn, cvtstr[2], sizeof(cvtstr[2])),
             doubleSupport ? " -D DOUBLE_SUPPORT" : "", kercn, rowsPerWI,
             oclop == OCL_OP_ABSDIFF && wdepth == CV_32S && ddepth == wdepth ?
-            ocl::convertTypeStr(CV_8U, ddepth, kercn, cvtstr[3]) : "noconvert");
+            ocl::convertTypeStr(CV_8U, ddepth, kercn, cvtstr[3], sizeof(cvtstr[3])) : "noconvert");
 
     size_t usrdata_esz = CV_ELEM_SIZE(wdepth);
     const uchar* usrdata_p = (const uchar*)usrdata;
@@ -617,7 +617,10 @@ static void arithm_op(InputArray _src1, InputArray _src2, OutputArray _dst,
 
         Mat src1 = psrc1->getMat(), src2 = psrc2->getMat(), dst = _dst.getMat();
         Size sz = getContinuousSize2D(src1, src2, dst, src1.channels());
-        tab[depth1](src1.ptr(), src1.step, src2.ptr(), src2.step, dst.ptr(), dst.step, sz.width, sz.height, usrdata);
+        BinaryFuncC func = tab[depth1];
+        CV_Assert(func != 0);
+        func(src1.ptr(), src1.step, src2.ptr(), src2.step,
+             dst.ptr(), dst.step, sz.width,   sz.height, usrdata);
         return;
     }
 
@@ -868,7 +871,7 @@ static void arithm_op(InputArray _src1, InputArray _src2, OutputArray _dst,
 
 static BinaryFuncC* getAddTab()
 {
-    static BinaryFuncC addTab[] =
+    static BinaryFuncC addTab[CV_DEPTH_MAX] =
     {
         (BinaryFuncC)GET_OPTIMIZED(cv::hal::add8u), (BinaryFuncC)GET_OPTIMIZED(cv::hal::add8s),
         (BinaryFuncC)GET_OPTIMIZED(cv::hal::add16u), (BinaryFuncC)GET_OPTIMIZED(cv::hal::add16s),
@@ -882,7 +885,7 @@ static BinaryFuncC* getAddTab()
 
 static BinaryFuncC* getSubTab()
 {
-    static BinaryFuncC subTab[] =
+    static BinaryFuncC subTab[CV_DEPTH_MAX] =
     {
         (BinaryFuncC)GET_OPTIMIZED(cv::hal::sub8u), (BinaryFuncC)GET_OPTIMIZED(cv::hal::sub8s),
         (BinaryFuncC)GET_OPTIMIZED(cv::hal::sub16u), (BinaryFuncC)GET_OPTIMIZED(cv::hal::sub16s),
@@ -896,7 +899,7 @@ static BinaryFuncC* getSubTab()
 
 static BinaryFuncC* getAbsDiffTab()
 {
-    static BinaryFuncC absDiffTab[] =
+    static BinaryFuncC absDiffTab[CV_DEPTH_MAX] =
     {
         (BinaryFuncC)GET_OPTIMIZED(cv::hal::absdiff8u), (BinaryFuncC)GET_OPTIMIZED(cv::hal::absdiff8s),
         (BinaryFuncC)GET_OPTIMIZED(cv::hal::absdiff16u), (BinaryFuncC)GET_OPTIMIZED(cv::hal::absdiff16s),
@@ -949,7 +952,7 @@ namespace cv
 
 static BinaryFuncC* getMulTab()
 {
-    static BinaryFuncC mulTab[] =
+    static BinaryFuncC mulTab[CV_DEPTH_MAX] =
     {
         (BinaryFuncC)cv::hal::mul8u, (BinaryFuncC)cv::hal::mul8s, (BinaryFuncC)cv::hal::mul16u,
         (BinaryFuncC)cv::hal::mul16s, (BinaryFuncC)cv::hal::mul32s, (BinaryFuncC)cv::hal::mul32f,
@@ -961,7 +964,7 @@ static BinaryFuncC* getMulTab()
 
 static BinaryFuncC* getDivTab()
 {
-    static BinaryFuncC divTab[] =
+    static BinaryFuncC divTab[CV_DEPTH_MAX] =
     {
         (BinaryFuncC)cv::hal::div8u, (BinaryFuncC)cv::hal::div8s, (BinaryFuncC)cv::hal::div16u,
         (BinaryFuncC)cv::hal::div16s, (BinaryFuncC)cv::hal::div32s, (BinaryFuncC)cv::hal::div32f,
@@ -973,7 +976,7 @@ static BinaryFuncC* getDivTab()
 
 static BinaryFuncC* getRecipTab()
 {
-    static BinaryFuncC recipTab[] =
+    static BinaryFuncC recipTab[CV_DEPTH_MAX] =
     {
         (BinaryFuncC)cv::hal::recip8u, (BinaryFuncC)cv::hal::recip8s, (BinaryFuncC)cv::hal::recip16u,
         (BinaryFuncC)cv::hal::recip16s, (BinaryFuncC)cv::hal::recip32s, (BinaryFuncC)cv::hal::recip32f,
@@ -1021,7 +1024,7 @@ UMat UMat::mul(InputArray m, double scale) const
 
 static BinaryFuncC* getAddWeightedTab()
 {
-    static BinaryFuncC addWeightedTab[] =
+    static BinaryFuncC addWeightedTab[CV_DEPTH_MAX] =
     {
         (BinaryFuncC)GET_OPTIMIZED(cv::hal::addWeighted8u), (BinaryFuncC)GET_OPTIMIZED(cv::hal::addWeighted8s), (BinaryFuncC)GET_OPTIMIZED(cv::hal::addWeighted16u),
         (BinaryFuncC)GET_OPTIMIZED(cv::hal::addWeighted16s), (BinaryFuncC)GET_OPTIMIZED(cv::hal::addWeighted32s), (BinaryFuncC)cv::hal::addWeighted32f,
@@ -1052,7 +1055,7 @@ namespace cv
 
 static BinaryFuncC getCmpFunc(int depth)
 {
-    static BinaryFuncC cmpTab[] =
+    static BinaryFuncC cmpTab[CV_DEPTH_MAX] =
     {
         (BinaryFuncC)GET_OPTIMIZED(cv::hal::cmp8u), (BinaryFuncC)GET_OPTIMIZED(cv::hal::cmp8s),
         (BinaryFuncC)GET_OPTIMIZED(cv::hal::cmp16u), (BinaryFuncC)GET_OPTIMIZED(cv::hal::cmp16s),
@@ -1098,7 +1101,7 @@ static bool ocl_compare(InputArray _src1, InputArray _src2, OutputArray _dst, in
 
     int scalarcn = kercn == 3 ? 4 : kercn;
     const char * const operationMap[] = { "==", ">", ">=", "<", "<=", "!=" };
-    char cvt[40];
+    char cvt[50];
 
     String opts = format("-D %s -D srcT1=%s -D dstT=%s -D DEPTH_dst=%d -D workT=srcT1 -D cn=%d"
                          " -D convertToDT=%s -D OP_CMP -D CMP_OPERATOR=%s -D srcT1_C1=%s"
@@ -1106,7 +1109,7 @@ static bool ocl_compare(InputArray _src1, InputArray _src2, OutputArray _dst, in
                          haveScalar ? "UNARY_OP" : "BINARY_OP",
                          ocl::typeToStr(CV_MAKE_TYPE(depth1, kercn)),
                          ocl::typeToStr(CV_8UC(kercn)), CV_8U, kercn,
-                         ocl::convertTypeStr(depth1, CV_8U, kercn, cvt),
+                         ocl::convertTypeStr(depth1, CV_8U, kercn, cvt, sizeof(cvt)),
                          operationMap[op], ocl::typeToStr(depth1),
                          ocl::typeToStr(depth1), ocl::typeToStr(CV_8U),
                          ocl::typeToStr(CV_MAKE_TYPE(depth1, scalarcn)), rowsPerWI,
@@ -1332,7 +1335,7 @@ struct InRange_SIMD
     }
 };
 
-#if CV_SIMD
+#if (CV_SIMD || CV_SIMD_SCALABLE)
 
 template <>
 struct InRange_SIMD<uchar>
@@ -1341,7 +1344,7 @@ struct InRange_SIMD<uchar>
         uchar * dst, int len) const
     {
         int x = 0;
-        const int width = v_uint8::nlanes;
+        const int width = VTraits<v_uint8>::vlanes();
 
         for (; x <= len - width; x += width)
         {
@@ -1349,7 +1352,7 @@ struct InRange_SIMD<uchar>
             v_uint8 low = vx_load(src2 + x);
             v_uint8 high = vx_load(src3 + x);
 
-            v_store(dst + x, (values >= low) & (high >= values));
+            v_store(dst + x, v_and(v_ge(values, low), v_ge(high, values)));
         }
         vx_cleanup();
         return x;
@@ -1363,7 +1366,7 @@ struct InRange_SIMD<schar>
         uchar * dst, int len) const
     {
         int x = 0;
-        const int width = v_int8::nlanes;
+        const int width = VTraits<v_int8>::vlanes();
 
         for (; x <= len - width; x += width)
         {
@@ -1371,7 +1374,7 @@ struct InRange_SIMD<schar>
             v_int8 low = vx_load(src2 + x);
             v_int8 high = vx_load(src3 + x);
 
-            v_store((schar*)(dst + x), (values >= low) & (high >= values));
+            v_store((schar*)(dst + x), v_and(v_ge(values, low), v_ge(high, values)));
         }
         vx_cleanup();
         return x;
@@ -1385,7 +1388,7 @@ struct InRange_SIMD<ushort>
         uchar * dst, int len) const
     {
         int x = 0;
-        const int width = v_uint16::nlanes * 2;
+        const int width = VTraits<v_uint16>::vlanes() * 2;
 
         for (; x <= len - width; x += width)
         {
@@ -1393,11 +1396,11 @@ struct InRange_SIMD<ushort>
             v_uint16 low1 = vx_load(src2 + x);
             v_uint16 high1 = vx_load(src3 + x);
 
-            v_uint16 values2 = vx_load(src1 + x + v_uint16::nlanes);
-            v_uint16 low2 = vx_load(src2 + x + v_uint16::nlanes);
-            v_uint16 high2 = vx_load(src3 + x + v_uint16::nlanes);
+            v_uint16 values2 = vx_load(src1 + x + VTraits<v_uint16>::vlanes());
+            v_uint16 low2 = vx_load(src2 + x + VTraits<v_uint16>::vlanes());
+            v_uint16 high2 = vx_load(src3 + x + VTraits<v_uint16>::vlanes());
 
-            v_store(dst + x, v_pack((values1 >= low1) & (high1 >= values1), (values2 >= low2) & (high2 >= values2)));
+            v_store(dst + x, v_pack(v_and(v_ge(values1, low1), v_ge(high1, values1)), v_and(v_ge(values2, low2), v_ge(high2, values2))));
         }
         vx_cleanup();
         return x;
@@ -1411,7 +1414,7 @@ struct InRange_SIMD<short>
         uchar * dst, int len) const
     {
         int x = 0;
-        const int width = (int)v_int16::nlanes * 2;
+        const int width = (int)VTraits<v_int16>::vlanes() * 2;
 
         for (; x <= len - width; x += width)
         {
@@ -1419,11 +1422,11 @@ struct InRange_SIMD<short>
             v_int16 low1 = vx_load(src2 + x);
             v_int16 high1 = vx_load(src3 + x);
 
-            v_int16 values2 = vx_load(src1 + x + v_int16::nlanes);
-            v_int16 low2 = vx_load(src2 + x + v_int16::nlanes);
-            v_int16 high2 = vx_load(src3 + x + v_int16::nlanes);
+            v_int16 values2 = vx_load(src1 + x + VTraits<v_int16>::vlanes());
+            v_int16 low2 = vx_load(src2 + x + VTraits<v_int16>::vlanes());
+            v_int16 high2 = vx_load(src3 + x + VTraits<v_int16>::vlanes());
 
-            v_store((schar*)(dst + x), v_pack((values1 >= low1) & (high1 >= values1), (values2 >= low2) & (high2 >= values2)));
+            v_store((schar*)(dst + x), v_pack(v_and(v_ge(values1, low1), v_ge(high1, values1)), v_and(v_ge(values2, low2), v_ge(high2, values2))));
         }
         vx_cleanup();
         return x;
@@ -1437,7 +1440,7 @@ struct InRange_SIMD<int>
         uchar * dst, int len) const
     {
         int x = 0;
-        const int width = (int)v_int32::nlanes * 2;
+        const int width = (int)VTraits<v_int32>::vlanes() * 2;
 
         for (; x <= len - width; x += width)
         {
@@ -1445,11 +1448,11 @@ struct InRange_SIMD<int>
             v_int32 low1 = vx_load(src2 + x);
             v_int32 high1 = vx_load(src3 + x);
 
-            v_int32 values2 = vx_load(src1 + x + v_int32::nlanes);
-            v_int32 low2 = vx_load(src2 + x + v_int32::nlanes);
-            v_int32 high2 = vx_load(src3 + x + v_int32::nlanes);
+            v_int32 values2 = vx_load(src1 + x + VTraits<v_int32>::vlanes());
+            v_int32 low2 = vx_load(src2 + x + VTraits<v_int32>::vlanes());
+            v_int32 high2 = vx_load(src3 + x + VTraits<v_int32>::vlanes());
 
-            v_pack_store(dst + x, v_reinterpret_as_u16(v_pack((values1 >= low1) & (high1 >= values1), (values2 >= low2) & (high2 >= values2))));
+            v_pack_store(dst + x, v_reinterpret_as_u16(v_pack(v_and(v_ge(values1, low1), v_ge(high1, values1)), v_and(v_ge(values2, low2), v_ge(high2, values2)))));
         }
         vx_cleanup();
         return x;
@@ -1463,7 +1466,7 @@ struct InRange_SIMD<float>
         uchar * dst, int len) const
     {
         int x = 0;
-        const int width = (int)v_float32::nlanes * 2;
+        const int width = (int)VTraits<v_float32>::vlanes() * 2;
 
         for (; x <= len - width; x += width)
         {
@@ -1471,12 +1474,12 @@ struct InRange_SIMD<float>
             v_float32 low1 = vx_load(src2 + x);
             v_float32 high1 = vx_load(src3 + x);
 
-            v_float32 values2 = vx_load(src1 + x + v_float32::nlanes);
-            v_float32 low2 = vx_load(src2 + x + v_float32::nlanes);
-            v_float32 high2 = vx_load(src3 + x + v_float32::nlanes);
+            v_float32 values2 = vx_load(src1 + x + VTraits<v_float32>::vlanes());
+            v_float32 low2 = vx_load(src2 + x + VTraits<v_float32>::vlanes());
+            v_float32 high2 = vx_load(src3 + x + VTraits<v_float32>::vlanes());
 
-            v_pack_store(dst + x, v_pack(v_reinterpret_as_u32(values1 >= low1) & v_reinterpret_as_u32(high1 >= values1),
-                                         v_reinterpret_as_u32(values2 >= low2) & v_reinterpret_as_u32(high2 >= values2)));
+            v_pack_store(dst + x, v_pack(v_and(v_reinterpret_as_u32(v_ge(values1, low1)), v_reinterpret_as_u32(v_ge(high1, values1))),
+                                         v_and(v_reinterpret_as_u32(v_ge(values2, low2)), v_reinterpret_as_u32(v_ge(high2, values2)))));
         }
         vx_cleanup();
         return x;
@@ -1588,7 +1591,7 @@ typedef void (*InRangeFunc)( const uchar* src1, size_t step1, const uchar* src2,
 
 static InRangeFunc getInRangeFunc(int depth)
 {
-    static InRangeFunc inRangeTab[] =
+    static InRangeFunc inRangeTab[CV_DEPTH_MAX] =
     {
         (InRangeFunc)GET_OPTIMIZED(inRange8u), (InRangeFunc)GET_OPTIMIZED(inRange8s), (InRangeFunc)GET_OPTIMIZED(inRange16u),
         (InRangeFunc)GET_OPTIMIZED(inRange16s), (InRangeFunc)GET_OPTIMIZED(inRange32s), (InRangeFunc)GET_OPTIMIZED(inRange32f),
@@ -1759,7 +1762,7 @@ void cv::inRange(InputArray _src, InputArray _lowerb,
     size_t esz = src.elemSize();
     size_t blocksize0 = (size_t)(BLOCK_SIZE + esz-1)/esz;
 
-    _dst.create(src.dims, src.size, CV_8UC1);
+    _dst.createSameSize(_src, CV_8UC1);
     Mat dst = _dst.getMat();
     InRangeFunc func = getInRangeFunc(depth);
 

@@ -4,17 +4,14 @@ import numpy as np
 import sys
 import time
 from threading import Thread
-if sys.version_info[0] == 2:
-    import Queue as queue
-else:
-    import queue
+import queue
 
 from common import *
 from tf_text_graph_common import readTextMessage
 from tf_text_graph_ssd import createSSDGraph
 from tf_text_graph_faster_rcnn import createFasterRCNNGraph
 
-backends = (cv.dnn.DNN_BACKEND_DEFAULT, cv.dnn.DNN_BACKEND_HALIDE, cv.dnn.DNN_BACKEND_INFERENCE_ENGINE, cv.dnn.DNN_BACKEND_OPENCV,
+backends = (cv.dnn.DNN_BACKEND_DEFAULT, cv.dnn.DNN_BACKEND_INFERENCE_ENGINE, cv.dnn.DNN_BACKEND_OPENCV,
             cv.dnn.DNN_BACKEND_VKCOM, cv.dnn.DNN_BACKEND_CUDA)
 targets = (cv.dnn.DNN_TARGET_CPU, cv.dnn.DNN_TARGET_OPENCL, cv.dnn.DNN_TARGET_OPENCL_FP16, cv.dnn.DNN_TARGET_MYRIAD, cv.dnn.DNN_TARGET_HDDL,
            cv.dnn.DNN_TARGET_VULKAN, cv.dnn.DNN_TARGET_CUDA, cv.dnn.DNN_TARGET_CUDA_FP16)
@@ -27,7 +24,7 @@ parser.add_argument('--out_tf_graph', default='graph.pbtxt',
                     help='For models from TensorFlow Object Detection API, you may '
                          'pass a .config file which was used for training through --config '
                          'argument. This way an additional .pbtxt file with TensorFlow graph will be created.')
-parser.add_argument('--framework', choices=['caffe', 'tensorflow', 'torch', 'darknet', 'dldt'],
+parser.add_argument('--framework', choices=['caffe', 'tensorflow', 'darknet', 'dldt'],
                     help='Optional name of an origin framework of the model. '
                          'Detect it automatically if it does not set.')
 parser.add_argument('--thr', type=float, default=0.5, help='Confidence threshold')
@@ -35,7 +32,6 @@ parser.add_argument('--nms', type=float, default=0.4, help='Non-maximum suppress
 parser.add_argument('--backend', choices=backends, default=cv.dnn.DNN_BACKEND_DEFAULT, type=int,
                     help="Choose one of computation backends: "
                          "%d: automatically (by default), "
-                         "%d: Halide language (http://halide-lang.org/), "
                          "%d: Intel's Deep Learning Inference Engine (https://software.intel.com/openvino-toolkit), "
                          "%d: OpenCV implementation, "
                          "%d: VKCOM, "

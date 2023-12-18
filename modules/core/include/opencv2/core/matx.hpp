@@ -225,7 +225,7 @@ public:
     void copyTo(const _OutputArray& dst) const;
     void convertTo(const _OutputArray& dst, int type, double scale=1., double shift=0.) const;
 
-    _Tp val[m*n]; //< matrix elements
+    _Tp val[m*n]; ///< matrix elements
 };
 
 typedef Matx<float, 1, 2> Matx12f;
@@ -441,6 +441,12 @@ typedef Vec<int, 3> Vec3i;
 typedef Vec<int, 4> Vec4i;
 typedef Vec<int, 6> Vec6i;
 typedef Vec<int, 8> Vec8i;
+
+typedef Vec<int64_t, 2> Vec2l;
+typedef Vec<int64_t, 3> Vec3l;
+typedef Vec<int64_t, 4> Vec4l;
+typedef Vec<int64_t, 6> Vec6l;
+typedef Vec<int64_t, 8> Vec8l;
 
 typedef Vec<float, 2> Vec2f;
 typedef Vec<float, 3> Vec3f;

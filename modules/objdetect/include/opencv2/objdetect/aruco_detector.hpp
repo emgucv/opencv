@@ -34,8 +34,9 @@ struct CV_EXPORTS_W_SIMPLE DetectorParameters {
         minCornerDistanceRate = 0.05;
         minDistanceToBorder = 3;
         minMarkerDistanceRate = 0.05;
-        cornerRefinementMethod = CORNER_REFINE_NONE;
+        cornerRefinementMethod = (int)CORNER_REFINE_NONE;
         cornerRefinementWinSize = 5;
+        relativeCornerRefinmentWinSize = 0.3f;
         cornerRefinementMaxIterations = 30;
         cornerRefinementMinAccuracy = 0.1;
         markerBorderBits = 1;
@@ -56,7 +57,7 @@ struct CV_EXPORTS_W_SIMPLE DetectorParameters {
         useAruco3Detection = false;
         minSideLengthCanonicalImg = 32;
         minMarkerLengthRatioOriginalImg = 0.0;
-    };
+    }
 
     /** @brief Read a new set of DetectorParameters from FileNode (use FileStorage.root()).
      */
@@ -106,10 +107,28 @@ struct CV_EXPORTS_W_SIMPLE DetectorParameters {
     CV_PROP_RW double minMarkerDistanceRate;
 
     /** @brief default value CORNER_REFINE_NONE */
-    CV_PROP_RW CornerRefineMethod cornerRefinementMethod;
+    CV_PROP_RW int cornerRefinementMethod;
 
-    /// window size for the corner refinement process (in pixels) (default 5).
+    /** @brief maximum window size for the corner refinement process (in pixels) (default 5).
+     *
+     * The window size may decrease if the ArUco marker is too small, check relativeCornerRefinmentWinSize.
+     * The final window size is calculated as:
+     * min(cornerRefinementWinSize, averageArucoModuleSize*relativeCornerRefinmentWinSize),
+     * where averageArucoModuleSize is average module size of ArUco marker in pixels.
+     * (ArUco marker is composed of black and white modules)
+     */
     CV_PROP_RW int cornerRefinementWinSize;
+
+    /** @brief Dynamic window size for corner refinement relative to Aruco module size (default 0.3).
+     *
+     * The final window size is calculated as:
+     * min(cornerRefinementWinSize, averageArucoModuleSize*relativeCornerRefinmentWinSize),
+     * where averageArucoModuleSize is average module size of ArUco marker in pixels.
+     * (ArUco marker is composed of black and white modules)
+     * In the case of markers located far from each other, it may be useful to increase the value of the parameter to 0.4-0.5.
+     * In the case of markers located close to each other, it may be useful to decrease the parameter value to 0.1-0.2.
+     */
+    CV_PROP_RW float relativeCornerRefinmentWinSize;
 
     /// maximum number of iterations for stop criteria of the corner refinement process (default 30).
     CV_PROP_RW int cornerRefinementMaxIterations;
@@ -269,13 +288,13 @@ public:
      * and its corresponding identifier.
      * Note that this function does not perform pose estimation.
      * @note The function does not correct lens distortion or takes it into account. It's recommended to undistort
-     * input image with corresponging camera model, if camera parameters are known
+     * input image with corresponding camera model, if camera parameters are known
      * @sa undistort, estimatePoseSingleMarkers,  estimatePoseBoard
      */
     CV_WRAP void detectMarkers(InputArray image, OutputArrayOfArrays corners, OutputArray ids,
                                OutputArrayOfArrays rejectedImgPoints = noArray()) const;
 
-    /** @brief Refind not detected markers based on the already detected and the board layout
+    /** @brief Refine not detected markers based on the already detected and the board layout
      *
      * @param image input image
      * @param board layout of markers in the board.

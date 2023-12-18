@@ -85,7 +85,7 @@ cv::GMatDesc cv::descr_of(const cv::Mat &mat)
 {
     const auto mat_dims = mat.size.dims();
 
-    if (mat_dims == 2)
+    if (mat_dims <= 2)
         return GMatDesc{mat.depth(), mat.channels(), {mat.cols, mat.rows}};
 
     std::vector<int> dims(mat_dims);
@@ -153,10 +153,18 @@ std::ostream& operator<<(std::ostream& os, const cv::GMatDesc &desc)
         break;
     }
 
-    os << "C" << desc.chan;
-    if (desc.planar) os << "p";
-    os << " ";
-    os << desc.size.width << "x" << desc.size.height;
+    if (desc.isND()) {
+        os << " [";
+        for (size_t i = 0; i < desc.dims.size() - 1; ++i) {
+            os << desc.dims[i] << "x";
+        }
+        os << desc.dims.back() << "]";
+    } else {
+        os << "C" << desc.chan;
+        if (desc.planar) os << "p";
+        os << " ";
+        os << desc.size.width << "x" << desc.size.height;
+    }
 
     return os;
 }

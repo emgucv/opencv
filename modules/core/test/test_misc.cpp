@@ -31,12 +31,12 @@ TEST(Core_OutputArrayCreate, _1997)
     ASSERT_NO_THROW(local::create( mat(Rect(Point(), submatSize)), submatSize, mat.type() ));
 }
 
-TEST(Core_SaturateCast, NegativeNotClipped)
+TEST(Core_SaturateCast, NegativesAreClipped)
 {
     double d = -1.0;
     unsigned int val = cv::saturate_cast<unsigned int>(d);
 
-    ASSERT_EQ(0xffffffff, val);
+    ASSERT_EQ(0u, val);
 }
 
 template<typename T, typename U>
@@ -917,5 +917,28 @@ REGISTER_TYPED_TEST_CASE_P(Rect_Test, Overflows);
 typedef ::testing::Types<int, float, double> RectTypes;
 INSTANTIATE_TYPED_TEST_CASE_P(Negative_Test, Rect_Test, RectTypes);
 
+// Expected that SkipTestException thrown in the constructor should skip test but not fail
+struct TestFixtureSkip: public ::testing::Test {
+    TestFixtureSkip(bool throwEx = true) {
+        if (throwEx) {
+            throw SkipTestException("Skip test at constructor");
+        }
+    }
+};
+
+TEST_F(TestFixtureSkip, NoBodyRun) {
+    FAIL() << "Unreachable code called";
+}
+
+// Expected that SkipTestException thrown in SetUp method should skip test but not fail
+struct TestSetUpSkip: public ::testing::Test {
+    virtual void SetUp() CV_OVERRIDE {
+        throw SkipTestException("Skip test at SetUp");
+    }
+};
+
+TEST_F(TestSetUpSkip, NoBodyRun) {
+    FAIL() << "Unreachable code called";
+}
 
 }} // namespace

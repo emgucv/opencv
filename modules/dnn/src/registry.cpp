@@ -4,7 +4,6 @@
 
 #include "precomp.hpp"
 
-#include "op_halide.hpp"
 #include "op_inf_engine.hpp"
 #include "ie_ngraph.hpp"
 #include "op_vkcom.hpp"
@@ -12,8 +11,6 @@
 #include "op_webnn.hpp"
 #include "op_timvx.hpp"
 #include "op_cann.hpp"
-
-#include "halide_scheduler.hpp"
 
 #include "backend.hpp"
 #include "factory.hpp"
@@ -38,14 +35,6 @@ public:
 private:
     BackendRegistry()
     {
-#ifdef HAVE_HALIDE
-        backends.push_back(std::make_pair(DNN_BACKEND_HALIDE, DNN_TARGET_CPU));
-#ifdef HAVE_OPENCL
-        if (cv::ocl::useOpenCL())
-            backends.push_back(std::make_pair(DNN_BACKEND_HALIDE, DNN_TARGET_OPENCL));
-#endif
-#endif  // HAVE_HALIDE
-
         bool haveBackendOpenVINO = false;
 #ifdef HAVE_INF_ENGINE
         haveBackendOpenVINO = true;
@@ -59,6 +48,11 @@ private:
                     haveBackendOpenVINO = true;
             }
         }
+#endif
+
+        bool haveBackendCPU_FP16 = false;
+#if defined(__arm64__) && __arm64__
+        haveBackendCPU_FP16 = true;
 #endif
 
         if (haveBackendOpenVINO && openvino::checkTarget(DNN_TARGET_CPU))
@@ -103,6 +97,9 @@ private:
 #endif
 
         backends.push_back(std::make_pair(DNN_BACKEND_OPENCV, DNN_TARGET_CPU));
+
+        if (haveBackendCPU_FP16)
+            backends.push_back(std::make_pair(DNN_BACKEND_OPENCV, DNN_TARGET_CPU_FP16));
 
 #ifdef HAVE_VULKAN
         if (haveVulkan())

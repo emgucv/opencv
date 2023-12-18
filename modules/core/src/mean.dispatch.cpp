@@ -8,20 +8,24 @@
 #include "opencv2/core/openvx/ovx_defs.hpp"
 #include "stat.hpp"
 
+#ifndef OPENCV_IPP_MEAN
 #undef HAVE_IPP
 #undef CV_IPP_RUN_FAST
 #define CV_IPP_RUN_FAST(f, ...)
 #undef CV_IPP_RUN
 #define CV_IPP_RUN(c, f, ...)
+#endif // OPENCV_IPP_MEAN
 
 #include "mean.simd.hpp"
 #include "mean.simd_declarations.hpp" // defines CV_CPU_DISPATCH_MODES_ALL=AVX2,...,BASELINE based on CMakeLists.txt content
 
+#ifndef OPENCV_IPP_MEAN
 #undef HAVE_IPP
 #undef CV_IPP_RUN_FAST
 #define CV_IPP_RUN_FAST(f, ...)
 #undef CV_IPP_RUN
 #define CV_IPP_RUN(c, f, ...)
+#endif // OPENCV_IPP_MEAN
 
 namespace cv {
 
@@ -36,7 +40,7 @@ static bool ipp_mean( Mat &src, Mat &mask, Scalar &ret )
     if (cn > 4)
         return false;
     int rows = src.size[0], cols = rows ? (int)(total_size/rows) : 0;
-    if( src.dims == 2 || (src.isContinuous() && mask.isContinuous() && cols > 0 && (size_t)rows*cols == total_size) )
+    if( src.dims <= 2 || (src.isContinuous() && mask.isContinuous() && cols > 0 && (size_t)rows*cols == total_size) )
     {
         IppiSize sz = { cols, rows };
         int type = src.type();
@@ -227,17 +231,17 @@ static bool ocl_meanStdDev( InputArray _src, OutputArray _mean, OutputArray _sdv
         if ( (!doubleSupport && depth == CV_64F) )
             return false;
 
-        char cvt[2][40];
+        char cvt[2][50];
         String opts = format("-D srcT=%s -D srcT1=%s -D dstT=%s -D dstT1=%s -D sqddepth=%d"
                              " -D sqdstT=%s -D sqdstT1=%s -D convertToSDT=%s -D cn=%d%s%s"
                              " -D convertToDT=%s -D WGS=%d -D WGS2_ALIGNED=%d%s%s",
                              ocl::typeToStr(type), ocl::typeToStr(depth),
                              ocl::typeToStr(dtype), ocl::typeToStr(ddepth), sqddepth,
                              ocl::typeToStr(sqdtype), ocl::typeToStr(sqddepth),
-                             ocl::convertTypeStr(depth, sqddepth, cn, cvt[0]),
+                             ocl::convertTypeStr(depth, sqddepth, cn, cvt[0], sizeof(cvt[0])),
                              cn, isContinuous ? " -D HAVE_SRC_CONT" : "",
                              isMaskContinuous ? " -D HAVE_MASK_CONT" : "",
-                             ocl::convertTypeStr(depth, ddepth, cn, cvt[1]),
+                             ocl::convertTypeStr(depth, ddepth, cn, cvt[1], sizeof(cvt[1])),
                              (int)wgs, wgs2_aligned, haveMask ? " -D HAVE_MASK" : "",
                              doubleSupport ? " -D DOUBLE_SUPPORT" : "");
 
@@ -406,7 +410,7 @@ static bool ipp_meanStdDev(Mat& src, OutputArray _mean, OutputArray _sdv, Mat& m
 
     size_t total_size = src.total();
     int rows = src.size[0], cols = rows ? (int)(total_size/rows) : 0;
-    if( src.dims == 2 || (src.isContinuous() && mask.isContinuous() && cols > 0 && (size_t)rows*cols == total_size) )
+    if( src.dims <= 2 || (src.isContinuous() && mask.isContinuous() && cols > 0 && (size_t)rows*cols == total_size) )
     {
         Ipp64f mean_temp[3];
         Ipp64f stddev_temp[3];

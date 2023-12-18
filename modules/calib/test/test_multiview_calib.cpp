@@ -58,14 +58,14 @@ TEST(multiview_calibration, accuracy) {
 
     const int MAX_SAMPLES = 2000, MAX_FRAMES = 50;
     cv::Mat pattern (board_pattern, true/*copy*/);
-    pattern = pattern.reshape(1).t();
+    pattern = pattern.reshape(1, num_pts).t();
     pattern.row(2) = 2.0; // set approximate depth of object points
     const double ty_min = -2, ty_max = 2, tx_min = -2, tx_max = 2, tz_min = -1, tz_max = 1;
     const double yaw_min = -45, yaw_max = 45, pitch_min = -45, pitch_max = 45, roll_min = -45, roll_max = 45;
     std::vector<std::vector<cv::Vec3f>> objPoints;
     std::vector<std::vector<cv::Mat>> image_points_all(num_cameras);
     cv::Mat ones = cv::Mat_<float>::ones(1, num_pts);
-    std::vector<std::vector<bool>> visibility;
+    std::vector<std::vector<uchar>> visibility;
     cv::Mat centroid = cv::Mat(cv::Matx31f(
             (float)cv::mean(pattern.row(0)).val[0],
             (float)cv::mean(pattern.row(1)).val[0],
@@ -83,7 +83,7 @@ TEST(multiview_calibration, accuracy) {
         cv::Mat pattern_new = (R * (pattern - centroid * ones) + centroid * ones  + t * ones).t();
 
         std::vector<cv::Mat> img_pts_cams(num_cameras);
-        std::vector<bool> visible(num_cameras, false);
+        std::vector<uchar> visible(num_cameras, (uchar)0);
         int num_visible_patterns = 0;
         for (int c = 0; c < num_cameras; c++) {
             cv::Mat img_pts;
@@ -108,7 +108,7 @@ TEST(multiview_calibration, accuracy) {
                 }
             }
             if (are_all_pts_in_image) {
-                visible[c] = true;
+                visible[c] = 1;
                 num_visible_patterns += 1;
                 img_pts.copyTo(img_pts_cams[c]);
             }
@@ -124,10 +124,10 @@ TEST(multiview_calibration, accuracy) {
                 break;
         }
     }
-    cv::Mat visibility_mat = cv::Mat_<bool>(num_cameras, (int)objPoints.size());
+    cv::Mat visibility_mat = cv::Mat_<uchar>(num_cameras, (int)objPoints.size());
     for (int c = 0; c < num_cameras; c++) {
         for (int f = 0; f < (int)objPoints.size(); f++) {
-            visibility_mat.at<bool>(c, f) = visibility[f][c];
+            visibility_mat.at<uchar>(c, f) = visibility[f][c];
         }
     }
 

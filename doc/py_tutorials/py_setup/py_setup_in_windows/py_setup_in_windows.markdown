@@ -1,6 +1,9 @@
 Install OpenCV-Python in Windows {#tutorial_py_setup_in_windows}
 ================================
 
+@warning
+The instruction is deprecated. Please use OpenCV-Python package instead. See https://github.com/opencv/opencv-python for more details
+
 Goals
 -----
 
@@ -32,6 +35,8 @@ Installing OpenCV from prebuilt binaries
 -#  Goto **opencv/build/python/2.7** folder.
 
 -#  Copy **cv2.pyd** to **C:/Python27/lib/site-packages**.
+
+-#  Copy the **opencv_world.dll** file to **C:/Python27/lib/site-packages**
 
 -#  Open Python IDLE and type following codes in Python terminal.
     @code

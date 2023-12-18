@@ -458,7 +458,7 @@ void transform(InputArray _src, OutputArray _dst, InputArray _mtx)
     CV_Assert( scn == m.cols || scn + 1 == m.cols );
     bool isDiag = false;
 
-    _dst.create( src.size(), CV_MAKETYPE(depth, dcn) );
+    _dst.createSameSize( src, CV_MAKETYPE(depth, dcn) );
     Mat dst = _dst.getMat();
 
     if (src.data == dst.data)  // inplace case
@@ -550,7 +550,7 @@ void perspectiveTransform(InputArray _src, OutputArray _dst, InputArray _mtx)
     CV_Assert( scn + 1 == m.cols );
     CV_Assert( depth == CV_32F || depth == CV_64F );
 
-    _dst.create( src.size(), CV_MAKETYPE(depth, dcn) );
+    _dst.createSameSize( src, CV_MAKETYPE(depth, dcn) );
     Mat dst = _dst.getMat();
 
     const int mtype = CV_64F;
@@ -606,8 +606,8 @@ static bool ocl_scaleAdd( InputArray _src1, double alpha, InputArray _src2, Outp
                          " -D wdepth=%d%s -D rowsPerWI=%d",
                          ocl::typeToStr(CV_MAKE_TYPE(depth, kercn)), depth,
                          ocl::typeToStr(CV_MAKE_TYPE(wdepth, kercn)),
-                         ocl::convertTypeStr(depth, wdepth, kercn, cvt[0]),
-                         ocl::convertTypeStr(wdepth, depth, kercn, cvt[1]),
+                         ocl::convertTypeStr(depth, wdepth, kercn, cvt[0], sizeof(cvt[0])),
+                         ocl::convertTypeStr(wdepth, depth, kercn, cvt[1], sizeof(cvt[1])),
                          ocl::typeToStr(wdepth), wdepth,
                          doubleSupport ? " -D DOUBLE_SUPPORT" : "", rowsPerWI));
     if (k.empty())
@@ -647,7 +647,7 @@ void scaleAdd(InputArray _src1, double alpha, InputArray _src2, OutputArray _dst
     CV_OCL_RUN(_src1.dims() <= 2 && _src2.dims() <= 2 && _dst.isUMat(),
             ocl_scaleAdd(_src1, alpha, _src2, _dst, type))
 
-    if( depth < CV_32F )
+    if( depth != CV_32F && depth != CV_64F )
     {
         addWeighted(_src1, alpha, _src2, 1, 0, _dst, depth);
         return;
@@ -979,7 +979,7 @@ typedef double (*DotProdFunc)(const uchar* src1, const uchar* src2, int len);
 
 static DotProdFunc getDotProdFunc(int depth)
 {
-    static DotProdFunc dotProdTab[] =
+    static DotProdFunc dotProdTab[CV_DEPTH_MAX] =
     {
         (DotProdFunc)GET_OPTIMIZED(dotProd_8u), (DotProdFunc)GET_OPTIMIZED(dotProd_8s),
         (DotProdFunc)dotProd_16u, (DotProdFunc)dotProd_16s,
@@ -1041,13 +1041,13 @@ static bool ocl_dot( InputArray _src1, InputArray _src2, double & res )
         wgs2_aligned <<= 1;
     wgs2_aligned >>= 1;
 
-    char cvt[40];
+    char cvt[50];
     ocl::Kernel k("reduce", ocl::core::reduce_oclsrc,
                   format("-D srcT=%s -D srcT1=%s -D dstT=%s -D dstTK=%s -D ddepth=%d -D convertToDT=%s -D OP_DOT "
                          "-D WGS=%d -D WGS2_ALIGNED=%d%s%s%s -D kercn=%d",
                          ocl::typeToStr(CV_MAKE_TYPE(depth, kercn)), ocl::typeToStr(depth),
                          ocl::typeToStr(ddepth), ocl::typeToStr(CV_MAKE_TYPE(ddepth, kercn)),
-                         ddepth, ocl::convertTypeStr(depth, ddepth, kercn, cvt),
+                         ddepth, ocl::convertTypeStr(depth, ddepth, kercn, cvt, sizeof(cvt)),
                          (int)wgs, wgs2_aligned, doubleSupport ? " -D DOUBLE_SUPPORT" : "",
                          _src1.isContinuous() ? " -D HAVE_SRC_CONT" : "",
                          _src2.isContinuous() ? " -D HAVE_SRC2_CONT" : "", kercn));

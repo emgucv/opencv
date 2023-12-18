@@ -43,7 +43,6 @@
 #include "../precomp.hpp"
 #include "layers_common.hpp"
 #include "../op_cuda.hpp"
-#include "../op_halide.hpp"
 #include "../op_inf_engine.hpp"
 #include "../ie_ngraph.hpp"
 #include "../op_vkcom.hpp"
@@ -106,8 +105,6 @@ public:
 #endif
         return backendId == DNN_BACKEND_OPENCV ||
                backendId == DNN_BACKEND_CUDA ||
-               backendId == DNN_BACKEND_HALIDE ||
-               (backendId == DNN_BACKEND_VKCOM && haveVulkan() && (size % 2 == 1) && (type == CHANNEL_NRM)) ||
                backendId == DNN_BACKEND_CANN;
     }
 
@@ -362,96 +359,15 @@ public:
     }
 #endif
 
-    virtual Ptr<BackendNode> initVkCom(const std::vector<Ptr<BackendWrapper> > &inputs) CV_OVERRIDE
-    {
-#ifdef HAVE_VULKAN
-        std::shared_ptr<vkcom::OpBase> op(new vkcom::OpLRN(size / 2, bias, alpha, beta, normBySize));
-        return Ptr<BackendNode>(new VkComBackendNode(inputs, op));
-#endif
-        return Ptr<BackendNode>();
-    }
-
-    virtual Ptr<BackendNode> initHalide(const std::vector<Ptr<BackendWrapper> > &inputs) CV_OVERRIDE
-    {
-#ifdef HAVE_HALIDE
-        float alphaSize = alpha;
-        if (normBySize)
-            alphaSize /= (type == CHANNEL_NRM ? size : size * size);
-        int width, height, channels, numImgs;
-        Halide::Buffer<float> inputBuffer = halideBuffer(inputs[0]);
-        getCanonicalSize(inputBuffer, &width, &height, &channels, &numImgs);
-
-        Halide::Var x("x"), y("y"), c("c"), n("n");
-        Halide::Func top = (name.empty() ? Halide::Func() : Halide::Func(name));
-        Halide::Func padded_sq(name + "_padded_sq");
-        Halide::Func sq("sq");
-        sq(x, y, c, n) = inputBuffer(x, y, c, n) * inputBuffer(x, y, c, n);
-
-        Halide::Func bounded =
-            Halide::BoundaryConditions::constant_exterior(sq, 0, 0, width,
-                                                          0, height,
-                                                          0, channels,
-                                                          0, numImgs);
-        padded_sq(x, y, c, n) = bounded(x, y, c, n);
-
-        Halide::Expr base;
-        if (type == CHANNEL_NRM)
-        {
-            Halide::RDom r((1 - size) / 2, size);
-            base = alphaSize * sum(padded_sq(x, y, c + r, n));
-        }
-        else  // SPATIAL_NRM
-        {
-            Halide::RDom r((1 - size) / 2, size, (1 - size) / 2, size);
-            base = alphaSize * sum(padded_sq(x + r.x, y + r.y, c, n));
-        }
-        base += static_cast<float>(bias);
-        top(x, y, c, n) = inputBuffer(x, y, c, n) / pow(base, beta);
-        return Ptr<BackendNode>(new HalideBackendNode({ padded_sq, top }));
-#endif  // HAVE_HALIDE
-        return Ptr<BackendNode>();
-    }
-
-    virtual void applyHalideScheduler(Ptr<BackendNode>& node,
-                                      const std::vector<Mat*> &inputs,
-                                      const std::vector<Mat> &outputs,
-                                      int targetId) const CV_OVERRIDE
-    {
-#ifdef  HAVE_HALIDE
-        if (targetId != DNN_TARGET_CPU)
-        {
-            Layer::applyHalideScheduler(node, inputs, outputs, targetId);
-            return;
-        }
-        int outW, outH, outC, outN;
-        getCanonicalSize(outputs[0].size, &outW, &outH, &outC, &outN);
-
-        Halide::Var x("x"), y("y"), c("c"), n("n"), yo("yo"), yi("yi"), tile("tile");
-        Halide::Func& top = node.dynamicCast<HalideBackendNode>()->funcs[1];
-        Halide::Func& padded_sq = node.dynamicCast<HalideBackendNode>()->funcs[0];
-
-        if (outW < 8 || outH <= 2)
-            return;
-
-        top.reorder(x, c, y, n)
-           .split(y, yo, yi, 2)
-           .fuse(yo, n, tile)
-           .parallel(tile)
-           .unroll(yi)
-           .vectorize(x, 8);
-        padded_sq.store_at(top, tile)
-                 .compute_at(top, yi);
-#endif  // HAVE_HALIDE
-    }
-
 #ifdef HAVE_CANN
-    virtual Ptr<BackendNode> initCann(const std::vector<Ptr<BackendWrapper> > &inputsWrapper, const int index, const std::vector<Ptr<BackendNode> >& nodes) CV_OVERRIDE
+    virtual Ptr<BackendNode> initCann(const std::vector<Ptr<BackendWrapper> > &inputs,
+                                      const std::vector<Ptr<BackendWrapper> > &outputs,
+                                      const std::vector<Ptr<BackendNode> >& nodes) CV_OVERRIDE
     {
-        auto x = inputsWrapper[0].dynamicCast<CannBackendWrapper>();
+        auto x = inputs[0].dynamicCast<CannBackendWrapper>();
 
         // create operator
-        std::string op_name = cv::format("lrn_%d", index);
-        auto op = std::make_shared<ge::op::LRN>(op_name);
+        auto op = std::make_shared<ge::op::LRN>(name);
 
         // set attributes
         op->set_attr_depth_radius(size);
@@ -465,7 +381,7 @@ public:
         // set inputs
         // set inputs : x
         auto op_x = nodes[0].dynamicCast<CannBackendNode>()->getOp();
-        op->set_input_x_by_name(*op_x, "y");
+        op->set_input_x_by_name(*op_x, x->name.c_str());
         auto x_desc = x->getTensorDesc();
         op->update_input_desc_x(*x_desc);
 
@@ -489,7 +405,7 @@ public:
         if (type != SPATIAL_NRM) {
             axes = {1};
         } else {
-            axes.resize(ieInpNode->get_shape().size() - 2);
+            axes.resize(ieInpNode.get_shape().size() - 2);
             std::iota(axes.begin(), axes.end(), 2);
         }
         auto ngraph_axes = std::make_shared<ngraph::op::Constant>(ngraph::element::i64, ngraph::Shape{axes.size()}, axes.data());

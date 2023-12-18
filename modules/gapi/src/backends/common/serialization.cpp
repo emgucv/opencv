@@ -8,6 +8,7 @@
 #include <map> // map
 #include <ade/util/zip_range.hpp> // indexed
 
+#ifdef _WIN32
 #define NOMINMAX
 
 #if defined( WINRT )

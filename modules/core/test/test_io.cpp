@@ -435,6 +435,8 @@ protected:
                 CV_Assert( ov1 == v1 );
                 CV_Assert( osc1 == sc1 );
                 CV_Assert( og1 == g1 );
+                fs.release();
+                remove(fname.c_str());
             }
             catch(...)
             {
@@ -489,6 +491,7 @@ TEST(Core_InputOutput, FileStorage)
     char arr[66];
     snprintf(arr, sizeof(arr), "snprintf is hell %d", 666);
     EXPECT_NO_THROW(f << arr);
+    remove(file.c_str());
 }
 
 TEST(Core_InputOutput, FileStorageKey)
@@ -534,6 +537,7 @@ TEST(Core_InputOutput, FileStorageSpaces)
         ASSERT_STREQ(values[i].c_str(), valuesReadAppend[i].c_str());
     }
     g3.release();
+    EXPECT_EQ(0, remove(fileName.c_str()));
 }
 
 struct data_t
@@ -585,12 +589,15 @@ struct data_t
 
 static void test_filestorage_basic(int write_flags, const char* suffix_name, bool testReadWrite, bool useMemory = false)
 {
+    const bool generateTestData = false; // enable to regenerate reference in opencv_extra
     const ::testing::TestInfo* const test_info = ::testing::UnitTest::GetInstance()->current_test_info();
     CV_Assert(test_info);
     std::string name = (std::string(test_info->test_case_name()) + "--" + test_info->name() + suffix_name);
     std::string name_34 = string(cvtest::TS::ptr()->get_data_path()) + "io/3_4/" + name;
-    if (!testReadWrite)
+    if (!testReadWrite || generateTestData)
         name = string(cvtest::TS::ptr()->get_data_path()) + "io/" + name;
+    else
+        name = cv::tempfile(name.c_str());
 
     {
         const size_t rawdata_N = 40;
@@ -636,10 +643,7 @@ static void test_filestorage_basic(int write_flags, const char* suffix_name, boo
                 rawdata.push_back(tmp);
             }
         }
-#ifdef GENERATE_TEST_DATA
-#else
-        if (testReadWrite || useMemory)
-#endif
+        if (testReadWrite || useMemory || generateTestData)
         {
             cv::FileStorage fs(name, write_flags + (useMemory ? cv::FileStorage::MEMORY : 0));
             fs << "normal_2d_mat" << _2d_out;
@@ -680,7 +684,9 @@ static void test_filestorage_basic(int write_flags, const char* suffix_name, boo
                 reference.read(&reference_data[0], ref_sz);
                 reference.close();
 
-                EXPECT_EQ(reference_data, test_data);
+                if (useMemory) {
+                    EXPECT_EQ(reference_data, test_data);
+                }
             }
             std::cout << "Storage size: " << sz << std::endl;
             EXPECT_LE(sz, (size_t)6000);
@@ -736,16 +742,14 @@ static void test_filestorage_basic(int write_flags, const char* suffix_name, boo
         {
             for (int j = 0; j < _2d_out.cols; ++j)
             {
-                EXPECT_EQ(_2d_in.at<cv::Vec3b>(i, j), _2d_out.at<cv::Vec3b>(i, j));
-                if (::testing::Test::HasNonfatalFailure())
-                {
+                if (_2d_in.at<cv::Vec3b>(i, j) != _2d_out.at<cv::Vec3b>(i, j)) {
+                    EXPECT_EQ(_2d_in.at<cv::Vec3b>(i, j), _2d_out.at<cv::Vec3b>(i, j));
                     printf("i = %d, j = %d\n", i, j);
-                    errors++;
-                }
-                if (errors >= 3)
-                {
-                    i = _2d_out.rows;
-                    break;
+                    if (++errors >= 3)
+                    {
+                        i = _2d_out.rows;
+                        break;
+                    }
                 }
             }
         }
@@ -760,7 +764,14 @@ static void test_filestorage_basic(int write_flags, const char* suffix_name, boo
         ASSERT_EQ(_rd_in.cols   , _rd_out.cols);
         ASSERT_EQ(_rd_in.dims   , _rd_out.dims);
         ASSERT_EQ(_rd_in.depth(), _rd_out.depth());
-        EXPECT_EQ(0, cv::norm(_rd_in, _rd_out, NORM_INF));
+
+        if (useMemory)
+        {
+            EXPECT_EQ(0, cv::norm(_rd_in, _rd_out, NORM_INF));
+        }
+        if (testReadWrite && !useMemory && !generateTestData) {
+            EXPECT_EQ(0, remove(name.c_str()));
+        }
     }
 }
 
@@ -807,7 +818,7 @@ TEST(Core_InputOutput, filestorage_heap_overflow)
     const ::testing::TestInfo* const test_info = ::testing::UnitTest::GetInstance()->current_test_info();
     CV_Assert(test_info);
 
-    std::string name = std::string(test_info->test_case_name()) + "--" + test_info->name();
+    std::string name = cv::tempfile();
     const char data[] = {0x00, 0x2f, 0x4a, 0x4a, 0x50, 0x4a, 0x4a };
 
     std::ofstream file;
@@ -819,6 +830,7 @@ TEST(Core_InputOutput, filestorage_heap_overflow)
 
     // This just shouldn't segfault, otherwise it's fine
     EXPECT_ANY_THROW(FileStorage(name, FileStorage::READ));
+    EXPECT_EQ(0, remove(name.c_str()));
 }
 
 TEST(Core_InputOutput, filestorage_base64_valid_call)
@@ -832,18 +844,6 @@ TEST(Core_InputOutput, filestorage_base64_valid_call)
         "core_io_base64_other_test.yml",
         "core_io_base64_other_test.xml",
         "core_io_base64_other_test.json",
-        "core_io_base64_other_test.yml?base64",
-        "core_io_base64_other_test.xml?base64",
-        "core_io_base64_other_test.json?base64",
-        0
-    };
-    char const * real_name[] = {
-        "core_io_base64_other_test.yml",
-        "core_io_base64_other_test.xml",
-        "core_io_base64_other_test.json",
-        "core_io_base64_other_test.yml",
-        "core_io_base64_other_test.xml",
-        "core_io_base64_other_test.json",
         0
     };
 
@@ -852,14 +852,16 @@ TEST(Core_InputOutput, filestorage_base64_valid_call)
 
     for (int n = 0; n < 6; n++)
     {
-        char const* suffix_name = filenames[n];
-        SCOPED_TRACE(suffix_name);
-        std::string name = basename + '_' + suffix_name;
-        std::string file_name = basename + '_' + real_name[n];
+        const int idx = n / 2;
+        const std::string mode_suffix = (n % 2 == 0) ? "" : "?base64";
+        std::string suffix_name = basename + "_" + filenames[idx];
+        std::string file_name = cv::tempfile(suffix_name.c_str());
+        std::string mode_file_name = file_name + mode_suffix;
+        SCOPED_TRACE(mode_file_name);
 
         EXPECT_NO_THROW(
         {
-            cv::FileStorage fs(name, cv::FileStorage::WRITE_BASE64);
+            cv::FileStorage fs(mode_file_name, cv::FileStorage::WRITE_BASE64);
 
             fs << "manydata" << "[";
             fs << "[:";
@@ -887,7 +889,7 @@ TEST(Core_InputOutput, filestorage_base64_valid_call)
 
         EXPECT_NO_THROW(
         {
-            cv::FileStorage fs(name, cv::FileStorage::WRITE);
+            cv::FileStorage fs(mode_file_name, cv::FileStorage::WRITE);
 
             fs << "manydata" << "[";
             fs << str_out;
@@ -931,10 +933,10 @@ TEST(Core_InputOutput, filestorage_base64_invalid_call)
         0
     };
 
-    for (char const ** ptr = filenames; *ptr; ptr++)
+    for (int idx = 0; idx < 3; ++idx)
     {
-        char const * suffix_name = *ptr;
-        std::string name = basename + '_' + suffix_name;
+        const string base_suffix = basename + '_' + filenames[idx];
+        std::string name = cv::tempfile(base_suffix.c_str());
 
         EXPECT_NO_THROW({
             cv::FileStorage fs(name, cv::FileStorage::WRITE);
@@ -955,7 +957,7 @@ TEST(Core_InputOutput, filestorage_base64_invalid_call)
 
 TEST(Core_InputOutput, filestorage_yml_vec2i)
 {
-    const std::string file_name = "vec2i.yml";
+    const std::string file_name = cv::tempfile("vec2i.yml");
     cv::Vec2i vec(2, 1), ovec;
 
     /* write */
@@ -1037,7 +1039,7 @@ TEST(Core_InputOutput, filestorage_vec_vec_io)
         }
     }
 
-    String fileName = "vec_vec_io_test.";
+    String basename = "vec_vec_io_test.";
 
     std::vector<String> formats;
     formats.push_back("xml");
@@ -1046,11 +1048,13 @@ TEST(Core_InputOutput, filestorage_vec_vec_io)
 
     for(size_t i = 0; i < formats.size(); i++)
     {
-        FileStorage writer(fileName + formats[i], FileStorage::WRITE);
+        const String basename_plus(basename + formats[i]);
+        const String fileName = tempfile(basename_plus.c_str());
+        FileStorage writer(fileName, FileStorage::WRITE);
         writer << "vecVecMat" << outputMats;
         writer.release();
 
-        FileStorage reader(fileName + formats[i], FileStorage::READ);
+        FileStorage reader(fileName, FileStorage::READ);
         std::vector<std::vector<Mat> > testMats;
         reader["vecVecMat"] >> testMats;
 
@@ -1067,7 +1071,7 @@ TEST(Core_InputOutput, filestorage_vec_vec_io)
         }
 
         reader.release();
-        remove((fileName + formats[i]).c_str());
+        remove(fileName.c_str());
     }
 }
 
@@ -1658,7 +1662,7 @@ TEST(Core_InputOutput, FileStorage_json_bool)
 
 TEST(Core_InputOutput, FileStorage_free_file_after_exception)
 {
-    const std::string fileName = "FileStorage_free_file_after_exception_test.yml";
+    const std::string fileName = cv::tempfile("FileStorage_free_file_after_exception_test.yml");
     const std::string content = "%YAML:1.0\n cameraMatrix;:: !<tag:yaml.org,2002:opencv-matrix>\n";
 
     std::fstream testFile;
@@ -1681,11 +1685,11 @@ TEST(Core_InputOutput, FileStorage_free_file_after_exception)
 TEST(Core_InputOutput, FileStorage_write_to_sequence)
 {
     const std::vector<std::string> formatExts = { ".yml", ".json", ".xml" };
-    const std::string fileName = "FileStorage_write_to_sequence";
-
     for (const auto& ext : formatExts)
     {
-        FileStorage fs(fileName + ext, FileStorage::WRITE);
+        const std::string name = tempfile(ext.c_str());
+
+        FileStorage fs(name, FileStorage::WRITE);
         std::vector<int> in = { 23, 42 };
         fs.startWriteStruct("some_sequence", cv::FileNode::SEQ);
         for (int i : in)
@@ -1693,7 +1697,7 @@ TEST(Core_InputOutput, FileStorage_write_to_sequence)
         fs.endWriteStruct();
         fs.release();
 
-        FileStorage fsIn(fileName + ext, FileStorage::READ);
+        FileStorage fsIn(name, FileStorage::READ);
         FileNode seq = fsIn["some_sequence"];
         FileNodeIterator it = seq.begin(), it_end = seq.end();
         std::vector<int> out;
@@ -1701,12 +1705,13 @@ TEST(Core_InputOutput, FileStorage_write_to_sequence)
             out.push_back((int)*it);
 
         EXPECT_EQ(in, out);
+        EXPECT_EQ(0, remove(name.c_str()));
     }
 }
 
 TEST(Core_InputOutput, FileStorage_YAML_parse_multiple_documents)
 {
-    const std::string filename = "FileStorage_YAML_parse_multiple_documents.yml";
+    const std::string filename = cv::tempfile("FileStorage_YAML_parse_multiple_documents.yml");
     FileStorage fs;
 
     fs.open(filename, FileStorage::WRITE);
@@ -1901,15 +1906,25 @@ static void test_20279(FileStorage& fs)
     EXPECT_EQ(CV_16FC3, m16fc3.type()) << typeToString(m16fc3.type());
     //std::cout << m16fc3 << std::endl;
 
+    Mat m16bfc1, m16bfc3;
+    m16fc1.convertTo(m16bfc1, CV_16BF);
+    m16fc3.convertTo(m16bfc3, CV_16BF);
+
     fs << "m16fc1" << m16fc1;
     fs << "m16fc3" << m16fc3;
+    fs << "m16bfc1" << m16bfc1;
+    fs << "m16bfc3" << m16bfc3;
 
     string content = fs.releaseAndGetString();
     if (cvtest::debugLevel > 0) std::cout << content << std::endl;
 
     FileStorage fs_read(content, FileStorage::READ + FileStorage::MEMORY);
+
     Mat m16fc1_result;
     Mat m16fc3_result;
+    Mat m16bfc1_result;
+    Mat m16bfc3_result;
+
     fs_read["m16fc1"] >> m16fc1_result;
     ASSERT_FALSE(m16fc1_result.empty());
     EXPECT_EQ(CV_16FC1, m16fc1_result.type()) << typeToString(m16fc1_result.type());
@@ -1919,6 +1934,16 @@ static void test_20279(FileStorage& fs)
     ASSERT_FALSE(m16fc3_result.empty());
     EXPECT_EQ(CV_16FC3, m16fc3_result.type()) << typeToString(m16fc3_result.type());
     EXPECT_LE(cvtest::norm(m16fc3_result, m16fc3, NORM_INF), 1e-2);
+
+    fs_read["m16bfc1"] >> m16bfc1_result;
+    ASSERT_FALSE(m16bfc1_result.empty());
+    EXPECT_EQ(CV_16BFC1, m16bfc1_result.type()) << typeToString(m16bfc1_result.type());
+    EXPECT_LE(cvtest::norm(m16bfc1_result, m16bfc1, NORM_INF), 2e-2);
+
+    fs_read["m16bfc3"] >> m16bfc3_result;
+    ASSERT_FALSE(m16bfc3_result.empty());
+    EXPECT_EQ(CV_16BFC3, m16bfc3_result.type()) << typeToString(m16bfc3_result.type());
+    EXPECT_LE(cvtest::norm(m16bfc3_result, m16bfc3, NORM_INF), 2e-2);
 }
 
 TEST(Core_InputOutput, FileStorage_16F_xml)

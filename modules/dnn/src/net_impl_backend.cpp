@@ -17,7 +17,8 @@ CV__DNN_INLINE_NS_BEGIN
 
 Ptr<BackendWrapper> Net::Impl::wrap(Mat& host)
 {
-    if (preferableBackend == DNN_BACKEND_OPENCV && preferableTarget == DNN_TARGET_CPU)
+    if (preferableBackend == DNN_BACKEND_OPENCV &&
+            (preferableTarget == DNN_TARGET_CPU || preferableTarget == DNN_TARGET_CPU_FP16))
         return Ptr<BackendWrapper>();
 
     MatShape shape(host.dims);
@@ -35,13 +36,6 @@ Ptr<BackendWrapper> Net::Impl::wrap(Mat& host)
             return OpenCLBackendWrapper::create(baseBuffer, host);
 #else
             CV_Error(Error::StsInternal, "");
-#endif
-        }
-        else if (preferableBackend == DNN_BACKEND_HALIDE)
-        {
-            CV_Assert(haveHalide());
-#ifdef HAVE_HALIDE
-            return Ptr<BackendWrapper>(new HalideBackendWrapper(baseBuffer, shape));
 #endif
         }
         else if (preferableBackend == DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019)
@@ -104,15 +98,7 @@ void Net::Impl::initBackend(const std::vector<LayerPin>& blobsToKeep_)
     CV_TRACE_FUNCTION();
     if (preferableBackend == DNN_BACKEND_OPENCV)
     {
-        CV_Assert(preferableTarget == DNN_TARGET_CPU || IS_DNN_OPENCL_TARGET(preferableTarget));
-    }
-    else if (preferableBackend == DNN_BACKEND_HALIDE)
-    {
-#ifdef HAVE_HALIDE
-        initHalideBackend();
-#else
-        CV_Error(Error::StsNotImplemented, "This OpenCV version is built without support of Halide");
-#endif
+        CV_Assert(preferableTarget == DNN_TARGET_CPU || preferableTarget == DNN_TARGET_CPU_FP16 || IS_DNN_OPENCL_TARGET(preferableTarget));
     }
     else if (preferableBackend == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH)
     {
@@ -169,11 +155,19 @@ void Net::Impl::setPreferableBackend(Net& net, int backendId)
     if (backendId == DNN_BACKEND_INFERENCE_ENGINE)
         backendId = DNN_BACKEND_INFERENCE_ENGINE_NGRAPH;  // = getInferenceEngineBackendTypeParam();
 
-    if (netWasQuantized && backendId != DNN_BACKEND_OPENCV && backendId != DNN_BACKEND_TIMVX)
+    if (netWasQuantized && backendId != DNN_BACKEND_OPENCV && backendId != DNN_BACKEND_TIMVX &&
+        backendId != DNN_BACKEND_INFERENCE_ENGINE_NGRAPH)
     {
-        CV_LOG_WARNING(NULL, "DNN: Only default and TIMVX backends support quantized networks");
+        CV_LOG_WARNING(NULL, "DNN: Only default, TIMVX and OpenVINO backends support quantized networks");
         backendId = DNN_BACKEND_OPENCV;
     }
+#ifdef HAVE_DNN_NGRAPH
+    if (netWasQuantized && backendId == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH && INF_ENGINE_VER_MAJOR_LT(INF_ENGINE_RELEASE_2023_0))
+    {
+        CV_LOG_WARNING(NULL, "DNN: OpenVINO 2023.0 and higher is required to supports quantized networks");
+        backendId = DNN_BACKEND_OPENCV;
+    }
+#endif
 
     if (preferableBackend != backendId)
     {
@@ -232,6 +226,15 @@ void Net::Impl::setPreferableTarget(int targetId)
                 preferableTarget = DNN_TARGET_OPENCL;
 #endif
         }
+
+#if !defined(__arm64__) || !__arm64__
+        if (targetId == DNN_TARGET_CPU_FP16)
+        {
+            CV_LOG_WARNING(NULL, "DNN: fall back to DNN_TARGET_CPU. Only ARM v8 CPU is supported by DNN_TARGET_CPU_FP16.");
+            targetId = DNN_TARGET_CPU;
+        }
+#endif
+
         clear();
     }
 }

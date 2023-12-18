@@ -55,7 +55,7 @@ struct Layer_Slice : public TestBaseWithParam<tuple<Backend, Target> >
     }
 };
 
-static std::set<std::string> nary_eltwise_cuda_deny_ops = {"add", "equal", "greater", "less", "mean", "mul", "pow", "sub"};
+static std::set<std::string> nary_eltwise_cuda_deny_ops = {"equal", "greater", "less", "mean", "pow", "sub"};
 
 struct Layer_NaryEltwise : public TestBaseWithParam<tuple<Backend, Target> >
 {
@@ -66,8 +66,13 @@ struct Layer_NaryEltwise : public TestBaseWithParam<tuple<Backend, Target> >
 
         if (!isRef && backendId == DNN_BACKEND_CUDA)
         {
-            if (a_shape != b_shape)
-                throw SkipTestException("The test is skipped because inputs with different shapes are not supported.");
+            if (a_shape.size() != b_shape.size())
+                throw SkipTestException("The test is skipped because inputs with different shape size are not supported.");
+
+            for(int i = 0; i < a_shape.size(); i++)
+                if (a_shape[i] != b_shape[i] && a_shape[i] != 1 && b_shape[i] != 1)
+                    throw SkipTestException("The test is skipped because inputs are not supported.");
+
             if (nary_eltwise_cuda_deny_ops.find(op) != nary_eltwise_cuda_deny_ops.end())
                 throw SkipTestException("The operator '" + op + "' is skipped because is not support with cuda currently.");
         }
@@ -213,6 +218,11 @@ PERF_TEST_P_(Layer_NaryEltwise, NCHW_C_sum)
 PERF_TEST_P_(Layer_NaryEltwise, NHWC_C)
 {
     test_layer({N, H, W, C}, {1, C}, "sum");
+}
+
+PERF_TEST_P_(Layer_NaryEltwise, NHWC_H)
+{
+    test_layer({N, H, W, C}, {1, H, 1, 1}, "sum");
 }
 
 PERF_TEST_P_(Layer_Slice, YOLOv4_tiny_1)
@@ -623,7 +633,57 @@ PERF_TEST_P_(Layer_LayerNormExpanded, DISABLED_LayerNormExpanded)
     test_layer({N, H ,W});
 }
 
-INSTANTIATE_TEST_CASE_P(/**/, Layer_Slice, dnnBackendsAndTargets(false, false));
+struct Layer_GatherElements : public TestBaseWithParam<tuple<Backend, Target> >
+{
+    void test_layer(const std::vector<int>& data_shape, const std::vector<int>& indices_shape, int axis = 0)
+    {
+        int backendId = get<0>(GetParam());
+        int targetId = get<1>(GetParam());
+
+        Mat data(data_shape, CV_32FC1);
+        Mat indices(indices_shape, CV_32FC1);
+
+        randu(data, 0.f, 1.f);
+        randu(indices, 0, data_shape[axis]);
+
+        Net net;
+        LayerParams lp;
+        lp.type = "GatherElements";
+        lp.name = "testLayer";
+        lp.set("axis", axis);
+        int id = net.addLayerToPrev(lp.name, lp.type, lp);
+        net.connect(0, 0, id, 0);
+        net.connect(0, 1, id, 1);
+
+        // warmup
+        {
+            std::vector<String> inpNames(3);
+            inpNames[0] = "data";
+            inpNames[1] = "indices";
+            net.setInputsNames(inpNames);
+            net.setInput(data, inpNames[0]);
+            net.setInput(indices, inpNames[1]);
+
+            net.setPreferableBackend(backendId);
+            net.setPreferableTarget(targetId);
+            Mat out = net.forward();
+        }
+
+        TEST_CYCLE()
+        {
+            Mat res = net.forward();
+        }
+
+        SANITY_CHECK_NOTHING();
+    }
+};
+
+PERF_TEST_P_(Layer_GatherElements, GatherElements)
+{
+    test_layer({2700, 1, 2914}, {2700, 1, 81}, 2);
+}
+
+INSTANTIATE_TEST_CASE_P(/**/, Layer_Slice, dnnBackendsAndTargets(/* withInferenceEngine = */false, /* obsolete_withHalide = */false));
 INSTANTIATE_TEST_CASE_P(/**/, Layer_NaryEltwise, testing::Values(std::make_tuple(DNN_BACKEND_OPENCV, DNN_TARGET_CPU)));
 #ifdef HAVE_CUDA
 INSTANTIATE_TEST_CASE_P(CUDA, Layer_NaryEltwise, testing::Values(std::make_tuple(DNN_BACKEND_CUDA, DNN_TARGET_CUDA)));
@@ -632,5 +692,70 @@ INSTANTIATE_TEST_CASE_P(/**/, Layer_Scatter, testing::Values(std::make_tuple(DNN
 INSTANTIATE_TEST_CASE_P(/**/, Layer_ScatterND, testing::Values(std::make_tuple(DNN_BACKEND_OPENCV, DNN_TARGET_CPU)));
 INSTANTIATE_TEST_CASE_P(/**/, Layer_LayerNorm, testing::Values(std::make_tuple(DNN_BACKEND_OPENCV, DNN_TARGET_CPU)));
 INSTANTIATE_TEST_CASE_P(/**/, Layer_LayerNormExpanded, testing::Values(std::make_tuple(DNN_BACKEND_OPENCV, DNN_TARGET_CPU)));
+INSTANTIATE_TEST_CASE_P(/**/, Layer_GatherElements, testing::Values(std::make_tuple(DNN_BACKEND_OPENCV, DNN_TARGET_CPU)));
+
+
+typedef TestBaseWithParam<tuple<Vec4i, int, bool, tuple<Backend, Target> > > Layer_FullyConnected;
+PERF_TEST_P_(Layer_FullyConnected, fc)
+{
+    std::vector<int> inpShape;
+    inpShape.reserve(4);
+    for (int i = 0; i < 4; ++i) {
+        int dim = get<0>(GetParam())[i];
+        if (dim == 0)
+            break;
+        inpShape.push_back(dim);
+    }
+    Mat input(inpShape, CV_32F);
+    randn(input, 0, 1);
+
+    int axis = input.dims - 1;
+    int outDims = get<1>(GetParam());
+    bool isMatMul = get<2>(GetParam());
+    int backendId = get<0>(get<3>(GetParam()));
+    int targetId = get<1>(get<3>(GetParam()));
+
+    std::vector<int> weightShape;
+    if (isMatMul) {
+        weightShape = inpShape;
+        weightShape[weightShape.size() - 2] = outDims;
+    } else {
+        weightShape = {outDims, (int)input.total(axis, input.dims)};
+    }
+    Mat weights(weightShape, CV_32F);
+    randn(weights, 0, 1);
+
+    LayerParams lp;
+    lp.set("axis", input.dims - 1);
+    lp.set("is_matmul", weights.dims > 2);
+    lp.set("bias_term", false);
+    lp.set("num_output", (int)weights.total(0, weights.dims - 1));
+    lp.blobs.resize(1, weights);
+
+    Net net;
+    net.addLayerToPrev("matmul", "InnerProduct", lp);
+
+    net.setInput(input);
+    net.setPreferableBackend(backendId);
+    net.setPreferableTarget(targetId);
+
+    // warmup
+    Mat output = net.forward();
+
+    TEST_CYCLE()
+    {
+        net.forward();
+    }
+    SANITY_CHECK_NOTHING();
+}
+INSTANTIATE_TEST_CASE_P(/**/, Layer_FullyConnected, Combine(
+    Values(                // input size
+        Vec4i(5, 512, 384),
+        Vec4i(5, 16, 512, 128)
+    ),
+    Values(256, 512, 1024),  // output dimension
+    testing::Bool(),         // is_matmul
+    dnnBackendsAndTargets()
+));
 
 } // namespace

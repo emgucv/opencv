@@ -35,6 +35,8 @@ static inline bool readWrite(DetectorParameters &params, const FileNode* readNod
     check |= readWriteParameter("minMarkerDistanceRate", params.minMarkerDistanceRate, readNode, writeStorage);
     check |= readWriteParameter("cornerRefinementMethod", params.cornerRefinementMethod, readNode, writeStorage);
     check |= readWriteParameter("cornerRefinementWinSize", params.cornerRefinementWinSize, readNode, writeStorage);
+    check |= readWriteParameter("relativeCornerRefinmentWinSize", params.relativeCornerRefinmentWinSize, readNode,
+                                writeStorage);
     check |= readWriteParameter("cornerRefinementMaxIterations", params.cornerRefinementMaxIterations,
                                 readNode, writeStorage);
     check |= readWriteParameter("cornerRefinementMinAccuracy", params.cornerRefinementMinAccuracy,
@@ -692,7 +694,7 @@ static void _identifyCandidates(InputArray grey,
 
 /**
  * Line fitting  A * B = C :: Called from function refineCandidateLines
- * @param nContours, contour-container
+ * @param nContours contour-container
  */
 static Point3f _interpolate2Dline(const vector<Point2f>& nContours){
     CV_Assert(nContours.size() >= 2);
@@ -748,10 +750,8 @@ static Point2f _getCrossPoint(Point3f nLine1, Point3f nLine2){
 
 /**
  * Refine Corners using the contour vector :: Called from function detectMarkers
- * @param nContours, contour-container
- * @param nCorners, candidate Corners
- * @param camMatrix, cameraMatrix input 3x3 floating-point camera matrix
- * @param distCoeff, distCoeffs vector of distortion coefficient
+ * @param nContours contour-container
+ * @param nCorners candidate Corners
  */
 static void _refineCandidateLines(vector<Point>& nContours, vector<Point2f>& nCorners){
     vector<Point2f> contour2f(nContours.begin(), nContours.end());
@@ -847,6 +847,16 @@ struct ArucoDetector::ArucoDetectorImpl {
                       const RefineParameters& _refineParams): dictionary(_dictionary),
                       detectorParams(_detectorParams), refineParams(_refineParams) {}
 
+    float getAverageArucoPinSize(vector<Point2f> markerCorners) {
+        float averageArucoModuleSize = 0.f;
+        int numPins = dictionary.markerSize + detectorParams.markerBorderBits * 2;
+        for (size_t i = 0ull; i < markerCorners.size(); i++) {
+            averageArucoModuleSize += sqrt(normL2Sqr<float>(Point2f(markerCorners[i] - markerCorners[(i+1ull)%markerCorners.size()])));
+        }
+        averageArucoModuleSize /= ((float)markerCorners.size()*numPins);
+        return averageArucoModuleSize;
+}
+
 };
 
 ArucoDetector::ArucoDetector(const Dictionary &_dictionary,
@@ -881,7 +891,7 @@ void ArucoDetector::detectMarkers(InputArray _image, OutputArrayOfArrays _corner
     }
     else {
         // always turn on corner refinement in case of Aruco3, due to upsampling
-        detectorParams.cornerRefinementMethod = CORNER_REFINE_SUBPIX;
+        detectorParams.cornerRefinementMethod = (int)CORNER_REFINE_SUBPIX;
         // only CORNER_REFINE_SUBPIX implement correctly for useAruco3Detection
         // Todo: update other CORNER_REFINE methods
     }
@@ -923,7 +933,7 @@ void ArucoDetector::detectMarkers(InputArray _image, OutputArrayOfArrays _corner
     vector<vector<vector<Point> > > contoursSet;
 
     /// STEP 2.a Detect marker candidates :: using AprilTag
-    if(detectorParams.cornerRefinementMethod == CORNER_REFINE_APRILTAG){
+    if(detectorParams.cornerRefinementMethod == (int)CORNER_REFINE_APRILTAG){
         _apriltag(grey, detectorParams, candidates, contours);
 
         candidatesSet.push_back(candidates);
@@ -938,7 +948,7 @@ void ArucoDetector::detectMarkers(InputArray _image, OutputArrayOfArrays _corner
                         candidates, contours, ids, detectorParams, _rejectedImgPoints);
 
     /// STEP 3: Corner refinement :: use corner subpix
-    if (detectorParams.cornerRefinementMethod == CORNER_REFINE_SUBPIX) {
+    if (detectorParams.cornerRefinementMethod == (int)CORNER_REFINE_SUBPIX) {
         CV_Assert(detectorParams.cornerRefinementWinSize > 0 && detectorParams.cornerRefinementMaxIterations > 0 &&
                   detectorParams.cornerRefinementMinAccuracy > 0);
         // Do subpixel estimation. In Aruco3 start on the lowest pyramid level and upscale the corners
@@ -951,21 +961,23 @@ void ArucoDetector::detectMarkers(InputArray _image, OutputArrayOfArrays _corner
                     const float scale_init = (float) grey_pyramid[closest_pyr_image_idx].cols / grey.cols;
                     findCornerInPyrImage(scale_init, closest_pyr_image_idx, grey_pyramid, Mat(candidates[i]), detectorParams);
                 }
-                else
-                cornerSubPix(grey, Mat(candidates[i]),
-                             Size(detectorParams.cornerRefinementWinSize, detectorParams.cornerRefinementWinSize),
-                             Size(-1, -1),
-                             TermCriteria(TermCriteria::MAX_ITER | TermCriteria::EPS,
-                                          detectorParams.cornerRefinementMaxIterations,
-                                          detectorParams.cornerRefinementMinAccuracy));
+                else {
+                    int cornerRefinementWinSize = std::max(1, cvRound(detectorParams.relativeCornerRefinmentWinSize*
+                                                                      arucoDetectorImpl->getAverageArucoPinSize(candidates[i])));
+                    cornerRefinementWinSize = min(cornerRefinementWinSize, detectorParams.cornerRefinementWinSize);
+                    cornerSubPix(grey, Mat(candidates[i]), Size(cornerRefinementWinSize, cornerRefinementWinSize), Size(-1, -1),
+                                 TermCriteria(TermCriteria::MAX_ITER | TermCriteria::EPS,
+                                              detectorParams.cornerRefinementMaxIterations,
+                                              detectorParams.cornerRefinementMinAccuracy));
+                }
             }
         });
     }
 
     /// STEP 3, Optional : Corner refinement :: use contour container
-    if (detectorParams.cornerRefinementMethod == CORNER_REFINE_CONTOUR){
+    if (detectorParams.cornerRefinementMethod == (int)CORNER_REFINE_CONTOUR){
 
-        if (!_ids.empty()) {
+        if (!ids.empty()) {
 
             // do corner refinement using the contours for each detected markers
             parallel_for_(Range(0, (int)candidates.size()), [&](const Range& range) {
@@ -976,7 +988,7 @@ void ArucoDetector::detectMarkers(InputArray _image, OutputArrayOfArrays _corner
         }
     }
 
-    if (detectorParams.cornerRefinementMethod != CORNER_REFINE_SUBPIX && fxfy != 1.f) {
+    if (detectorParams.cornerRefinementMethod != (int)CORNER_REFINE_SUBPIX && fxfy != 1.f) {
         // only CORNER_REFINE_SUBPIX implement correctly for useAruco3Detection
         // Todo: update other CORNER_REFINE methods
 
@@ -1000,7 +1012,13 @@ static inline void _projectUndetectedMarkers(const Board &board, InputOutputArra
                                              OutputArray undetectedMarkersIds) {
     Mat rvec, tvec; // first estimate board pose with the current avaible markers
     Mat objPoints, imgPoints; // object and image points for the solvePnP function
-    board.matchImagePoints(detectedCorners, detectedIds, objPoints, imgPoints);
+    // To refine corners of ArUco markers the function refineDetectedMarkers() find an aruco markers pose from 3D-2D point correspondences.
+    // To find 3D-2D point correspondences uses matchImagePoints().
+    // The method matchImagePoints() works with ArUco corners (in Board/GridBoard cases) or with ChArUco corners (in CharucoBoard case).
+    // To refine corners of ArUco markers we need work with ArUco corners only in all boards.
+    // To call matchImagePoints() with ArUco corners for all boards we need to call matchImagePoints() from base class Board.
+    // The method matchImagePoints() implemented in Pimpl and we need to create temp Board object to call the base method.
+    Board(board.getObjPoints(), board.getDictionary(), board.getIds()).matchImagePoints(detectedCorners, detectedIds, objPoints, imgPoints);
     if (objPoints.total() < 4ull) // at least one marker from board so rvec and tvec are valid
         return;
     solvePnP(objPoints, imgPoints, cameraMatrix, distCoeffs, rvec, tvec);
@@ -1213,12 +1231,17 @@ void ArucoDetector::refineDetectedMarkers(InputArray _image, const Board& _board
         if(closestCandidateIdx >= 0) {
 
             // subpixel refinement
-            if(detectorParams.cornerRefinementMethod == CORNER_REFINE_SUBPIX) {
+            if(detectorParams.cornerRefinementMethod == (int)CORNER_REFINE_SUBPIX) {
                 CV_Assert(detectorParams.cornerRefinementWinSize > 0 &&
                           detectorParams.cornerRefinementMaxIterations > 0 &&
                           detectorParams.cornerRefinementMinAccuracy > 0);
+
+                std::vector<Point2f> marker(closestRotatedMarker.begin<Point2f>(), closestRotatedMarker.end<Point2f>());
+                int cornerRefinementWinSize = std::max(1, cvRound(detectorParams.relativeCornerRefinmentWinSize*
+                                                                  arucoDetectorImpl->getAverageArucoPinSize(marker)));
+                cornerRefinementWinSize = min(cornerRefinementWinSize, detectorParams.cornerRefinementWinSize);
                 cornerSubPix(grey, closestRotatedMarker,
-                             Size(detectorParams.cornerRefinementWinSize, detectorParams.cornerRefinementWinSize),
+                             Size(cornerRefinementWinSize, cornerRefinementWinSize),
                              Size(-1, -1), TermCriteria(TermCriteria::MAX_ITER | TermCriteria::EPS,
                                                         detectorParams.cornerRefinementMaxIterations,
                                                         detectorParams.cornerRefinementMinAccuracy));
@@ -1242,14 +1265,20 @@ void ArucoDetector::refineDetectedMarkers(InputArray _image, const Board& _board
         Mat(finalAcceptedIds).copyTo(_detectedIds);
         _copyVector2Output(finalAcceptedCorners, _detectedCorners);
 
+        vector<vector<Point2f> > rejectedCorners;
+        _copyInput2Vector(_rejectedCorners, rejectedCorners);
+
         // recalculate _rejectedCorners based on alreadyIdentified
         vector<vector<Point2f> > finalRejected;
-        for(unsigned int i = 0; i < alreadyIdentified.size(); i++) {
+        for(size_t i = 0; i < alreadyIdentified.size(); i++) {
             if(!alreadyIdentified[i]) {
-                finalRejected.push_back(_rejectedCorners.getMat(i).clone());
+                finalRejected.push_back(rejectedCorners[i]);
             }
         }
-        _copyVector2Output(finalRejected, _rejectedCorners);
+        rejectedCorners.clear();
+        for (size_t i = 0; i < finalRejected.size(); i++)
+            rejectedCorners.push_back(finalRejected[i]);
+        _copyVector2Output(rejectedCorners, _rejectedCorners);
 
         if(_recoveredIdxs.needed()) {
             Mat(recoveredIdxs).copyTo(_recoveredIdxs);
@@ -1309,24 +1338,26 @@ void drawDetectedMarkers(InputOutputArray _image, InputArrayOfArrays _corners,
     int nMarkers = (int)_corners.total();
     for(int i = 0; i < nMarkers; i++) {
         Mat currentMarker = _corners.getMat(i);
-        CV_Assert(currentMarker.total() == 4 && currentMarker.type() == CV_32FC2);
+        CV_Assert(currentMarker.total() == 4 && currentMarker.channels() == 2);
+        if (currentMarker.type() != CV_32SC2)
+            currentMarker.convertTo(currentMarker, CV_32SC2);
 
         // draw marker sides
         for(int j = 0; j < 4; j++) {
-            Point2f p0, p1;
-            p0 = currentMarker.ptr<Point2f>(0)[j];
-            p1 = currentMarker.ptr<Point2f>(0)[(j + 1) % 4];
+            Point p0, p1;
+            p0 = currentMarker.ptr<Point>(0)[j];
+            p1 = currentMarker.ptr<Point>(0)[(j + 1) % 4];
             line(_image, p0, p1, borderColor, 1);
         }
         // draw first corner mark
-        rectangle(_image, currentMarker.ptr<Point2f>(0)[0] - Point2f(3, 3),
-                  currentMarker.ptr<Point2f>(0)[0] + Point2f(3, 3), cornerColor, 1, LINE_AA);
+        rectangle(_image, currentMarker.ptr<Point>(0)[0] - Point(3, 3),
+                  currentMarker.ptr<Point>(0)[0] + Point(3, 3), cornerColor, 1, LINE_AA);
 
         // draw ID
         if(_ids.total() != 0) {
-            Point2f cent(0, 0);
+            Point cent(0, 0);
             for(int p = 0; p < 4; p++)
-                cent += currentMarker.ptr<Point2f>(0)[p];
+                cent += currentMarker.ptr<Point>(0)[p];
             cent = cent / 4.;
             stringstream s;
             s << "id=" << _ids.getMat().ptr<int>(0)[i];

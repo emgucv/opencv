@@ -32,7 +32,10 @@ std::string detail::NetImplBase::getDumpFileNameBase() const
 
 Net::Impl::~Impl()
 {
-    // nothing
+#ifdef HAVE_VULKAN
+    if (context)
+        context->reset();
+#endif
 }
 
 
@@ -98,11 +101,9 @@ void Net::Impl::validateBackendAndTarget()
 
     CV_Assert(preferableBackend != DNN_BACKEND_OPENCV ||
               preferableTarget == DNN_TARGET_CPU ||
+              preferableTarget == DNN_TARGET_CPU_FP16 ||
               preferableTarget == DNN_TARGET_OPENCL ||
               preferableTarget == DNN_TARGET_OPENCL_FP16);
-    CV_Assert(preferableBackend != DNN_BACKEND_HALIDE ||
-              preferableTarget == DNN_TARGET_CPU ||
-              preferableTarget == DNN_TARGET_OPENCL);
 #ifdef HAVE_WEBNN
     if (preferableBackend == DNN_BACKEND_WEBNN)
     {
@@ -199,16 +200,6 @@ void Net::Impl::setUpNet(const std::vector<LayerPin>& blobsToKeep_)
         it->second.skip = netInputLayer->skip;
 
         initBackend(blobsToKeep_);
-
-        if (!netWasAllocated)
-        {
-#ifdef HAVE_HALIDE
-            if (preferableBackend == DNN_BACKEND_HALIDE)
-                compileHalide();
-#else
-            CV_Assert(preferableBackend != DNN_BACKEND_HALIDE);
-#endif
-        }
 
         netWasAllocated = true;
 
@@ -658,14 +649,14 @@ void Net::Impl::forwardLayer(LayerData& ld)
                             m = u.getMat(ACCESS_READ);
                         if (!checkRange(m))
                         {
-                            std::cerr << "WARNING: NaN detected in layer output: id=" << ld.id << " name=" << layer->name << std::endl;
-                            std::cerr << "output id=" << i << " output shape=" << shape(m) << std::endl;
+                            CV_LOG_WARNING(NULL, "NaN detected in layer output: id=" << ld.id << " name=" << layer->name
+                                           << " output id=" << i << " output shape=" << shape(m));
                             fail = true;
                         }
                         else if (!checkRange(m, true, NULL, -1e6, 1e6))
                         {
-                            std::cerr << "WARNING: Inf detected in layer output: id=" << ld.id << " name=" << layer->name << std::endl;
-                            std::cerr << "output id=" << i << " output shape=" << shape(m) << std::endl;
+                            CV_LOG_WARNING(NULL, "Inf detected in layer output: id=" << ld.id << " name=" << layer->name
+                                           << " output id=" << i << " output shape=" << shape(m));
                             fail = true;
                         }
                     }
@@ -734,14 +725,14 @@ void Net::Impl::forwardLayer(LayerData& ld)
                         const Mat& m = ld.outputBlobs[i];
                         if (!checkRange(m))
                         {
-                            std::cerr << "WARNING: NaN detected in layer output: id=" << ld.id << " name=" << layer->name << std::endl;
-                            std::cerr << "output id=" << i << " output shape=" << shape(m) << std::endl;
+                            CV_LOG_WARNING(NULL, "NaN detected in layer output: "
+                                << cv::format("id=%d name=%s output id=%zu output shape=", ld.id, layer->name.c_str(), i) << shape(m));
                             fail = true;
                         }
                         else if (!checkRange(m, true, NULL, -1e6, 1e6))
                         {
-                            std::cerr << "WARNING: Inf detected in layer output: id=" << ld.id << " name=" << layer->name << std::endl;
-                            std::cerr << "output id=" << i << " output shape=" << shape(m) << std::endl;
+                            CV_LOG_WARNING(NULL, "Inf detected in layer output: "
+                                << cv::format("id=%d name=%s output id=%zu output shape=", ld.id, layer->name.c_str(), i) << shape(m));
                             fail = true;
                         }
                     }
@@ -803,10 +794,6 @@ void Net::Impl::forwardLayer(LayerData& ld)
                     wrapper->copyToHostInBackground();
                 }
 #endif
-            }
-            else if (preferableBackend == DNN_BACKEND_HALIDE)
-            {
-                forwardHalide(ld.outputBlobsWrappers, node);
             }
             else if (preferableBackend == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH)
             {
@@ -972,7 +959,8 @@ void Net::Impl::forward(OutputArrayOfArrays outputBlobs, const String& outputNam
     }
     else if (outputBlobs.isMatVector())
     {
-        if (preferableTarget != DNN_TARGET_CPU)
+        // The DNN_TARGET_CPU and DNN_TARGET_CPU_FP16 both use the CPU memory, do not need the copyToHost.
+        if (preferableTarget != DNN_TARGET_CPU && preferableTarget != DNN_TARGET_CPU_FP16)
         {
             for (int i = 0; i < ld.outputBlobsWrappers.size(); ++i)
             {
@@ -1336,7 +1324,7 @@ Mat Net::Impl::getBlob(const LayerPin& pin) const
                                               "the #%d was requested",
                                                ld.name.c_str(), ld.outputBlobs.size(), pin.oid));
     }
-    if (preferableTarget != DNN_TARGET_CPU)
+    if (preferableTarget != DNN_TARGET_CPU && preferableTarget != DNN_TARGET_CPU_FP16)
     {
         CV_Assert(!ld.outputBlobsWrappers.empty() && !ld.outputBlobsWrappers[pin.oid].empty());
         // Transfer data to CPU if it's require.
@@ -1400,6 +1388,7 @@ void Net::Impl::setInput(InputArray blob, const String& name, double scalefactor
     Mat blob_ = blob.getMat();  // can't use InputArray directly due MatExpr stuff
     MatShape blobShape = shape(blob_);
 
+#if 0  // TODO: DNNTestNetwork.MobileNet_SSD_Caffe_Different_Width_Height/0
     if (pin.lid == 0)
     {
         CV_Assert(!netInputLayer.empty());
@@ -1411,7 +1400,6 @@ void Net::Impl::setInput(InputArray blob, const String& name, double scalefactor
             if (!inputShapeLimitation.empty())
             {
                 CV_CheckEQ(inputShapeLimitation.size(), blobShape.size(), "");
-#if 0  // TODO: DNNTestNetwork.MobileNet_SSD_Caffe_Different_Width_Height/0
                 const size_t dims = inputShapeLimitation.size();
                 for (size_t dim = 0; dim < dims; dim++)
                 {
@@ -1419,10 +1407,10 @@ void Net::Impl::setInput(InputArray blob, const String& name, double scalefactor
                         continue;  // don't limit batch
                     CV_CheckEQ(inputShapeLimitation[dim], blobShape[dim], "");
                 }
-#endif
             }
         }
     }
+#endif
 
     LayerData& ld = layers[pin.lid];
     const int numInputs = std::max(pin.oid + 1, (int)ld.requiredOutputs.size());
@@ -1536,10 +1524,14 @@ string Net::Impl::dump(bool forceAllocation) const
         else
         {
             if (itBackend->second == prevNode)
-                skipId.push_back(idPrev);
+            {
+                if (idPrev != -1)
+                    skipId.push_back(idPrev);
+            }
             else if (!skipId.empty())
             {
-                skipId.push_back(idPrev);
+                if (idPrev != -1)
+                    skipId.push_back(idPrev);
                 std::sort(skipId.begin(), skipId.end());
                 for (int i = 0; i < skipId.size(); i++)
                 {
@@ -1552,12 +1544,11 @@ string Net::Impl::dump(bool forceAllocation) const
             prevNode = itBackend->second;
         }
     }
-    std::vector<string> colors = { "#ffffb3", "#fccde5", "#8dd3c7", "#bebada", "#80b1d3", "#fdb462", "#ff4848", "#b35151", "#b266ff", "#b266ff", "#3cb371"};
+    std::vector<string> colors = { "#ffffb3", "#fccde5", "#8dd3c7", "#bebada", "#80b1d3", "#fdb462", "#ff4848", "#b35151", "#b266ff", "#b266ff", "#3cb371", "#ffcab3"};
     string backend;
     switch (prefBackend)
     {
     case DNN_BACKEND_DEFAULT: backend = "DEFAULT/"; break;
-    case DNN_BACKEND_HALIDE: backend = "HALIDE/"; break;
     case DNN_BACKEND_INFERENCE_ENGINE:  // fallthru
     case DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019:  // fallthru
     case DNN_BACKEND_INFERENCE_ENGINE_NGRAPH: backend = "OpenVINO/"; break;
@@ -1754,6 +1745,10 @@ string Net::Impl::dump(bool forceAllocation) const
         case DNN_TARGET_NPU:
             out << "NPU";
             colorId = 9;
+            break;
+        case DNN_TARGET_CPU_FP16:
+            out << "CPU_FP16";
+            colorId = 10;
             break;
             // don't use default:
         }

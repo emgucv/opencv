@@ -53,9 +53,6 @@
 /* Geospatial Data Abstraction Library */
 #cmakedefine HAVE_GDAL
 
-/* Halide support */
-#cmakedefine HAVE_HALIDE
-
 /* Vulkan support */
 #cmakedefine HAVE_VULKAN
 
@@ -71,6 +68,9 @@
 /* JPEG-2000 codec */
 #cmakedefine HAVE_OPENJPEG
 #cmakedefine HAVE_JASPER
+
+/* AVIF codec */
+#cmakedefine HAVE_AVIF
 
 /* IJG JPEG codec */
 #cmakedefine HAVE_JPEG

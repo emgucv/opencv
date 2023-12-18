@@ -46,44 +46,44 @@ mixChannels_( const T** src, const int* sdelta,
 }
 
 
-static void mixChannels8u( const uchar** src, const int* sdelta,
-                           uchar** dst, const int* ddelta,
+static void mixChannels8u( const void** src, const int* sdelta,
+                           void** dst, const int* ddelta,
                            int len, int npairs )
 {
-    mixChannels_(src, sdelta, dst, ddelta, len, npairs);
+    mixChannels_((const uchar**)src, sdelta, (uchar**)dst, ddelta, len, npairs);
 }
 
-static void mixChannels16u( const ushort** src, const int* sdelta,
-                            ushort** dst, const int* ddelta,
+static void mixChannels16u( const void** src, const int* sdelta,
+                            void** dst, const int* ddelta,
                             int len, int npairs )
 {
-    mixChannels_(src, sdelta, dst, ddelta, len, npairs);
+    mixChannels_((const ushort**)src, sdelta, (ushort**)dst, ddelta, len, npairs);
 }
 
-static void mixChannels32s( const int** src, const int* sdelta,
-                            int** dst, const int* ddelta,
+static void mixChannels32s( const void** src, const int* sdelta,
+                            void** dst, const int* ddelta,
                             int len, int npairs )
 {
-    mixChannels_(src, sdelta, dst, ddelta, len, npairs);
+    mixChannels_((const int**)src, sdelta, (int**)dst, ddelta, len, npairs);
 }
 
-static void mixChannels64s( const int64** src, const int* sdelta,
-                            int64** dst, const int* ddelta,
+static void mixChannels64s( const void** src, const int* sdelta,
+                            void** dst, const int* ddelta,
                             int len, int npairs )
 {
-    mixChannels_(src, sdelta, dst, ddelta, len, npairs);
+    mixChannels_((const int64**)src, sdelta, (int64**)dst, ddelta, len, npairs);
 }
 
-typedef void (*MixChannelsFunc)( const uchar** src, const int* sdelta,
-        uchar** dst, const int* ddelta, int len, int npairs );
+typedef void (*MixChannelsFunc)( const void** src, const int* sdelta,
+        void** dst, const int* ddelta, int len, int npairs );
 
 static MixChannelsFunc getMixchFunc(int depth)
 {
-    static MixChannelsFunc mixchTab[] =
+    static MixChannelsFunc mixchTab[CV_DEPTH_MAX] =
     {
-        (MixChannelsFunc)mixChannels8u, (MixChannelsFunc)mixChannels8u, (MixChannelsFunc)mixChannels16u,
-        (MixChannelsFunc)mixChannels16u, (MixChannelsFunc)mixChannels32s, (MixChannelsFunc)mixChannels32s,
-        (MixChannelsFunc)mixChannels64s, 0
+        mixChannels8u, mixChannels8u, mixChannels16u,
+        mixChannels16u, mixChannels32s, mixChannels32s,
+        mixChannels64s, 0
     };
 
     return mixchTab[depth];
@@ -158,7 +158,7 @@ void cv::mixChannels( const Mat* src, size_t nsrcs, Mat* dst, size_t ndsts, cons
         for( int t = 0; t < total; t += blocksize )
         {
             int bsz = std::min(total - t, blocksize);
-            func( srcs, sdelta, dsts, ddelta, bsz, (int)npairs );
+            func( (const void**)srcs, sdelta, (void **)dsts, ddelta, bsz, (int)npairs );
 
             if( t + blocksize < total )
                 for( k = 0; k < npairs; k++ )
@@ -425,11 +425,11 @@ void cv::extractChannel(InputArray _src, OutputArray _dst, int coi)
     CV_Assert( 0 <= coi && coi < cn );
     int ch[] = { coi, 0 };
 
+    _dst.createSameSize(_src, depth);
 #ifdef HAVE_OPENCL
     if (ocl::isOpenCLActivated() && _src.dims() <= 2 && _dst.isUMat())
     {
         UMat src = _src.getUMat();
-        _dst.create(src.dims, &src.size[0], depth);
         UMat dst = _dst.getUMat();
         mixChannels(std::vector<UMat>(1, src), std::vector<UMat>(1, dst), ch, 1);
         return;
@@ -437,7 +437,6 @@ void cv::extractChannel(InputArray _src, OutputArray _dst, int coi)
 #endif
 
     Mat src = _src.getMat();
-    _dst.create(src.dims, &src.size[0], depth);
     Mat dst = _dst.getMat();
 
     CV_IPP_RUN_FAST(ipp_extractChannel(src, dst, coi))

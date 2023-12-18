@@ -184,6 +184,9 @@ void destroyWindowImpl( const char* name)
     //cout << "destroyWindowImpl" << endl;
     CVWindow *window = cvGetWindow(name);
     if(window) {
+        if ([window styleMask] & NSFullScreenWindowMask) {
+            [window toggleFullScreen:nil];
+        }
         [window close];
         [windows removeObjectForKey:[NSString stringWithFormat:@"%s", name]];
     }
@@ -593,7 +596,7 @@ int waitKeyImpl (int maxWait)
          inMode:NSDefaultRunLoopMode
          dequeue:YES];
 
-        if([event type] == NSKeyDown) {
+        if([event type] == NSKeyDown && [[event characters] length]) {
             returnCode = [[event characters] characterAtIndex:0];
             break;
         }
@@ -668,7 +671,11 @@ double cvGetModeWindow_COCOA( const char* name )
 void cvSetModeWindow_COCOA( const char* name, double prop_value )
 {
     CVWindow *window = nil;
+
+#if MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7
     NSDictionary *fullscreenOptions = nil;
+#endif
+
     NSAutoreleasePool* localpool = nil;
 
     CV_FUNCNAME( "cvSetModeWindow_COCOA" );
@@ -692,6 +699,31 @@ void cvSetModeWindow_COCOA( const char* name, double prop_value )
 
     localpool = [[NSAutoreleasePool alloc] init];
 
+#if MAC_OS_X_VERSION_MAX_ALLOWED > MAC_OS_X_VERSION_10_6
+    if ( ([window styleMask] & NSFullScreenWindowMask) && prop_value==cv::WINDOW_NORMAL )
+    {
+        [window toggleFullScreen:nil];
+
+        window.status=cv::WINDOW_NORMAL;
+    }
+    else if( !([window styleMask] & NSFullScreenWindowMask) && prop_value==cv::WINDOW_FULLSCREEN )
+    {
+        [window setCollectionBehavior:NSWindowCollectionBehaviorFullScreenPrimary];
+
+        NSScreen* screen = [window screen];
+
+        NSRect frame = [screen frame];
+        [window setFrame:frame display:YES];
+
+        [window setContentSize:frame.size];
+
+        [window toggleFullScreen:nil];
+
+        [window setFrameTopLeftPoint: frame.origin];
+
+        window.status=cv::WINDOW_FULLSCREEN;
+    }
+#else
     fullscreenOptions = [NSDictionary dictionaryWithObject:[NSNumber numberWithBool:YES] forKey:NSFullScreenModeSetting];
     if ( [[window contentView] isInFullScreenMode] && prop_value==cv::WINDOW_NORMAL )
     {
@@ -703,7 +735,7 @@ void cvSetModeWindow_COCOA( const char* name, double prop_value )
         [[window contentView] enterFullScreenMode:[NSScreen mainScreen] withOptions:fullscreenOptions];
         window.status=cv::WINDOW_FULLSCREEN;
     }
-
+#endif
     [localpool drain];
 
     __END__;
@@ -777,7 +809,7 @@ void cvSetPropTopmost_COCOA( const char* name, const bool topmost )
         CV_ERROR( CV_StsNullPtr, "NULL window" );
     }
 
-    if ([[window contentView] isInFullScreenMode])
+    if (([window styleMask] & NSFullScreenWindowMask))
     {
         EXIT;
     }
@@ -866,8 +898,22 @@ static NSSize constrainAspectRatio(NSSize base, NSSize constraint) {
     mp.y *= (imageSize.height / std::max(viewSize.height, 1.));
     mp.x *= (imageSize.width / std::max(viewSize.width, 1.));
 
-    if( mp.x >= 0 && mp.y >= 0 && mp.x < imageSize.width && mp.y < imageSize.height )
-        mouseCallback(type, mp.x, mp.y, flags, mouseParam);
+    if( [event type] == NSEventTypeScrollWheel ) {
+      if( event.hasPreciseScrollingDeltas ) {
+        mp.x = int(event.scrollingDeltaX);
+        mp.y = int(event.scrollingDeltaY);
+      } else {
+        mp.x = int(event.scrollingDeltaX / 0.100006);
+        mp.y = int(event.scrollingDeltaY / 0.100006);
+      }
+      if( mp.x && !mp.y && cv::EVENT_MOUSEWHEEL == type ) {
+        type = cv::EVENT_MOUSEHWHEEL;
+      }
+      mouseCallback(type, mp.x, mp.y, flags, mouseParam);
+    } else if( mp.x >= 0 && mp.y >= 0 && mp.x < imageSize.width && mp.y < imageSize.height ) {
+      mouseCallback(type, mp.x, mp.y, flags, mouseParam);
+    }
+
 }
 
 - (void)cvMouseEvent:(NSEvent *)event {
@@ -890,6 +936,11 @@ static NSSize constrainAspectRatio(NSSize base, NSSize constraint) {
     if([event type] == NSLeftMouseDragged) {[self cvSendMouseEvent:event type:cv::EVENT_MOUSEMOVE   flags:flags | cv::EVENT_FLAG_LBUTTON];}
     if([event type] == NSRightMouseDragged)	{[self cvSendMouseEvent:event type:cv::EVENT_MOUSEMOVE   flags:flags | cv::EVENT_FLAG_RBUTTON];}
     if([event type] == NSOtherMouseDragged)	{[self cvSendMouseEvent:event type:cv::EVENT_MOUSEMOVE   flags:flags | cv::EVENT_FLAG_MBUTTON];}
+    if([event type] == NSEventTypeScrollWheel) {[self cvSendMouseEvent:event type:cv::EVENT_MOUSEWHEEL   flags:flags ];}
+}
+
+-(void)scrollWheel:(NSEvent *)theEvent {
+    [self cvMouseEvent:theEvent];
 }
 - (void)keyDown:(NSEvent *)theEvent {
     //cout << "keyDown" << endl;

@@ -243,6 +243,7 @@ public:
     bool isUMat() const;
     bool isMatVector() const;
     bool isUMatVector() const;
+    bool isVecVector() const;
     bool isMatx() const;
     bool isVector() const;
     bool isGpuMat() const;
@@ -298,9 +299,9 @@ public:
         DEPTH_MASK_32F = 1 << CV_32F,
         DEPTH_MASK_64F = 1 << CV_64F,
         DEPTH_MASK_16F = 1 << CV_16F,
-        DEPTH_MASK_ALL = (DEPTH_MASK_64F<<1)-1,
+        DEPTH_MASK_ALL = (1 << CV_DEPTH_CURR_MAX)-1,
         DEPTH_MASK_ALL_BUT_8S = DEPTH_MASK_ALL & ~DEPTH_MASK_8S,
-        DEPTH_MASK_ALL_16F = (DEPTH_MASK_16F<<1)-1,
+        DEPTH_MASK_ALL_16F = DEPTH_MASK_ALL,
         DEPTH_MASK_FLT = DEPTH_MASK_32F + DEPTH_MASK_64F
     };
 
@@ -355,6 +356,9 @@ public:
     UMat& getUMatRef(int i=-1) const;
     cuda::GpuMat& getGpuMatRef() const;
     std::vector<cuda::GpuMat>& getGpuMatVecRef() const;
+    std::vector<Mat>& getMatVecRef() const;
+    std::vector<UMat>& getUMatVecRef() const;
+    template<typename _Tp> std::vector<std::vector<_Tp> >& getVecVecRef() const;
     ogl::Buffer& getOGlBufferRef() const;
     cuda::HostMem& getHostMemRef() const;
     void create(Size sz, int type, int i=-1, bool allowTransposed=false, _OutputArray::DepthMask fixedDepthMask=static_cast<_OutputArray::DepthMask>(0)) const;
@@ -602,7 +606,7 @@ struct CV_EXPORTS MatStep
     MatStep& operator = (size_t s);
 
     size_t* p;
-    size_t buf[2];
+    size_t buf[3];
 protected:
     MatStep& operator = (const MatStep&);
 };
@@ -1288,15 +1292,36 @@ public:
                              t(); // finally, transpose the Nx3 matrix.
                                   // This involves copying all the elements
     @endcode
+    3-channel 2x2 matrix reshaped to 1-channel 4x3 matrix, each column has values from one of original channels:
+    @code
+    Mat m(Size(2, 2), CV_8UC3, Scalar(1, 2, 3));
+    vector<int> new_shape {4, 3};
+    m = m.reshape(1, new_shape);
+    @endcode
+    or:
+    @code
+    Mat m(Size(2, 2), CV_8UC3, Scalar(1, 2, 3));
+    const int new_shape[] = {4, 3};
+    m = m.reshape(1, 2, new_shape);
+    @endcode
     @param cn New number of channels. If the parameter is 0, the number of channels remains the same.
     @param rows New number of rows. If the parameter is 0, the number of rows remains the same.
      */
     Mat reshape(int cn, int rows=0) const;
 
-    /** @overload */
+    /** @overload
+     * @param cn New number of channels. If the parameter is 0, the number of channels remains the same.
+     * @param newndims New number of dimentions.
+     * @param newsz Array with new matrix size by all dimentions. If some sizes are zero,
+     * the original sizes in those dimensions are presumed.
+     */
     Mat reshape(int cn, int newndims, const int* newsz) const;
 
-    /** @overload */
+    /** @overload
+     * @param cn New number of channels. If the parameter is 0, the number of channels remains the same.
+     * @param newshape Vector with new matrix size by all dimentions. If some sizes are zero,
+     * the original sizes in those dimensions are presumed.
+     */
     Mat reshape(int cn, const std::vector<int>& newshape) const;
 
     /** @brief Transposes a matrix.
@@ -1488,6 +1513,15 @@ public:
     @param type New matrix type.
     */
     void create(const std::vector<int>& sizes, int type);
+
+    /** @brief Creates the matrix of the same size as another array.
+
+    The method is similar to _OutputArray::createSameSize(arr, type),
+    but is applied to Mat.
+    @param arr The other array.
+    @param type New matrix type.
+    */
+    void createSameSize(InputArray arr, int type);
 
     /** @brief Increments the reference counter.
 
@@ -2113,6 +2147,7 @@ public:
     int dims;
     //! the number of rows and columns or (-1, -1) when the matrix has more than 2 dimensions
     int rows, cols;
+    int dummy = 153;
     //! pointer to the data
     uchar* data;
 
@@ -2286,6 +2321,8 @@ public:
     void create(Size _size);
     //! equivalent to Mat::create(_ndims, _sizes, DatType<_Tp>::type)
     void create(int _ndims, const int* _sizes);
+    //! equivalent to Mat::create(arr.ndims, arr.size.p, DatType<_Tp>::type)
+    void createSameSize(InputArray arr);
     //! equivalent to Mat::release()
     void release();
     //! cross-product
@@ -2504,6 +2541,10 @@ public:
     void create(Size size, int type, UMatUsageFlags usageFlags = USAGE_DEFAULT);
     void create(int ndims, const int* sizes, int type, UMatUsageFlags usageFlags = USAGE_DEFAULT);
     void create(const std::vector<int>& sizes, int type, UMatUsageFlags usageFlags = USAGE_DEFAULT);
+
+    //! allocates new matrix data unless the matrix already has specified size and type.
+    // the size is taken from the specified array.
+    void createSameSize(InputArray arr, int type, UMatUsageFlags usageFlags = USAGE_DEFAULT);
 
     //! increases the reference counter; use with care to avoid memleaks
     void addref();
@@ -2959,7 +3000,6 @@ public:
     int flags;
     Hdr* hdr;
 };
-
 
 
 ///////////////////////////////// SparseMat_<_Tp> ////////////////////////////////////

@@ -44,9 +44,11 @@ namespace gimpl {
     }
     inline RMat::View asView(const Mat& m, RMat::View::DestroyCallback&& cb = nullptr) {
 #if !defined(GAPI_STANDALONE)
-        RMat::View::stepsT steps(m.dims);
-        for (int i = 0; i < m.dims; i++) {
-            steps[i] = m.step[i];
+        int m_dims = m.dims < 2 ? 2 : m.dims;
+        RMat::View::stepsT steps(m_dims);
+        const size_t* m_step = m.dims <= 2 ? m.step.buf : m.step.p;
+        for (int i = 0; i < m_dims; i++) {
+            steps[i] = m_step[i];
         }
         return RMat::View(cv::descr_of(m), m.data, steps, std::move(cb));
 #else
@@ -225,6 +227,12 @@ inline void convertInt64ToInt32(const int64_t* src, int* dst, size_t size)
 {
     std::transform(src, src + size, dst,
                    [](int64_t el) { return static_cast<int>(el); });
+}
+
+inline void convertInt32ToInt64(const int* src, int64_t* dst, size_t size)
+{
+    std::transform(src, src + size, dst,
+                   [](int el) { return static_cast<int64_t>(el); });
 }
 
 }} // cv::gimpl

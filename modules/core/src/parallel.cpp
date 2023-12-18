@@ -128,6 +128,8 @@
     #include <ppltasks.h>
 #elif defined HAVE_CONCURRENCY
     #include <ppl.h>
+#elif defined HAVE_PTHREADS_PF
+    #include <pthread.h>
 #endif
 
 
@@ -789,7 +791,7 @@ int getThreadNum()
         return 0;
     #endif
 #elif defined HAVE_HPX
-        return (int)(hpx::get_num_worker_threads());
+    return (int)(hpx::get_num_worker_threads());
 #elif defined HAVE_OPENMP
     return omp_get_thread_num();
 #elif defined HAVE_GCD

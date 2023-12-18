@@ -1275,6 +1275,14 @@ inline _Tpvec operator != (const _Tpvec& a, const _Tpvec& b) \
 { return ~(a == b); }
 #endif
 
+inline v_int64x2 operator > (const v_int64x2& a, const v_int64x2& b)
+{
+    __m128i s = _mm_srli_epi64(_mm_sub_epi64(b.val, a.val), 63);
+    return v_int64x2(_mm_sub_epi64(_mm_setzero_si128(), s));
+}
+inline v_int64x2 operator < (const v_int64x2& a, const v_int64x2& b)
+{ return b > a; }
+
 OPENCV_HAL_IMPL_SSE_64BIT_CMP_OP(v_uint64x2)
 OPENCV_HAL_IMPL_SSE_64BIT_CMP_OP(v_int64x2)
 
@@ -1921,11 +1929,12 @@ OPENCV_HAL_IMPL_SSE_EXPAND(v_int16x8,  v_int32x4,   short,    _v128_cvtepi16_epi
 OPENCV_HAL_IMPL_SSE_EXPAND(v_uint32x4, v_uint64x2,  unsigned, _v128_cvtepu32_epi64)
 OPENCV_HAL_IMPL_SSE_EXPAND(v_int32x4,  v_int64x2,   int,      _v128_cvtepi32_epi64)
 
-#define OPENCV_HAL_IMPL_SSE_EXPAND_Q(_Tpvec, _Tp, intrin)  \
-    inline _Tpvec v_load_expand_q(const _Tp* ptr)          \
-    {                                                      \
-        __m128i a = _mm_cvtsi32_si128(*(const int*)ptr);   \
-        return _Tpvec(intrin(a));                          \
+#define OPENCV_HAL_IMPL_SSE_EXPAND_Q(_Tpvec, _Tp, intrin)          \
+    inline _Tpvec v_load_expand_q(const _Tp* ptr)                  \
+    {                                                              \
+        typedef int CV_DECL_ALIGNED(1) unaligned_int;              \
+        __m128i a = _mm_cvtsi32_si128(*(const unaligned_int*)ptr); \
+        return _Tpvec(intrin(a));                                  \
     }
 
 OPENCV_HAL_IMPL_SSE_EXPAND_Q(v_uint32x4, uchar, _v128_cvtepu8_epi32)

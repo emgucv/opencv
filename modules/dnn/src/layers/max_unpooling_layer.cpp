@@ -12,8 +12,9 @@ Implementation of Batch Normalization layer.
 #include "../precomp.hpp"
 #include "layers_common.hpp"
 #include "../op_cuda.hpp"
-#include "../op_halide.hpp"
+#include "../ie_ngraph.hpp"
 #include <opencv2/dnn/shape_utils.hpp>
+#include <opencv2/core/utils/logger.hpp>
 
 #ifdef HAVE_CUDA
 #include "../cuda4dnn/primitives/max_unpooling.hpp"
@@ -40,7 +41,7 @@ public:
     {
         return backendId == DNN_BACKEND_OPENCV ||
                backendId == DNN_BACKEND_CUDA ||
-               (backendId == DNN_BACKEND_HALIDE && haveHalide() && !poolPad.width && !poolPad.height);
+               backendId == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH;
     }
 
     bool getMemoryShapes(const std::vector<MatShape> &inputs,
@@ -110,17 +111,12 @@ public:
                     int index = idxptr[i_wh];
                     if (!(0 <= index && index < outPlaneTotal))
                     {
-                        std::cerr
-                            << "i_n=" << i_n << std::endl
-                            << "i_c=" << i_c << std::endl
-                            << "i_wh=" << i_wh << std::endl
-                            << "index=" << index << std::endl
-                            << "maxval=" << inptr[i_wh] << std::endl
-                            << "outPlaneTotal=" << outPlaneTotal << std::endl
-                            << "input.size=" << input.size << std::endl
-                            << "indices.size=" << indices.size << std::endl
-                            << "outBlob=" << outBlob.size << std::endl
-                            ;
+                        CV_LOG_ERROR(NULL, cv::format(
+                            "i_n=%d\ni_c=%d\ni_wh=%d\nindex=%d\nmaxval=%lf\noutPlaneTotal=%d\n",
+                            i_n, i_c, i_wh, index, inptr[i_wh], outPlaneTotal));
+                        CV_LOG_ERROR(NULL, "input.size=" << input.size);
+                        CV_LOG_ERROR(NULL, "indices.size=" << indices.size);
+                        CV_LOG_ERROR(NULL, "outBlob=" << outBlob.size);
                         CV_Assert(0 <= index && index < outPlaneTotal);
                     }
                     outptr[index] = inptr[i_wh];
@@ -158,33 +154,49 @@ public:
     }
 #endif
 
-    virtual Ptr<BackendNode> initHalide(const std::vector<Ptr<BackendWrapper> > &input) CV_OVERRIDE
+#ifdef HAVE_DNN_NGRAPH
+    virtual Ptr<BackendNode> initNgraph(const std::vector<Ptr<BackendWrapper> >& inputs,
+                                        const std::vector<Ptr<BackendNode> >& nodes) CV_OVERRIDE
     {
-#ifdef HAVE_HALIDE
-        // Meaningless operation if false because if kernel > stride
-        // it is not deterministic and if kernel < stride we just
-        // skip a part of input data (you'd better change your model).
-        if (poolKernel.width != poolStride.width ||
-            poolKernel.height != poolStride.height)
-            CV_Error(cv::Error::StsNotImplemented,
-                     "Halide backend for maximum unpooling "
-                     "is not support cases when kernel != stride");
+        auto features = nodes[0].dynamicCast<InfEngineNgraphNode>()->node;
+        auto indices = nodes[1].dynamicCast<InfEngineNgraphNode>()->node;
 
-        Halide::Var x("x"), y("y"), c("c"), n("n");
-        Halide::Func top = (name.empty() ? Halide::Func() : Halide::Func(name));
-        Halide::Buffer<float> inputBuffer = halideBuffer(input[0]);
-        Halide::Buffer<float> indices = halideBuffer(input[1]);
+        std::vector<MatShape> inpShapes(nodes.size());
+        std::vector<MatShape> outShapes, internals;
+        for (int i = 0; i < nodes.size(); ++i) {
+            std::vector<size_t> shape = nodes[i].dynamicCast<InfEngineNgraphNode>()->node.get_shape();
+            inpShapes[i] = std::vector<int>(shape.begin(), shape.end());
+        }
+        getMemoryShapes(inpShapes, 1, outShapes, internals);
 
-        Halide::Expr pooledX = x / poolKernel.width;
-        Halide::Expr pooledY = y / poolKernel.height;
+        Mat zeros = Mat::zeros(1, total(outShapes[0]), CV_32F);
+        auto zeroInp = std::make_shared<ngraph::op::Constant>(ngraph::element::f32, ngraph::Shape{zeros.total()}, zeros.data);
 
-        const int outW = inputBuffer.width() * poolKernel.width;
-        top(x, y, c, n) = select(y * outW + x == indices(pooledX, pooledY, c, n),
-                                 inputBuffer(pooledX, pooledY, c, n), 0.0f);
-        return Ptr<BackendNode>(new HalideBackendNode(top));
-#endif  // HAVE_HALIDE
-        return Ptr<BackendNode>();
+        int newShape = -1;
+        features = std::make_shared<ngraph::op::v1::Reshape>(
+            features,
+            std::make_shared<ngraph::op::Constant>(ngraph::element::i32, ngraph::Shape{1}, &newShape),
+            true
+        );
+        indices = std::make_shared<ngraph::op::v1::Reshape>(
+            indices,
+            std::make_shared<ngraph::op::Constant>(ngraph::element::i32, ngraph::Shape{1}, &newShape),
+            true
+        );
+        if (indices.get_element_type() != ngraph::element::i32 && indices.get_element_type() != ngraph::element::i64) {
+            indices = std::make_shared<ngraph::op::Convert>(indices, ngraph::element::i64);
+        }
+
+        int axis = 0;
+        std::shared_ptr<ngraph::Node> unpool = std::make_shared<ngraph::op::ScatterElementsUpdate>(zeroInp, indices, features,
+            std::make_shared<ngraph::op::Constant>(ngraph::element::i32, ngraph::Shape{1}, &axis));
+
+        auto shape = std::make_shared<ngraph::op::Constant>(ngraph::element::i32, ngraph::Shape{outShapes[0].size()}, outShapes[0].data());
+        unpool = std::make_shared<ngraph::op::v1::Reshape>(unpool, shape, true);
+
+        return Ptr<BackendNode>(new InfEngineNgraphNode(unpool));
     }
+#endif  // HAVE_DNN_NGRAPH
 };
 
 Ptr<MaxUnpoolLayer> MaxUnpoolLayer::create(const LayerParams& params)

@@ -69,13 +69,10 @@ CV__DNN_INLINE_NS_BEGIN
      */
     enum Backend
     {
-        //! DNN_BACKEND_DEFAULT equals to DNN_BACKEND_INFERENCE_ENGINE if
-        //! OpenCV is built with Intel OpenVINO or
-        //! DNN_BACKEND_OPENCV otherwise.
+        //! DNN_BACKEND_DEFAULT equals to OPENCV_DNN_BACKEND_DEFAULT, which can be defined using CMake or a configuration parameter
         DNN_BACKEND_DEFAULT = 0,
-        DNN_BACKEND_HALIDE,
-        DNN_BACKEND_INFERENCE_ENGINE,            //!< Intel OpenVINO computational backend
-                                                 //!< @note Tutorial how to build OpenCV with OpenVINO: @ref tutorial_dnn_openvino
+        DNN_BACKEND_INFERENCE_ENGINE = 2,            //!< Intel OpenVINO computational backend
+                                                     //!< @note Tutorial how to build OpenCV with OpenVINO: @ref tutorial_dnn_openvino
         DNN_BACKEND_OPENCV,
         DNN_BACKEND_VKCOM,
         DNN_BACKEND_CUDA,
@@ -106,6 +103,22 @@ CV__DNN_INLINE_NS_BEGIN
         DNN_TARGET_CUDA_FP16,
         DNN_TARGET_HDDL,
         DNN_TARGET_NPU,
+        DNN_TARGET_CPU_FP16, // Only the ARM platform is supported. Low precision computing, accelerate model inference.
+    };
+
+    /**
+     * @brief Enum of data layout for model inference.
+     * @see Image2BlobParams
+     */
+    enum DataLayout
+    {
+        DNN_LAYOUT_UNKNOWN = 0,
+        DNN_LAYOUT_ND = 1,        //!< OpenCV data layout for 2D data.
+        DNN_LAYOUT_NCHW = 2,      //!< OpenCV data layout for 4D data.
+        DNN_LAYOUT_NCDHW = 3,      //!< OpenCV data layout for 5D data.
+        DNN_LAYOUT_NHWC = 4,      //!< Tensorflow-like data layout for 4D data.
+        DNN_LAYOUT_NDHWC = 5,      //!< Tensorflow-like data layout for 5D data.
+        DNN_LAYOUT_PLANAR = 6,     //!< Tensorflow-like data layout, it should only be used at tf or tflite model parsing.
     };
 
     CV_EXPORTS std::vector< std::pair<Backend, Target> > getAvailableBackends();
@@ -300,21 +313,9 @@ CV__DNN_INLINE_NS_BEGIN
          */
         virtual bool supportBackend(int backendId);  // FIXIT const
 
-        /**
-         * @brief Returns Halide backend node.
-         * @param[in] inputs Input Halide buffers.
-         * @see BackendNode, BackendWrapper
-         *
-         * Input buffers should be exactly the same that will be used in forward invocations.
-         * Despite we can use Halide::ImageParam based on input shape only,
-         * it helps prevent some memory management issues (if something wrong,
-         * Halide tests will be failed).
-         */
-        virtual Ptr<BackendNode> initHalide(const std::vector<Ptr<BackendWrapper> > &inputs);
-
         virtual Ptr<BackendNode> initNgraph(const std::vector<Ptr<BackendWrapper> > &inputs, const std::vector<Ptr<BackendNode> >& nodes);
 
-        virtual Ptr<BackendNode> initVkCom(const std::vector<Ptr<BackendWrapper> > &inputs);
+        virtual Ptr<BackendNode> initVkCom(const std::vector<Ptr<BackendWrapper> > &inputs, std::vector<Ptr<BackendWrapper> > &outputs);
 
         virtual Ptr<BackendNode> initWebnn(const std::vector<Ptr<BackendWrapper> > &inputs, const std::vector<Ptr<BackendNode> >& nodes);
 
@@ -347,38 +348,13 @@ CV__DNN_INLINE_NS_BEGIN
         /**
          * @brief Returns a CANN backend node
          *
-         * @param   inputsWrapper   layer inputs
-         * @param   index           layer id for op name
-         * @param   nodes           inputs of this node
+         * @param   inputs   input tensors of CANN operator
+         * @param   outputs  output tensors of CANN operator
+         * @param   nodes           nodes of input tensors
          */
-        virtual Ptr<BackendNode> initCann(const std::vector<Ptr<BackendWrapper> > &inputsWrapper, const int index, const std::vector<Ptr<BackendNode> >& nodes);
-
-       /**
-        * @brief Automatic Halide scheduling based on layer hyper-parameters.
-        * @param[in] node Backend node with Halide functions.
-        * @param[in] inputs Blobs that will be used in forward invocations.
-        * @param[in] outputs Blobs that will be used in forward invocations.
-        * @param[in] targetId Target identifier
-        * @see BackendNode, Target
-        *
-        * Layer don't use own Halide::Func members because we can have applied
-        * layers fusing. In this way the fused function should be scheduled.
-        */
-        virtual void applyHalideScheduler(Ptr<BackendNode>& node,
-                                          const std::vector<Mat*> &inputs,
-                                          const std::vector<Mat> &outputs,
-                                          int targetId) const;
-
-        /**
-         * @brief Implement layers fusing.
-         * @param[in] node Backend node of bottom layer.
-         * @see BackendNode
-         *
-         * Actual for graph-based backends. If layer attached successfully,
-         * returns non-empty cv::Ptr to node of the same backend.
-         * Fuse only over the last function.
-         */
-        virtual Ptr<BackendNode> tryAttach(const Ptr<BackendNode>& node);
+        virtual Ptr<BackendNode> initCann(const std::vector<Ptr<BackendWrapper> > &inputs,
+                                          const std::vector<Ptr<BackendWrapper> > &outputs,
+                                          const std::vector<Ptr<BackendNode> >& nodes);
 
         /**
          * @brief Tries to attach to the layer the subsequent activation layer, i.e. do the layer fusion in a partial case.
@@ -656,23 +632,9 @@ CV__DNN_INLINE_NS_BEGIN
         CV_WRAP void getOutputDetails(CV_OUT std::vector<float>& scales, CV_OUT std::vector<int>& zeropoints) const;
 
         /**
-         * @brief Compile Halide layers.
-         * @param[in] scheduler Path to YAML file with scheduling directives.
-         * @see setPreferableBackend
-         *
-         * Schedule layers that support Halide backend. Then compile them for
-         * specific target. For layers that not represented in scheduling file
-         * or if no manual scheduling used at all, automatic scheduling will be applied.
-         */
-        CV_WRAP void setHalideScheduler(const String& scheduler);
-
-        /**
          * @brief Ask network to use specific computation backend where it supported.
          * @param[in] backendId backend identifier.
          * @see Backend
-         *
-         * If OpenCV is compiled with Intel's Inference Engine library, DNN_BACKEND_DEFAULT
-         * means DNN_BACKEND_INFERENCE_ENGINE. Otherwise it equals to DNN_BACKEND_OPENCV.
          */
         CV_WRAP void setPreferableBackend(int backendId);
 
@@ -682,16 +644,16 @@ CV__DNN_INLINE_NS_BEGIN
          * @see Target
          *
          * List of supported combinations backend / target:
-         * |                        | DNN_BACKEND_OPENCV | DNN_BACKEND_INFERENCE_ENGINE | DNN_BACKEND_HALIDE |  DNN_BACKEND_CUDA |
-         * |------------------------|--------------------|------------------------------|--------------------|-------------------|
-         * | DNN_TARGET_CPU         |                  + |                            + |                  + |                   |
-         * | DNN_TARGET_OPENCL      |                  + |                            + |                  + |                   |
-         * | DNN_TARGET_OPENCL_FP16 |                  + |                            + |                    |                   |
-         * | DNN_TARGET_MYRIAD      |                    |                            + |                    |                   |
-         * | DNN_TARGET_FPGA        |                    |                            + |                    |                   |
-         * | DNN_TARGET_CUDA        |                    |                              |                    |                 + |
-         * | DNN_TARGET_CUDA_FP16   |                    |                              |                    |                 + |
-         * | DNN_TARGET_HDDL        |                    |                            + |                    |                   |
+         * |                        | DNN_BACKEND_OPENCV | DNN_BACKEND_INFERENCE_ENGINE |  DNN_BACKEND_CUDA |
+         * |------------------------|--------------------|------------------------------|-------------------|
+         * | DNN_TARGET_CPU         |                  + |                            + |                   |
+         * | DNN_TARGET_OPENCL      |                  + |                            + |                   |
+         * | DNN_TARGET_OPENCL_FP16 |                  + |                            + |                   |
+         * | DNN_TARGET_MYRIAD      |                    |                            + |                   |
+         * | DNN_TARGET_FPGA        |                    |                            + |                   |
+         * | DNN_TARGET_CUDA        |                    |                              |                 + |
+         * | DNN_TARGET_CUDA_FP16   |                    |                              |                 + |
+         * | DNN_TARGET_HDDL        |                    |                            + |                   |
          */
         CV_WRAP void setPreferableTarget(int targetId);
 
@@ -876,7 +838,6 @@ CV__DNN_INLINE_NS_BEGIN
     *  @param cfgFile      path to the .cfg file with text description of the network architecture.
     *  @param darknetModel path to the .weights file with learned network.
     *  @returns Network object that ready to do forward, throw an exception in failure cases.
-    *  @returns Net object.
     */
     CV_EXPORTS_W Net readNetFromDarknet(const String &cfgFile, const String &darknetModel = String());
 
@@ -953,33 +914,25 @@ CV__DNN_INLINE_NS_BEGIN
     CV_EXPORTS Net readNetFromTensorflow(const char *bufferModel, size_t lenModel,
                                          const char *bufferConfig = NULL, size_t lenConfig = 0);
 
-    /**
-     *  @brief Reads a network model stored in <a href="http://torch.ch">Torch7</a> framework's format.
-     *  @param model    path to the file, dumped from Torch by using torch.save() function.
-     *  @param isBinary specifies whether the network was serialized in ascii mode or binary.
-     *  @param evaluate specifies testing phase of network. If true, it's similar to evaluate() method in Torch.
-     *  @returns Net object.
-     *
-     *  @note Ascii mode of Torch serializer is more preferable, because binary mode extensively use `long` type of C language,
-     *  which has various bit-length on different systems.
-     *
-     * The loading file must contain serialized <a href="https://github.com/torch/nn/blob/master/doc/module.md">nn.Module</a> object
-     * with importing network. Try to eliminate a custom objects from serialazing data to avoid importing errors.
-     *
-     * List of supported layers (i.e. object instances derived from Torch nn.Module class):
-     * - nn.Sequential
-     * - nn.Parallel
-     * - nn.Concat
-     * - nn.Linear
-     * - nn.SpatialConvolution
-     * - nn.SpatialMaxPooling, nn.SpatialAveragePooling
-     * - nn.ReLU, nn.TanH, nn.Sigmoid
-     * - nn.Reshape
-     * - nn.SoftMax, nn.LogSoftMax
-     *
-     * Also some equivalents of these classes from cunn, cudnn, and fbcunn may be successfully imported.
-     */
-     CV_EXPORTS_W Net readNetFromTorch(const String &model, bool isBinary = true, bool evaluate = true);
+    /** @brief Reads a network model stored in <a href="https://www.tensorflow.org/lite">TFLite</a> framework's format.
+      * @param model  path to the .tflite file with binary flatbuffers description of the network architecture
+      * @returns Net object.
+      */
+    CV_EXPORTS_W Net readNetFromTFLite(const String &model);
+
+    /** @brief Reads a network model stored in <a href="https://www.tensorflow.org/lite">TFLite</a> framework's format.
+      * @param bufferModel buffer containing the content of the tflite file
+      * @returns Net object.
+      */
+    CV_EXPORTS_W Net readNetFromTFLite(const std::vector<uchar>& bufferModel);
+
+    /** @brief Reads a network model stored in <a href="https://www.tensorflow.org/lite">TFLite</a> framework's format.
+      * @details This is an overloaded member function, provided for convenience.
+      * It differs from the above function only in what argument(s) it accepts.
+      * @param bufferModel buffer containing the content of the tflite file
+      * @param lenModel length of bufferModel
+      */
+    CV_EXPORTS Net readNetFromTFLite(const char *bufferModel, size_t lenModel);
 
      /**
       * @brief Read deep learning network represented in one of the supported formats.
@@ -987,22 +940,21 @@ CV__DNN_INLINE_NS_BEGIN
       *                  extensions are expected for models from different frameworks:
       *                  * `*.caffemodel` (Caffe, http://caffe.berkeleyvision.org/)
       *                  * `*.pb` (TensorFlow, https://www.tensorflow.org/)
-      *                  * `*.t7` | `*.net` (Torch, http://torch.ch/)
       *                  * `*.weights` (Darknet, https://pjreddie.com/darknet/)
-      *                  * `*.bin` (DLDT, https://software.intel.com/openvino-toolkit)
+      *                  * `*.bin` | `*.onnx` (OpenVINO, https://software.intel.com/openvino-toolkit)
       *                  * `*.onnx` (ONNX, https://onnx.ai/)
       * @param[in] config Text file contains network configuration. It could be a
       *                   file with the following extensions:
       *                  * `*.prototxt` (Caffe, http://caffe.berkeleyvision.org/)
       *                  * `*.pbtxt` (TensorFlow, https://www.tensorflow.org/)
       *                  * `*.cfg` (Darknet, https://pjreddie.com/darknet/)
-      *                  * `*.xml` (DLDT, https://software.intel.com/openvino-toolkit)
+      *                  * `*.xml` (OpenVINO, https://software.intel.com/openvino-toolkit)
       * @param[in] framework Explicit framework name tag to determine a format.
       * @returns Net object.
       *
       * This function automatically detects an origin framework of trained model
-      * and calls an appropriate function such @ref readNetFromCaffe, @ref readNetFromTensorflow,
-      * @ref readNetFromTorch or @ref readNetFromDarknet. An order of @p model and @p config
+      * and calls an appropriate function such @ref readNetFromCaffe, @ref readNetFromTensorflow
+      * or @ref readNetFromDarknet. An order of @p model and @p config
       * arguments does not matter.
       */
      CV_EXPORTS_W Net readNet(const String& model, const String& config = "", const String& framework = "");
@@ -1019,11 +971,6 @@ CV__DNN_INLINE_NS_BEGIN
      CV_EXPORTS_W Net readNet(const String& framework, const std::vector<uchar>& bufferModel,
                               const std::vector<uchar>& bufferConfig = std::vector<uchar>());
 
-    /** @brief Loads blob which was serialized as torch.Tensor object of Torch7 framework.
-     *  @warning This function has the same limitations as readNetFromTorch().
-     */
-    CV_EXPORTS_W Mat readTorchBlob(const String &filename, bool isBinary = true);
-
     /** @brief Load a network from Intel's Model Optimizer intermediate representation.
      *  @param[in] xml XML configuration file with network's topology.
      *  @param[in] bin Binary file with trained weights.
@@ -1032,7 +979,7 @@ CV__DNN_INLINE_NS_BEGIN
      *  backend.
      */
     CV_EXPORTS_W
-    Net readNetFromModelOptimizer(const String &xml, const String &bin);
+    Net readNetFromModelOptimizer(const String &xml, const String &bin = "");
 
     /** @brief Load a network from Intel's Model Optimizer intermediate representation.
      *  @param[in] bufferModelConfig Buffer contains XML configuration with network's topology.
@@ -1089,10 +1036,10 @@ CV__DNN_INLINE_NS_BEGIN
     /** @brief Creates 4-dimensional blob from image. Optionally resizes and crops @p image from center,
      *  subtract @p mean values, scales values by @p scalefactor, swap Blue and Red channels.
      *  @param image input image (with 1-, 3- or 4-channels).
+     *  @param scalefactor multiplier for @p images values.
      *  @param size spatial size for output image
      *  @param mean scalar with mean values which are subtracted from channels. Values are intended
      *  to be in (mean-R, mean-G, mean-B) order if @p image has BGR ordering and @p swapRB is true.
-     *  @param scalefactor multiplier for @p image values.
      *  @param swapRB flag which indicates that swap first and last channels
      *  in 3-channel image is necessary.
      *  @param crop flag which indicates whether image will be cropped after resize or not
@@ -1101,6 +1048,9 @@ CV__DNN_INLINE_NS_BEGIN
      *  dimension in @p size and another one is equal or larger. Then, crop from the center is performed.
      *  If @p crop is false, direct resize without cropping and preserving aspect ratio is performed.
      *  @returns 4-dimensional Mat with NCHW dimensions order.
+     *
+     * @note
+     * The order and usage of `scalefactor` and `mean` are (input - mean) * scalefactor.
      */
     CV_EXPORTS_W Mat blobFromImage(InputArray image, double scalefactor=1.0, const Size& size = Size(),
                                    const Scalar& mean = Scalar(), bool swapRB=false, bool crop=false,
@@ -1131,6 +1081,9 @@ CV__DNN_INLINE_NS_BEGIN
      *  dimension in @p size and another one is equal or larger. Then, crop from the center is performed.
      *  If @p crop is false, direct resize without cropping and preserving aspect ratio is performed.
      *  @returns 4-dimensional Mat with NCHW dimensions order.
+     *
+     * @note
+     * The order and usage of `scalefactor` and `mean` are (input - mean) * scalefactor.
      */
     CV_EXPORTS_W Mat blobFromImages(InputArrayOfArrays images, double scalefactor=1.0,
                                     Size size = Size(), const Scalar& mean = Scalar(), bool swapRB=false, bool crop=false,
@@ -1144,6 +1097,74 @@ CV__DNN_INLINE_NS_BEGIN
                                    double scalefactor=1.0, Size size = Size(),
                                    const Scalar& mean = Scalar(), bool swapRB=false, bool crop=false,
                                    int ddepth=CV_32F);
+
+    /**
+     * @brief Enum of image processing mode.
+     * To facilitate the specialization pre-processing requirements of the dnn model.
+     * For example, the `letter box` often used in the Yolo series of models.
+     * @see Image2BlobParams
+     */
+    enum ImagePaddingMode
+    {
+        DNN_PMODE_NULL = 0,        // !< Default. Resize to required input size without extra processing.
+        DNN_PMODE_CROP_CENTER = 1, // !< Image will be cropped after resize.
+        DNN_PMODE_LETTERBOX = 2,   // !< Resize image to the desired size while preserving the aspect ratio of original image.
+    };
+
+    /** @brief Processing params of image to blob.
+     *
+     * It includes all possible image processing operations and corresponding parameters.
+     *
+     * @see blobFromImageWithParams
+     *
+     * @note
+     * The order and usage of `scalefactor` and `mean` are (input - mean) * scalefactor.
+     * The order and usage of `scalefactor`, `size`, `mean`, `swapRB`, and `ddepth` are consistent
+     * with the function of @ref blobFromImage.
+    */
+    struct CV_EXPORTS_W_SIMPLE Image2BlobParams
+    {
+        CV_WRAP Image2BlobParams();
+        CV_WRAP Image2BlobParams(const Scalar& scalefactor, const Size& size = Size(), const Scalar& mean = Scalar(),
+                            bool swapRB = false, int ddepth = CV_32F, DataLayout datalayout = DNN_LAYOUT_NCHW,
+                            ImagePaddingMode mode = DNN_PMODE_NULL);
+
+        CV_PROP_RW Scalar scalefactor; //!< scalefactor multiplier for input image values.
+        CV_PROP_RW Size size;    //!< Spatial size for output image.
+        CV_PROP_RW Scalar mean;  //!< Scalar with mean values which are subtracted from channels.
+        CV_PROP_RW bool swapRB;  //!< Flag which indicates that swap first and last channels
+        CV_PROP_RW int ddepth;   //!< Depth of output blob. Choose CV_32F or CV_8U.
+        CV_PROP_RW DataLayout datalayout; //!< Order of output dimensions. Choose DNN_LAYOUT_NCHW or DNN_LAYOUT_NHWC.
+        CV_PROP_RW ImagePaddingMode paddingmode;   //!< Image padding mode. @see ImagePaddingMode.
+    };
+
+    /** @brief Creates 4-dimensional blob from image with given params.
+     *
+     *  @details This function is an extension of @ref blobFromImage to meet more image preprocess needs.
+     *  Given input image and preprocessing parameters, and function outputs the blob.
+     *
+     *  @param image input image (all with 1-, 3- or 4-channels).
+     *  @param param struct of Image2BlobParams, contains all parameters needed by processing of image to blob.
+     *  @return 4-dimensional Mat.
+     */
+    CV_EXPORTS_W Mat blobFromImageWithParams(InputArray image, const Image2BlobParams& param = Image2BlobParams());
+
+    /** @overload */
+    CV_EXPORTS_W void blobFromImageWithParams(InputArray image, OutputArray blob, const Image2BlobParams& param = Image2BlobParams());
+
+    /** @brief Creates 4-dimensional blob from series of images with given params.
+     *
+     *  @details This function is an extension of @ref blobFromImages to meet more image preprocess needs.
+     *  Given input image and preprocessing parameters, and function outputs the blob.
+     *
+     *  @param images input image (all with 1-, 3- or 4-channels).
+     *  @param param struct of Image2BlobParams, contains all parameters needed by processing of image to blob.
+     *  @returns 4-dimensional Mat.
+     */
+    CV_EXPORTS_W Mat blobFromImagesWithParams(InputArrayOfArrays images, const Image2BlobParams& param = Image2BlobParams());
+
+    /** @overload */
+    CV_EXPORTS_W void blobFromImagesWithParams(InputArrayOfArrays images, OutputArray blob, const Image2BlobParams& param = Image2BlobParams());
 
     /** @brief Parse a 4D blob and output the images it contains as 2D arrays through a simpler data structure
      *  (std::vector<cv::Mat>).
@@ -1311,7 +1332,7 @@ CV__DNN_INLINE_NS_BEGIN
          /** @brief Set scalefactor value for frame.
           *  @param[in] scale Multiplier for frame values.
          */
-         CV_WRAP Model& setInputScale(double scale);
+         CV_WRAP Model& setInputScale(const Scalar& scale);
 
          /** @brief Set flag crop for frame.
           *  @param[in] crop Flag which indicates whether image will be cropped after resize or not.

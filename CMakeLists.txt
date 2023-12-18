@@ -126,6 +126,10 @@ if(POLICY CMP0077)
   cmake_policy(SET CMP0077 NEW)  # CMake 3.13+: option() honors normal variables.
 endif()
 
+if(POLICY CMP0146)
+  cmake_policy(SET CMP0146 OLD)  # CMake 3.27+: use CMake FindCUDA if available.
+endif()
+
 #
 # Configure OpenCV CMake hooks
 #
@@ -293,6 +297,8 @@ OCV_OPTION(WITH_1394 "Include IEEE1394 support" ON
 OCV_OPTION(WITH_AVFOUNDATION "Use AVFoundation for Video I/O (iOS/Mac)" ON
   VISIBLE_IF APPLE
   VERIFY HAVE_AVFOUNDATION)
+OCV_OPTION(WITH_AVIF "Enable AVIF support" OFF
+  VERIFY HAVE_AVIF)
 OCV_OPTION(WITH_CAP_IOS "Enable iOS video capture" ON
   VISIBLE_IF IOS
   VERIFY HAVE_CAP_IOS)
@@ -343,9 +349,6 @@ OCV_OPTION(WITH_WAYLAND "Include Wayland support" OFF
 OCV_OPTION(WITH_IPP "Include Intel IPP support" (NOT MINGW AND NOT CV_DISABLE_OPTIMIZATION)
   VISIBLE_IF (X86_64 OR X86) AND NOT WINRT AND NOT IOS
   VERIFY HAVE_IPP)
-OCV_OPTION(WITH_HALIDE "Include Halide support" OFF
-  VISIBLE_IF TRUE
-  VERIFY HAVE_HALIDE)
 OCV_OPTION(WITH_VULKAN "Include Vulkan support" OFF
   VISIBLE_IF TRUE
   VERIFY HAVE_VULKAN)
@@ -509,9 +512,6 @@ OCV_OPTION(WITH_ANDROID_MEDIANDK "Use Android Media NDK for Video I/O (Android)"
 OCV_OPTION(WITH_ANDROID_NATIVE_CAMERA "Use Android NDK for Camera I/O (Android)" (ANDROID_NATIVE_API_LEVEL GREATER 23)
   VISIBLE_IF ANDROID
   VERIFY HAVE_ANDROID_NATIVE_CAMERA)
-OCV_OPTION(WITH_TENGINE "Include Arm Inference Tengine support" OFF
-  VISIBLE_IF (ARM OR AARCH64) AND (UNIX OR ANDROID) AND NOT IOS
-  VERIFY HAVE_TENGINE)
 OCV_OPTION(WITH_ONNX "Include Microsoft ONNX Runtime support" OFF
   VISIBLE_IF TRUE
   VERIFY HAVE_ONNX)
@@ -519,11 +519,14 @@ OCV_OPTION(WITH_TIMVX "Include Tim-VX support" OFF
   VISIBLE_IF TRUE
   VERIFY HAVE_TIMVX)
 OCV_OPTION(WITH_OBSENSOR "Include obsensor support (Orbbec RGB-D modules: Astra+/Femto)" ON
-  VISIBLE_IF (WIN32 AND NOT ARM AND NOT WINRT) OR ( UNIX AND NOT APPLE AND NOT ANDROID)
+  VISIBLE_IF (WIN32 AND NOT ARM AND NOT WINRT AND NOT MINGW) OR ( UNIX AND NOT APPLE AND NOT ANDROID)
   VERIFY HAVE_OBSENSOR)
 OCV_OPTION(WITH_CANN "Include CANN support" OFF
   VISIBLE_IF TRUE
   VERIFY HAVE_CANN)
+OCV_OPTION(WITH_FLATBUFFERS "Include Flatbuffers support (required by DNN/TFLite importer)" ON
+  VISIBLE_IF TRUE
+  VERIFY HAVE_FLATBUFFERS)
 
 # OpenCV build components
 # ===================================================
@@ -561,6 +564,7 @@ OCV_OPTION(INSTALL_TESTS            "Install accuracy and performance test binar
 # ===================================================
 OCV_OPTION(ENABLE_CCACHE              "Use ccache"                                               (UNIX AND (CMAKE_GENERATOR MATCHES "Makefile" OR CMAKE_GENERATOR MATCHES "Ninja" OR CMAKE_GENERATOR MATCHES "Xcode")) )
 OCV_OPTION(ENABLE_PRECOMPILED_HEADERS "Use precompiled headers"                                  ON IF (MSVC OR (NOT IOS AND NOT CMAKE_CROSSCOMPILING) ) )
+OCV_OPTION(ENABLE_DELAYLOAD           "Enable delayed loading of OpenCV DLLs"                    OFF VISIBLE_IF MSVC AND BUILD_SHARED_LIBS)
 OCV_OPTION(ENABLE_SOLUTION_FOLDERS    "Solution folder in Visual Studio or in other IDEs"        (MSVC_IDE OR CMAKE_GENERATOR MATCHES Xcode) )
 OCV_OPTION(ENABLE_PROFILING           "Enable profiling in the GCC compiler (Add flags: -g -pg)" OFF  IF CV_GCC )
 OCV_OPTION(ENABLE_COVERAGE            "Enable coverage collection with  GCov"                    OFF  IF CV_GCC )
@@ -812,9 +816,7 @@ if(WITH_LAPACK)
   ocv_assert(HAVE_LAPACK)  # Lapack is required for OpenCV 5.0+
 endif()
 include(cmake/OpenCVFindProtobuf.cmake)
-if(WITH_TENGINE)
-  include(cmake/OpenCVFindTengine.cmake)
-endif()
+include(cmake/OpenCVDetectFlatbuffers.cmake)
 if(WITH_TIMVX)
   include(cmake/OpenCVFindTIMVX.cmake)
 endif()
@@ -832,6 +834,15 @@ if(BUILD_JAVA)
     include(cmake/android/OpenCVDetectAndroidSDK.cmake)
   else()
     include(cmake/OpenCVDetectApacheAnt.cmake)
+    if(ANT_EXECUTABLE AND NOT OPENCV_JAVA_IGNORE_ANT)
+      ocv_update(OPENCV_JAVA_SDK_BUILD_TYPE "ANT")
+    elseif(NOT ANDROID)
+      find_package(Java)
+      if(Java_FOUND)
+        include(UseJava)
+        ocv_update(OPENCV_JAVA_SDK_BUILD_TYPE "JAVA")
+      endif()
+    endif()
     find_package(JNI)
   endif()
 endif()
@@ -870,11 +881,6 @@ endif()
 # --- OpenCL ---
 if(WITH_OPENCL)
   include(cmake/OpenCVDetectOpenCL.cmake)
-endif()
-
-# --- Halide ---
-if(WITH_HALIDE)
-  include(cmake/OpenCVDetectHalide.cmake)
 endif()
 
 # --- VkCom ---
@@ -974,7 +980,7 @@ foreach(hal ${OpenCV_HAL})
     endif()
   endif()
 endforeach()
-configure_file("${OpenCV_SOURCE_DIR}/cmake/templates/custom_hal.hpp.in" "${CMAKE_BINARY_DIR}/custom_hal.hpp" @ONLY)
+configure_file("${OpenCV_SOURCE_DIR}/cmake/templates/custom_hal.hpp.in" "${OPENCV_CONFIG_FILE_INCLUDE_DIR}/custom_hal.hpp" @ONLY)
 unset(_hal_includes)
 
 
@@ -1441,6 +1447,14 @@ if(WITH_WEBP OR HAVE_WEBP)
   status("    WEBP:" WEBP_FOUND THEN "${WEBP_LIBRARY} (ver ${WEBP_VERSION})" ELSE "build (ver ${WEBP_VERSION})")
 endif()
 
+if(WITH_AVIF OR HAVE_AVIF)
+  if(AVIF_VERSION)
+    status("    AVIF:" AVIF_FOUND THEN "${AVIF_LIBRARY} (ver ${AVIF_VERSION})" ELSE "NO")
+  else()
+    status("    AVIF:" AVIF_FOUND THEN "${AVIF_LIBRARY}" ELSE "NO")
+  endif()
+endif()
+
 if(WITH_PNG OR HAVE_PNG OR WITH_SPNG)
   if(WITH_SPNG)
     status("    PNG:" "build-${SPNG_LIBRARY} (ver ${SPNG_VERSION})")
@@ -1651,16 +1665,8 @@ if(WITH_VA OR HAVE_VA)
   status("    VA:"            HAVE_VA          THEN "YES" ELSE NO)
 endif()
 
-if(WITH_TENGINE OR HAVE_TENGINE)
-  status("    Tengine:"      HAVE_TENGINE     THEN "YES (${TENGINE_LIBRARIES})" ELSE NO)
-endif()
-
 if(WITH_LAPACK OR HAVE_LAPACK)
   status("    Lapack:"      HAVE_LAPACK     THEN "YES (${LAPACK_LIBRARIES} ${LAPACK_VERSION})" ELSE NO)
-endif()
-
-if(WITH_HALIDE OR HAVE_HALIDE)
-  status("    Halide:"     HAVE_HALIDE      THEN "YES (${HALIDE_LIBRARIES} ${HALIDE_INCLUDE_DIRS})" ELSE NO)
 endif()
 
 if(HAVE_OPENVINO
@@ -1719,6 +1725,10 @@ else()
       status("    nGraph:"     "NO")
     endif()
   endif()
+endif()
+
+if(BUILD_opencv_dnn AND OPENCV_DNN_BACKEND_DEFAULT)
+    status("    Default DNN backend:" ${OPENCV_DNN_BACKEND_DEFAULT})
 endif()
 
 if(WITH_EIGEN OR HAVE_EIGEN)
@@ -1819,19 +1829,6 @@ if(WITH_CANN)
 endif()
 
 # ========================== python ==========================
-if(BUILD_opencv_python2)
-  status("")
-  status("  Python 2:")
-  status("    Interpreter:"     PYTHON2INTERP_FOUND  THEN "${PYTHON2_EXECUTABLE} (ver ${PYTHON2_VERSION_STRING})"       ELSE NO)
-  if(PYTHON2LIBS_VERSION_STRING)
-    status("    Libraries:"   HAVE_opencv_python2  THEN  "${PYTHON2_LIBRARIES} (ver ${PYTHON2LIBS_VERSION_STRING})"   ELSE NO)
-  else()
-    status("    Libraries:"   HAVE_opencv_python2  THEN  "${PYTHON2_LIBRARIES}"                                      ELSE NO)
-  endif()
-  status("    numpy:"         PYTHON2_NUMPY_INCLUDE_DIRS THEN "${PYTHON2_NUMPY_INCLUDE_DIRS} (ver ${PYTHON2_NUMPY_VERSION})" ELSE "NO (Python wrappers can not be generated)")
-  status("    install path:"  HAVE_opencv_python2  THEN "${__INSTALL_PATH_PYTHON2}"                            ELSE "-")
-endif()
-
 if(BUILD_opencv_python3)
   status("")
   status("  Python 3:")
@@ -1854,9 +1851,10 @@ if(BUILD_JAVA)
   status("  Java:"            BUILD_FAT_JAVA_LIB  THEN "export all functions"                                      ELSE "")
   status("    ant:"           ANT_EXECUTABLE      THEN "${ANT_EXECUTABLE} (ver ${ANT_VERSION})"                    ELSE NO)
   if(NOT ANDROID)
+    status("    Java:"        Java_FOUND     THEN "YES (ver ${Java_VERSION})"                                      ELSE NO)
     status("    JNI:"         JNI_INCLUDE_DIRS    THEN "${JNI_INCLUDE_DIRS}"                                       ELSE NO)
   endif()
-  status("    Java wrappers:" HAVE_opencv_java                                                            THEN YES ELSE NO)
+  status("    Java wrappers:" HAVE_opencv_java                                                            THEN "YES (${OPENCV_JAVA_SDK_BUILD_TYPE})" ELSE NO)
   status("    Java tests:"    BUILD_TESTS AND opencv_test_java_BINARY_DIR                                 THEN YES ELSE NO)
 endif()
 

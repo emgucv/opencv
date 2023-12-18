@@ -41,6 +41,7 @@
 
 #include "../perf_precomp.hpp"
 #include "opencv2/ts/ocl_perf.hpp"
+#include "opencv2/core/softfloat.hpp"
 
 #ifdef HAVE_OPENCL
 
@@ -458,6 +459,30 @@ OCL_PERF_TEST_P(CountNonZeroFixture, CountNonZero,
     OCL_TEST_CYCLE() result = cv::countNonZero(src);
 
     SANITY_CHECK(result);
+}
+
+///////////// countNonZero ////////////////////////
+
+typedef Size_MatType HasNonZeroFixture;
+
+OCL_PERF_TEST_P(HasNonZeroFixture, HasNonZero,
+    ::testing::Combine(OCL_TEST_SIZES,
+        OCL_PERF_ENUM(CV_8UC1, CV_32FC1)))
+{
+    const Size_MatType_t params = GetParam();
+    const Size srcSize = get<0>(params);
+    const int type = get<1>(params);
+
+    checkDeviceMaxMemoryAllocSize(srcSize, type);
+
+    UMat src(srcSize, type);
+    /*bool result = false;*/
+    randu(src, 0, 10);
+    declare.in(src);
+
+    OCL_TEST_CYCLE() /*result =*/ cv::hasNonZero(src);
+
+    SANITY_CHECK_NOTHING();
 }
 
 ///////////// Phase ////////////////////////
@@ -1014,14 +1039,40 @@ OCL_PERF_TEST_P(ConvertScaleAbsFixture, ConvertScaleAbs,
 
 ///////////// PatchNaNs ////////////////////////
 
+template<typename _Tp>
+_Tp randomNan(RNG& rng);
+
+template<>
+float randomNan(RNG& rng)
+{
+    uint32_t r = rng.next();
+    Cv32suf v;
+    v.u = r;
+    // exp & set a bit to avoid zero mantissa
+    v.u = v.u | 0x7f800001;
+    return v.f;
+}
+
+template<>
+double randomNan(RNG& rng)
+{
+    uint32_t r0 = rng.next();
+    uint32_t r1 = rng.next();
+    Cv64suf v;
+    v.u = (uint64_t(r0) << 32) | uint64_t(r1);
+    // exp &set a bit to avoid zero mantissa
+    v.u = v.u | 0x7ff0000000000001;
+    return v.f;
+}
+
 typedef Size_MatType PatchNaNsFixture;
 
 OCL_PERF_TEST_P(PatchNaNsFixture, PatchNaNs,
-                ::testing::Combine(OCL_TEST_SIZES, OCL_PERF_ENUM(CV_32FC1, CV_32FC4)))
+                ::testing::Combine(OCL_TEST_SIZES, OCL_PERF_ENUM(CV_32FC1, CV_32FC3, CV_32FC4, CV_64FC1, CV_64FC3, CV_64FC4)))
 {
     const Size_MatType_t params = GetParam();
     Size srcSize = get<0>(params);
-    const int type = get<1>(params), cn = CV_MAT_CN(type);
+    const int type = get<1>(params), cn = CV_MAT_CN(type), depth = CV_MAT_DEPTH(type);
 
     checkDeviceMaxMemoryAllocSize(srcSize, type);
 
@@ -1032,11 +1083,22 @@ OCL_PERF_TEST_P(PatchNaNsFixture, PatchNaNs,
     {
         Mat src_ = src.getMat(ACCESS_RW);
         srcSize.width *= cn;
+        RNG& rng = theRNG();
         for (int y = 0; y < srcSize.height; ++y)
         {
-            float * const ptr = src_.ptr<float>(y);
+            float  *const ptrf = src_.ptr<float>(y);
+            double *const ptrd = src_.ptr<double>(y);
             for (int x = 0; x < srcSize.width; ++x)
-                ptr[x] = (x + y) % 2 == 0 ? std::numeric_limits<float>::quiet_NaN() : ptr[x];
+            {
+                if (depth == CV_32F)
+                {
+                    ptrf[x] = (x + y) % 2 == 0 ? randomNan<float >(rng) : ptrf[x];
+                }
+                else if (depth == CV_64F)
+                {
+                    ptrd[x] = (x + y) % 2 == 0 ? randomNan<double>(rng) : ptrd[x];
+                }
+            }
         }
     }
 
@@ -1045,6 +1107,57 @@ OCL_PERF_TEST_P(PatchNaNsFixture, PatchNaNs,
     SANITY_CHECK(src);
 }
 
+////////////// finiteMask ////////////////////////
+
+typedef Size_MatType FiniteMaskFixture;
+
+OCL_PERF_TEST_P(FiniteMaskFixture, FiniteMask,
+                ::testing::Combine(OCL_TEST_SIZES, OCL_PERF_ENUM(CV_32FC1, CV_32FC3, CV_32FC4, CV_64FC1, CV_64FC3, CV_64FC4)))
+{
+    const Size_MatType_t params = GetParam();
+    Size srcSize = get<0>(params);
+    const int type = get<1>(params), cn = CV_MAT_CN(type), depth = CV_MAT_DEPTH(type);
+
+    checkDeviceMaxMemoryAllocSize(srcSize, type);
+
+    UMat src(srcSize, type);
+    UMat mask(srcSize, CV_8UC1);
+    declare.in(src, WARMUP_RNG).out(mask);
+
+    // generating NaNs
+    {
+        Mat src_ = src.getMat(ACCESS_RW);
+        srcSize.width *= cn;
+        const softfloat  fpinf = softfloat ::inf();
+        const softfloat  fninf = softfloat ::inf().setSign(true);
+        const softdouble dpinf = softdouble::inf();
+        const softdouble dninf = softdouble::inf().setSign(true);
+        RNG& rng = theRNG();
+        for (int y = 0; y < srcSize.height; ++y)
+        {
+            float  *const ptrf = src_.ptr<float>(y);
+            double *const ptrd = src_.ptr<double>(y);
+            for (int x = 0; x < srcSize.width; ++x)
+            {
+                int rem = (x + y) % 10;
+                if (depth == CV_32F)
+                {
+                    ptrf[x] = rem <  4 ? randomNan<float >(rng) :
+                              rem == 5 ? (float )((x + y)%2 ? fpinf : fninf) : ptrf[x];
+                }
+                else if (depth == CV_64F)
+                {
+                    ptrd[x] = rem <  4 ? randomNan<double>(rng) :
+                              rem == 5 ? (double)((x + y)%2 ? dpinf : dninf) : ptrd[x];
+                }
+            }
+        }
+    }
+
+    OCL_TEST_CYCLE() cv::finiteMask(src, mask);
+
+    SANITY_CHECK(mask);
+}
 
 ///////////// ScaleAdd ////////////////////////
 
@@ -1150,7 +1263,7 @@ OCL_PERF_TEST_P(ReduceMinMaxFixture, Reduce,
     SANITY_CHECK(dst, eps);
 }
 
-CV_ENUM(ReduceAccOp, CV_REDUCE_SUM, CV_REDUCE_AVG)
+CV_ENUM(ReduceAccOp, REDUCE_SUM, REDUCE_AVG, REDUCE_SUM2)
 
 typedef tuple<Size, std::pair<MatType, MatType>, int, ReduceAccOp> ReduceAccParams;
 typedef TestBaseWithParam<ReduceAccParams> ReduceAccFixture;
@@ -1168,7 +1281,6 @@ OCL_PERF_TEST_P(ReduceAccFixture, Reduce,
             dim = get<2>(params), op = get<3>(params);
     const Size srcSize = get<0>(params),
             dstSize(dim == 0 ? srcSize.width : 1, dim == 0 ? 1 : srcSize.height);
-    const double eps = CV_MAT_DEPTH(dtype) <= CV_32S ? 1 : 3e-4;
 
     checkDeviceMaxMemoryAllocSize(srcSize, stype);
     checkDeviceMaxMemoryAllocSize(srcSize, dtype);
@@ -1178,7 +1290,7 @@ OCL_PERF_TEST_P(ReduceAccFixture, Reduce,
 
     OCL_TEST_CYCLE() cv::reduce(src, dst, dim, op, dtype);
 
-    SANITY_CHECK(dst, eps);
+    SANITY_CHECK_NOTHING();
 }
 
 } } // namespace opencv_test::ocl

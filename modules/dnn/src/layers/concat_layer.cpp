@@ -43,7 +43,6 @@
 #include "../precomp.hpp"
 #include "layers_common.hpp"
 #include "../op_cuda.hpp"
-#include "../op_halide.hpp"
 #include "../op_inf_engine.hpp"
 #include "../ie_ngraph.hpp"
 #include "../op_vkcom.hpp"
@@ -139,9 +138,7 @@ public:
 #endif
         return backendId == DNN_BACKEND_OPENCV ||
                backendId == DNN_BACKEND_CUDA ||
-               (backendId == DNN_BACKEND_HALIDE && haveHalide() && axis == 1 && !padding) ||  // By channels
                (backendId == DNN_BACKEND_WEBNN && !padding) ||
-               (backendId == DNN_BACKEND_VKCOM && haveVulkan() && !padding) ||
                (backendId == DNN_BACKEND_CANN && !padding);
     }
 
@@ -332,51 +329,18 @@ public:
     }
 #endif
 
-    virtual Ptr<BackendNode> initVkCom(const std::vector<Ptr<BackendWrapper> > &input) CV_OVERRIDE
-    {
-#ifdef HAVE_VULKAN
-        vkcom::Tensor in = VkComTensor(input[0]);
-        int cAxis = normalize_axis(axis, in.dimNum());
-        std::shared_ptr<vkcom::OpBase> op(new vkcom::OpConcat(cAxis));
-        return Ptr<BackendNode>(new VkComBackendNode(input, op));
-#endif // HAVE_VULKAN
-        return Ptr<BackendNode>();
-    }
-
-    virtual Ptr<BackendNode> initHalide(const std::vector<Ptr<BackendWrapper> > &input) CV_OVERRIDE
-    {
-#ifdef HAVE_HALIDE
-        std::vector<Halide::Buffer<> > inputBuffers = halideBuffers(input);
-
-        Halide::Var x("x"), y("y"), c("c"), n("n");
-        Halide::Func top = (name.empty() ? Halide::Func() : Halide::Func(name));
-        int offset = inputBuffers[0].channels();
-        Halide::Expr topExpr = select(c < offset,
-                                      inputBuffers[0](x, y, c, n),
-                                      inputBuffers[1](x, y, c - offset, n));
-        for (int i = 2; i < input.size(); ++i)
-        {
-            offset += inputBuffers[i - 1].channels();
-            topExpr = select(c < offset, topExpr,
-                             inputBuffers[i](x, y, c - offset, n));
-        }
-        top(x, y, c, n) = topExpr;
-        return Ptr<BackendNode>(new HalideBackendNode(top));
-#endif  // HAVE_HALIDE
-        return Ptr<BackendNode>();
-    }
-
 #ifdef HAVE_CANN
-    virtual Ptr<BackendNode> initCann(const std::vector<Ptr<BackendWrapper> > &inputsWrapper, const int index, const std::vector<Ptr<BackendNode> >& nodes) CV_OVERRIDE
+    virtual Ptr<BackendNode> initCann(const std::vector<Ptr<BackendWrapper> > &inputs,
+                                      const std::vector<Ptr<BackendWrapper> > &outputs,
+                                      const std::vector<Ptr<BackendNode> >& nodes) CV_OVERRIDE
     {
-        CV_Assert(inputsWrapper.size() == nodes.size());
+        CV_Assert(inputs.size() == nodes.size());
 
         // create operator
-        std::string op_name = cv::format("concat_%d", index);
-        auto op = std::make_shared<ge::op::ConcatD>(op_name);
+        auto op = std::make_shared<ge::op::ConcatD>(name);
 
         // set attributes
-        int N = inputsWrapper.size();
+        int N = inputs.size();
         op->set_attr_concat_dim(axis);
         op->set_attr_N(N);
 
@@ -384,10 +348,10 @@ public:
         op->create_dynamic_input_x(N);
         for (int i = 0; i < N; i++)
         {
-            auto x_i = inputsWrapper[i].dynamicCast<CannBackendWrapper>();
+            auto x_i = inputs[i].dynamicCast<CannBackendWrapper>();
             auto x_i_desc = x_i->getTensorDesc();
             auto op_x_i = nodes[i].dynamicCast<CannBackendNode>()->getOp();
-            op->set_dynamic_input_x(i, *op_x_i, "y");
+            op->set_dynamic_input_x(i, *op_x_i, x_i->name.c_str());
             op->update_dynamic_input_desc_x(i, *x_i_desc);
         }
 
@@ -403,7 +367,7 @@ public:
     virtual Ptr<BackendNode> initNgraph(const std::vector<Ptr<BackendWrapper> >& inputs,
                                         const std::vector<Ptr<BackendNode> >& nodes) CV_OVERRIDE
     {
-        const int numDims = nodes[0].dynamicCast<InfEngineNgraphNode>()->node->get_shape().size();
+        const int numDims = nodes[0].dynamicCast<InfEngineNgraphNode>()->node.get_shape().size();
         const int cAxis = normalize_axis(axis, numDims);
         std::vector<size_t> maxDims(numDims, 0);
 
@@ -414,7 +378,7 @@ public:
             auto inp = nodes[i].dynamicCast<InfEngineNgraphNode>()->node;
             inp_nodes.push_back(inp);
 
-            std::vector<size_t> inpShape = inp->get_shape();
+            std::vector<size_t> inpShape = inp.get_shape();
             for (int i = 0; i < numDims; ++i)
                 maxDims[i] = std::max(maxDims[i], inpShape[i]);
         }

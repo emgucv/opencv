@@ -465,6 +465,15 @@ void Regression::verify(cv::FileNode node, cv::InputArray array, double eps, ERR
 {
     int expected_kind = (int)node["kind"];
     int expected_type = (int)node["type"];
+    int array_type = array.type();
+    if (array_type != expected_type) {
+        // temporary hack; we optimistically assume that type in the computed and expected array should be the same.
+        // if they are different, it must be because of the change in type representation between OpenCV 5.x and OpenCV 2.x,3.x,4.x.
+        // need to add "type5" or something like that and use it in the newer files. Then type will always mean 'earlier than 5.x type'.
+        int depth = expected_type & 7;
+        int channels = ((expected_type >> 3) & 127) + 1;
+        expected_type = CV_MAKETYPE(depth, channels);
+    }
     ASSERT_EQ(expected_kind, array.kind()) << "  Argument \"" << node.name() << "\" has unexpected kind";
     ASSERT_EQ(expected_type, array.type()) << "  Argument \"" << node.name() << "\" has unexpected type";
 
@@ -2104,8 +2113,6 @@ struct KeypointComparator
     {
         return cmp(pts_[idx1], pts_[idx2]);
     }
-private:
-    KeypointComparator& operator=(const KeypointComparator&) = delete;
 };
 }//namespace
 
@@ -2119,7 +2126,8 @@ void perf::sort(std::vector<cv::KeyPoint>& pts, cv::InputOutputArray descriptors
     for (int i = 0; i < desc.rows; ++i)
         idxs[i] = i;
 
-    std::sort(idxs.data(), idxs.data() + desc.rows, KeypointComparator(pts));
+    comparators::KeypointGreater cmp;
+    std::sort(idxs.data(), idxs.data() + desc.rows, [&](int lhs, int rhs){ return cmp(pts[lhs], pts[rhs]); });
 
     std::vector<cv::KeyPoint> spts(pts.size());
     cv::Mat sdesc(desc.size(), desc.type());

@@ -692,7 +692,8 @@ protected:
     Impl* p;
 };
 
-CV_EXPORTS const char* convertTypeStr(int sdepth, int ddepth, int cn, char* buf);
+CV_EXPORTS CV_DEPRECATED const char* convertTypeStr(int sdepth, int ddepth, int cn, char* buf);
+CV_EXPORTS const char* convertTypeStr(int sdepth, int ddepth, int cn, char* buf, size_t buf_size);
 CV_EXPORTS const char* typeToStr(int t);
 CV_EXPORTS const char* memopTypeToStr(int t);
 CV_EXPORTS const char* vecopTypeToStr(int t);
@@ -773,7 +774,7 @@ public:
     void start();
     void stop();
 
-    uint64 durationNS() const; //< duration in nanoseconds
+    uint64 durationNS() const; ///< duration in nanoseconds
 
 protected:
     struct Impl;

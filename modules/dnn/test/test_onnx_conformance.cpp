@@ -937,12 +937,10 @@ public:
 
     static std::set<std::string> parser_deny_list;
     static std::set<std::string> global_deny_list;
+    static std::set<std::string> opencv_deny_list;
     static std::set<std::string> opencl_fp16_deny_list;
     static std::set<std::string> opencl_deny_list;
     static std::set<std::string> cpu_deny_list;
-#ifdef HAVE_HALIDE
-    static std::set<std::string> halide_deny_list;
-#endif
 #ifdef HAVE_VULKAN
     static std::set<std::string> vulkan_deny_list;
 #endif
@@ -956,7 +954,7 @@ public:
         backend = get<0>(get<1>(GetParam()));
         target = get<1>(get<1>(GetParam()));
 
-        if (target == DNN_TARGET_CUDA_FP16 || target == DNN_TARGET_OPENCL_FP16 || target == DNN_TARGET_MYRIAD)
+        if (target == DNN_TARGET_CUDA_FP16 || target == DNN_TARGET_OPENCL_FP16 || target == DNN_TARGET_MYRIAD || target == DNN_TARGET_CPU_FP16)
         {
             default_l1 = 7e-3;
             default_lInf = 2e-2;
@@ -1001,6 +999,10 @@ public:
             #include "test_onnx_conformance_layer_filter_opencv_all_denylist.inl.hpp"
         };
 
+        opencv_deny_list = {
+            #include "test_onnx_conformance_layer_filter_opencv_denylist.inl.hpp"
+        };
+
         opencl_fp16_deny_list = {
             #include "test_onnx_conformance_layer_filter_opencv_ocl_fp16_denylist.inl.hpp"
         };
@@ -1012,12 +1014,6 @@ public:
         cpu_deny_list = {
             #include "test_onnx_conformance_layer_filter_opencv_cpu_denylist.inl.hpp"
         };
-
-#ifdef HAVE_HALIDE
-        halide_deny_list = {
-            #include "test_onnx_conformance_layer_filter__halide_denylist.inl.hpp"
-        };
-#endif
 
 #ifdef HAVE_VULKAN
         vulkan_deny_list = {
@@ -1036,12 +1032,10 @@ public:
 
 std::set<std::string> Test_ONNX_conformance::parser_deny_list;
 std::set<std::string> Test_ONNX_conformance::global_deny_list;
+std::set<std::string> Test_ONNX_conformance::opencv_deny_list;
 std::set<std::string> Test_ONNX_conformance::opencl_fp16_deny_list;
 std::set<std::string> Test_ONNX_conformance::opencl_deny_list;
 std::set<std::string> Test_ONNX_conformance::cpu_deny_list;
-#ifdef HAVE_HALIDE
-std::set<std::string> Test_ONNX_conformance::halide_deny_list;
-#endif
 #ifdef HAVE_VULKAN
 std::set<std::string> Test_ONNX_conformance::vulkan_deny_list;
 #endif
@@ -1057,14 +1051,21 @@ TEST_P(Test_ONNX_conformance, Layer_Test)
     bool checkLayersFallbacks = true;
     bool checkAccuracy = true;
 
+    // SKIP when the test case is in the parser deny list.
     if (parser_deny_list.find(name) != parser_deny_list.end())
     {
         applyTestTag(CV_TEST_TAG_DNN_SKIP_PARSER, CV_TEST_TAG_DNN_SKIP_ONNX_CONFORMANCE);
     }
 
+    // SKIP when the test case is in the global deny list.
+    if (global_deny_list.find(name) != global_deny_list.end())
+    {
+        applyTestTag(CV_TEST_TAG_DNN_SKIP_GLOBAL, CV_TEST_TAG_DNN_SKIP_ONNX_CONFORMANCE);
+    }
+
     if (backend == DNN_BACKEND_OPENCV)
     {
-        if (global_deny_list.find(name) != global_deny_list.end())
+        if (opencv_deny_list.find(name) != opencv_deny_list.end())
         {
             applyTestTag(CV_TEST_TAG_DNN_SKIP_OPENCV_BACKEND, CV_TEST_TAG_DNN_SKIP_ONNX_CONFORMANCE);
         }
@@ -1081,15 +1082,6 @@ TEST_P(Test_ONNX_conformance, Layer_Test)
             applyTestTag(CV_TEST_TAG_DNN_SKIP_CPU, CV_TEST_TAG_DNN_SKIP_OPENCV_BACKEND, CV_TEST_TAG_DNN_SKIP_ONNX_CONFORMANCE);
         }
     }
-#ifdef HAVE_HALIDE
-    else if (backend == DNN_BACKEND_HALIDE)
-    {
-        if (halide_deny_list.find(name) != halide_deny_list.end())
-        {
-            applyTestTag(CV_TEST_TAG_DNN_SKIP_HALIDE, CV_TEST_TAG_DNN_SKIP_ONNX_CONFORMANCE);
-        }
-    }
-#endif
 #ifdef HAVE_INF_ENGINE
     else if (backend == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH)
     {
@@ -1239,9 +1231,9 @@ TEST_P(Test_ONNX_conformance, Layer_Test)
 INSTANTIATE_TEST_CASE_P(/**/, Test_ONNX_conformance,
     testing::Combine(
         testing::ValuesIn(testConformanceConfig),
-        dnnBackendsAndTargets(/*withInferenceEngine=*/true, /*withHalide=*/true)
+        dnnBackendsAndTargets(/* withInferenceEngine = */ true)
     ),
     printOnnxConfParams
 );
 
-};
+}

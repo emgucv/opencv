@@ -10,6 +10,7 @@
 #endif
 
 #include "opencv2/core/cuda.hpp"
+#include "opencv2/core/bindings_utils.hpp"
 
 namespace opencv_test { namespace {
 
@@ -18,7 +19,7 @@ class Core_ReduceTest : public cvtest::BaseTest
 public:
     Core_ReduceTest() {}
 protected:
-    void run( int);
+    void run( int) CV_OVERRIDE;
     int checkOp( const Mat& src, int dstType, int opType, const Mat& opRes, int dim );
     int checkCase( int srcType, int dstType, int dim, Size sz );
     int checkDim( int dim, Size sz );
@@ -26,7 +27,7 @@ protected:
 };
 
 template<class Type>
-void testReduce( const Mat& src, Mat& sum, Mat& avg, Mat& max, Mat& min, int dim )
+void testReduce( const Mat& src, Mat& sum, Mat& avg, Mat& max, Mat& min, Mat& sum2, int dim )
 {
     CV_Assert( src.channels() == 1 );
     if( dim == 0 ) // row
@@ -34,21 +35,25 @@ void testReduce( const Mat& src, Mat& sum, Mat& avg, Mat& max, Mat& min, int dim
         sum.create( 1, src.cols, CV_64FC1 );
         max.create( 1, src.cols, CV_64FC1 );
         min.create( 1, src.cols, CV_64FC1 );
+        sum2.create( 1, src.cols, CV_64FC1 );
     }
     else
     {
         sum.create( src.rows, 1, CV_64FC1 );
         max.create( src.rows, 1, CV_64FC1 );
         min.create( src.rows, 1, CV_64FC1 );
+        sum2.create( src.rows, 1, CV_64FC1 );
     }
     sum.setTo(Scalar(0));
     max.setTo(Scalar(-DBL_MAX));
     min.setTo(Scalar(DBL_MAX));
+    sum2.setTo(Scalar(0));
 
     const Mat_<Type>& src_ = src;
     Mat_<double>& sum_ = (Mat_<double>&)sum;
     Mat_<double>& min_ = (Mat_<double>&)min;
     Mat_<double>& max_ = (Mat_<double>&)max;
+    Mat_<double>& sum2_ = (Mat_<double>&)sum2;
 
     if( dim == 0 )
     {
@@ -59,6 +64,7 @@ void testReduce( const Mat& src, Mat& sum, Mat& avg, Mat& max, Mat& min, int dim
                 sum_(0, ci) += src_(ri, ci);
                 max_(0, ci) = std::max( max_(0, ci), (double)src_(ri, ci) );
                 min_(0, ci) = std::min( min_(0, ci), (double)src_(ri, ci) );
+                sum2_(0, ci) += ((double)src_(ri, ci))*((double)src_(ri, ci));
             }
         }
     }
@@ -71,6 +77,7 @@ void testReduce( const Mat& src, Mat& sum, Mat& avg, Mat& max, Mat& min, int dim
                 sum_(ri, 0) += src_(ri, ci);
                 max_(ri, 0) = std::max( max_(ri, 0), (double)src_(ri, ci) );
                 min_(ri, 0) = std::min( min_(ri, 0), (double)src_(ri, ci) );
+                sum2_(ri, 0) += ((double)src_(ri, ci))*((double)src_(ri, ci));
             }
         }
     }
@@ -93,7 +100,7 @@ int Core_ReduceTest::checkOp( const Mat& src, int dstType, int opType, const Mat
 {
     int srcType = src.type();
     bool support = false;
-    if( opType == REDUCE_SUM || opType == REDUCE_AVG )
+    if( opType == REDUCE_SUM || opType == REDUCE_AVG || opType == REDUCE_SUM2 )
     {
         if( srcType == CV_8U && (dstType == CV_32S || dstType == CV_32F || dstType == CV_64F) )
             support = true;
@@ -128,7 +135,7 @@ int Core_ReduceTest::checkOp( const Mat& src, int dstType, int opType, const Mat
         return cvtest::TS::OK;
 
     double eps = 0.0;
-    if ( opType == REDUCE_SUM || opType == REDUCE_AVG )
+    if ( opType == REDUCE_SUM || opType == REDUCE_AVG || opType == REDUCE_SUM2 )
     {
         if ( dstType == CV_32F )
             eps = 1.e-5;
@@ -152,10 +159,13 @@ int Core_ReduceTest::checkOp( const Mat& src, int dstType, int opType, const Mat
     if( check )
     {
         char msg[100];
-        const char* opTypeStr = opType == REDUCE_SUM ? "REDUCE_SUM" :
-        opType == REDUCE_AVG ? "REDUCE_AVG" :
-        opType == REDUCE_MAX ? "REDUCE_MAX" :
-        opType == REDUCE_MIN ? "REDUCE_MIN" : "unknown operation type";
+        const char* opTypeStr =
+          opType == REDUCE_SUM ? "REDUCE_SUM" :
+          opType == REDUCE_AVG ? "REDUCE_AVG" :
+          opType == REDUCE_MAX ? "REDUCE_MAX" :
+          opType == REDUCE_MIN ? "REDUCE_MIN" :
+          opType == REDUCE_SUM2 ? "REDUCE_SUM2" :
+          "unknown operation type";
         string srcTypeStr, dstTypeStr;
         getMatTypeStr( src.type(), srcTypeStr );
         getMatTypeStr( dstType, dstTypeStr );
@@ -172,25 +182,25 @@ int Core_ReduceTest::checkOp( const Mat& src, int dstType, int opType, const Mat
 int Core_ReduceTest::checkCase( int srcType, int dstType, int dim, Size sz )
 {
     int code = cvtest::TS::OK, tempCode;
-    Mat src, sum, avg, max, min;
+    Mat src, sum, avg, max, min, sum2;
 
     src.create( sz, srcType );
     randu( src, Scalar(0), Scalar(100) );
 
     if( srcType == CV_8UC1 )
-        testReduce<uchar>( src, sum, avg, max, min, dim );
+        testReduce<uchar>( src, sum, avg, max, min, sum2, dim );
     else if( srcType == CV_8SC1 )
-        testReduce<char>( src, sum, avg, max, min, dim );
+        testReduce<char>( src, sum, avg, max, min, sum2, dim );
     else if( srcType == CV_16UC1 )
-        testReduce<unsigned short int>( src, sum, avg, max, min, dim );
+        testReduce<unsigned short int>( src, sum, avg, max, min, sum2, dim );
     else if( srcType == CV_16SC1 )
-        testReduce<short int>( src, sum, avg, max, min, dim );
+        testReduce<short int>( src, sum, avg, max, min, sum2, dim );
     else if( srcType == CV_32SC1 )
-        testReduce<int>( src, sum, avg, max, min, dim );
+        testReduce<int>( src, sum, avg, max, min, sum2, dim );
     else if( srcType == CV_32FC1 )
-        testReduce<float>( src, sum, avg, max, min, dim );
+        testReduce<float>( src, sum, avg, max, min, sum2, dim );
     else if( srcType == CV_64FC1 )
-        testReduce<double>( src, sum, avg, max, min, dim );
+        testReduce<double>( src, sum, avg, max, min, sum2, dim );
     else
         CV_Assert( 0 );
 
@@ -208,6 +218,10 @@ int Core_ReduceTest::checkCase( int srcType, int dstType, int dim, Size sz )
 
     // 4. min
     tempCode = checkOp( src, dstType, REDUCE_MIN, min, dim );
+    code = tempCode != cvtest::TS::OK ? tempCode : code;
+
+    // 5. sum2
+    tempCode = checkOp( src, dstType, REDUCE_SUM2, sum2, dim );
     code = tempCode != cvtest::TS::OK ? tempCode : code;
 
     return code;
@@ -461,12 +475,13 @@ TEST(Core_PCA, accuracy)
     ASSERT_LE(err, diffBackPrjEps) << "bad accuracy of cvBackProjectPCA() (CV_PCA_DATA_AS_COL)";
 #endif
     // Test read and write
-    FileStorage fs( "PCA_store.yml", FileStorage::WRITE );
+    const std::string filename = cv::tempfile("PCA_store.yml");
+    FileStorage fs( filename, FileStorage::WRITE );
     rPCA.write( fs );
     fs.release();
 
     PCA lPCA;
-    fs.open( "PCA_store.yml", FileStorage::READ );
+    fs.open( filename, FileStorage::READ );
     lPCA.read( fs.root() );
     err = cvtest::norm(rPCA.eigenvectors, lPCA.eigenvectors, NORM_L2 | NORM_RELATIVE);
     EXPECT_LE(err, 0) << "bad accuracy of write/load functions (YML)";
@@ -474,6 +489,7 @@ TEST(Core_PCA, accuracy)
     EXPECT_LE(err, 0) << "bad accuracy of write/load functions (YML)";
     err = cvtest::norm(rPCA.mean, lPCA.mean, NORM_L2 | NORM_RELATIVE);
     EXPECT_LE(err, 0) << "bad accuracy of write/load functions (YML)";
+    EXPECT_EQ(0, remove(filename.c_str()));
 }
 
 class Core_ArrayOpTest : public cvtest::BaseTest
@@ -482,7 +498,7 @@ public:
     Core_ArrayOpTest();
     ~Core_ArrayOpTest();
 protected:
-    void run(int);
+    void run(int) CV_OVERRIDE;
 };
 
 
@@ -497,7 +513,7 @@ static string idx2string(const int* idx, int dims)
     char* ptr = buf;
     for( int k = 0; k < dims; k++ )
     {
-        sprintf(ptr, "%4d ", idx[k]);
+        snprintf(ptr, sizeof(buf) - (ptr - buf), "%4d ", idx[k]);
         ptr += strlen(ptr);
     }
     ptr[-1] = '\0';
@@ -586,6 +602,11 @@ static void setValue(SparseMat& M, const int* idx, double value, RNG& rng)
         CV_Error(CV_StsUnsupportedFormat, "");
 }
 
+#if defined(__GNUC__) && (__GNUC__ == 11 || __GNUC__ == 12 || __GNUC__ == 13)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#endif
+
 template<typename Pixel>
 struct InitializerFunctor{
     /// Initializer for cv::Mat::forEach test
@@ -607,6 +628,11 @@ struct InitializerFunctor5D{
         pixel[4] = idx[4];
     }
 };
+
+#if defined(__GNUC__) && (__GNUC__ == 11 || __GNUC__ == 12)
+#pragma GCC diagnostic pop
+#endif
+
 
 template<typename Pixel>
 struct EmptyFunctor
@@ -1010,7 +1036,7 @@ class Core_MergeSplitBaseTest : public cvtest::BaseTest
 protected:
     virtual int run_case(int depth, size_t channels, const Size& size, RNG& rng) = 0;
 
-    virtual void run(int)
+    virtual void run(int) CV_OVERRIDE
     {
         // m is Mat
         // mv is vector<Mat>
@@ -1055,7 +1081,7 @@ public:
     ~Core_MergeTest() {}
 
 protected:
-    virtual int run_case(int depth, size_t matCount, const Size& size, RNG& rng)
+    virtual int run_case(int depth, size_t matCount, const Size& size, RNG& rng) CV_OVERRIDE
     {
         const int maxMatChannels = 10;
 
@@ -1113,7 +1139,7 @@ public:
     ~Core_SplitTest() {}
 
 protected:
-    virtual int run_case(int depth, size_t channels, const Size& size, RNG& rng)
+    virtual int run_case(int depth, size_t channels, const Size& size, RNG& rng) CV_OVERRIDE
     {
         Mat src(size, CV_MAKETYPE(depth, (int)channels));
         rng.fill(src, RNG::UNIFORM, 0, 100, true);
@@ -1337,12 +1363,24 @@ TEST(Core_Mat, copyNx1ToVector)
     src.copyTo(ref_dst8);
     src.copyTo(dst8);
 
-    ASSERT_PRED_FORMAT2(cvtest::MatComparator(0, 0), ref_dst8, cv::Mat_<uchar>(dst8));
+    ASSERT_PRED_FORMAT2(cvtest::MatComparator(0, 0), ref_dst8, cv::Mat_<uchar>(dst8).reshape(1, 5));
 
     src.convertTo(ref_dst16, CV_16U);
     src.convertTo(dst16, CV_16U);
 
-    ASSERT_PRED_FORMAT2(cvtest::MatComparator(0, 0), ref_dst16, cv::Mat_<ushort>(dst16));
+    ASSERT_PRED_FORMAT2(cvtest::MatComparator(0, 0), ref_dst16, cv::Mat_<ushort>(dst16).reshape(1, 5));
+}
+
+TEST(Core_Mat, copyMakeBoderUndefinedBehavior)
+{
+    Mat1b src(4, 4), dst;
+    randu(src, Scalar(10), Scalar(100));
+    // This could trigger a (signed int)*size_t operation which is undefined behavior.
+    cv::copyMakeBorder(src, dst, 1, 1, 1, 1, cv::BORDER_REFLECT_101);
+    EXPECT_EQ(0, cv::norm(src.row(1), dst(Rect(1,0,4,1))));
+    EXPECT_EQ(0, cv::norm(src.row(2), dst(Rect(1,5,4,1))));
+    EXPECT_EQ(0, cv::norm(src.col(1), dst(Rect(0,1,1,4))));
+    EXPECT_EQ(0, cv::norm(src.col(2), dst(Rect(5,1,1,4))));
 }
 
 TEST(Core_Matx, fromMat_)
@@ -1487,6 +1525,7 @@ TEST(Core_Mat_vector, copyTo_roi_row)
     {
         _dst.create(src.rows, src.cols, src.type());
         Mat dst = _dst.getMat();
+        dst = dst.reshape(dst.channels(), dst.rows);
         EXPECT_EQ(src.dims, dst.dims);
         EXPECT_EQ(src.cols, dst.cols);
         EXPECT_EQ(src.rows, dst.rows);
@@ -1563,6 +1602,7 @@ TEST(Reduce, regression_should_fail_bug_4594)
     EXPECT_THROW(cv::reduce(src, dst, 0, REDUCE_MAX, CV_32S), cv::Exception);
     EXPECT_NO_THROW(cv::reduce(src, dst, 0, REDUCE_SUM, CV_32S));
     EXPECT_NO_THROW(cv::reduce(src, dst, 0, REDUCE_AVG, CV_32S));
+    EXPECT_NO_THROW(cv::reduce(src, dst, 0, REDUCE_SUM2, CV_32S));
 }
 
 TEST(Mat, push_back_vector)
@@ -1756,7 +1796,8 @@ TEST(Mat_, range_based_for)
 TEST(Mat, from_initializer_list)
 {
     Mat A({1.f, 2.f, 3.f});
-    Mat_<float> B(3, 1); B << 1, 2, 3;
+    int n = 3;
+    Mat_<float> B(1, &n); B << 1, 2, 3;
     Mat_<float> C({3}, {1,2,3});
 
     ASSERT_EQ(A.type(), CV_32F);
@@ -1772,7 +1813,8 @@ TEST(Mat, from_initializer_list)
 TEST(Mat_, from_initializer_list)
 {
     Mat_<float> A = {1, 2, 3};
-    Mat_<float> B(3, 1); B << 1, 2, 3;
+    int n = 3;
+    Mat_<float> B(1, &n); B << 1, 2, 3;
     Mat_<float> C({3}, {1,2,3});
 
     ASSERT_DOUBLE_EQ(cvtest::norm(A, B, NORM_INF), 0.);
@@ -1976,7 +2018,6 @@ TEST(Core_InputArray, fetch_MatExpr)
 }
 
 
-#ifdef CV_CXX11
 class TestInputArrayRangeChecking {
     static const char *kind2str(cv::_InputArray ia)
     {
@@ -2122,8 +2163,6 @@ TEST(Core_InputArray, range_checking)
 {
     TestInputArrayRangeChecking::run();
 }
-#endif
-
 
 TEST(Core_Vectors, issue_13078)
 {
@@ -2354,10 +2393,11 @@ TEST(Mat, regression_18473)
 }
 
 // FITIT: remove DISABLE_ when 1D Mat is supported
-TEST(Mat1D, DISABLED_basic)
+TEST(Mat1D, basic)
 {
     std::vector<int> sizes { 100 };
     Mat m1(sizes, CV_8UC1, Scalar::all(5));
+    Mat m1_copy(sizes, CV_8UC1, Scalar::all(5));
     m1.at<uchar>(50) = 10;
     EXPECT_FALSE(m1.empty());
     ASSERT_EQ(1, m1.dims);
@@ -2381,7 +2421,7 @@ TEST(Mat1D, DISABLED_basic)
     {
         SCOPED_TRACE("reshape(1, 1)");
         Mat m = m1.reshape(1, 1);
-        EXPECT_EQ(1, m.dims);
+        EXPECT_EQ(2, m.dims);
         EXPECT_EQ(Size(100, 1), m.size());
     }
 
@@ -2393,10 +2433,12 @@ TEST(Mat1D, DISABLED_basic)
     }
 
     {
-        SCOPED_TRACE("reshape(1, {1, 100})");
-        Mat m = m1.reshape(1, {1, 100});
-        EXPECT_EQ(2, m.dims);
-        EXPECT_EQ(Size(100, 1), m.size());
+        SCOPED_TRACE("reshape(1, {10, 10}).reshape(1, {100})");
+        std::vector<int> newsize={100};
+        Mat m2 = m1.reshape(1, {10, 10});
+        Mat m3 = m2.reshape(1, newsize);
+        EXPECT_EQ(1, m3.dims);
+        EXPECT_EQ(Size(100, 1), m3.size());
     }
 
     {
@@ -2411,6 +2453,7 @@ TEST(Mat1D, DISABLED_basic)
         Mat m(5, 100, CV_8UC1, Scalar::all(0));
         const Mat row2D = m.row(2);
         EXPECT_NO_THROW(m1.copyTo(row2D));
+        EXPECT_NO_THROW(row2D.copyTo(m1_copy));
     }
 
     {
@@ -2431,16 +2474,19 @@ TEST(Mat1D, DISABLED_basic)
         SCOPED_TRACE("CvMatND");
         CvMatND c_mat = cvMatND(m1);
         EXPECT_EQ(2, c_mat.dims);
-        EXPECT_EQ(100, c_mat.dim[0].size);
-        EXPECT_EQ(1, c_mat.dim[1].size);
+        EXPECT_EQ(1, c_mat.dim[0].size);
+        EXPECT_EQ(100, c_mat.dim[1].size);
     }
 
     {
         SCOPED_TRACE("minMaxLoc");
         Point pt;
         minMaxLoc(m1, 0, 0, 0, &pt);
-        EXPECT_EQ(50, pt.x);
         EXPECT_EQ(0, pt.y);
+        EXPECT_EQ(50, pt.x);
+        minMaxLoc(m1_copy, 0, 0, 0, &pt);
+        EXPECT_EQ(0, pt.y);
+        EXPECT_EQ(50, pt.x);
     }
 }
 
@@ -2560,6 +2606,15 @@ TEST(Mat, Recreate1DMatWithSameMeta)
     m.dims = 1;
 
     EXPECT_NO_THROW(m.create(dims, depth));
+}
+
+TEST(InputArray, dumpEmpty)
+{
+    std::string s;
+    s = cv::utils::dumpInputArray(noArray());
+    EXPECT_EQ(s, "InputArray: noArray()");
+    s = cv::utils::dumpInputArray(Mat());
+    EXPECT_EQ(s, "InputArray: empty()=true kind=0x00010000 flags=0x01010000 total(-1)=0 dims(-1)=0 size(-1)=0x0 type(-1)=CV_8UC1");
 }
 
 }} // namespace

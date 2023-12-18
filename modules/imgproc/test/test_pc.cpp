@@ -186,10 +186,10 @@ void CV_DivSpectrumsTest::get_test_array_types_and_sizes( int test_case_idx, vec
     // Inputs are CCS-packed arrays.  Prepare outputs and temporary inputs as complex matrices.
     if( type == CV_32FC1 || type == CV_64FC1 )
     {
-        types[OUTPUT][0] += 8;
-        types[REF_OUTPUT][0] += 8;
-        types[TEMP][0] += 8;
-        types[TEMP][1] += 8;
+        types[OUTPUT][0] += CV_DEPTH_MAX;
+        types[REF_OUTPUT][0] += CV_DEPTH_MAX;
+        types[TEMP][0] += CV_DEPTH_MAX;
+        types[TEMP][1] += CV_DEPTH_MAX;
     }
 }
 
@@ -301,7 +301,7 @@ static std::pair<double, double> divide_complex_numbers( const double nu_re, con
     const double result_re = nu_re * de_re + nu_im * de_im;
     const double result_im = nu_re * (-de_im) + nu_im * de_re;
     return std::pair<double, double>(result_re / result_de, result_im / result_de);
-};
+}
 
 /// Helper function to divide a DFT in src1 by a DFT in src2 with depths depth_t.  The DFTs are
 /// complex matrices.
