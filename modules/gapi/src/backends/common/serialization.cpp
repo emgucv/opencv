@@ -8,7 +8,11 @@
 #include <map> // map
 #include <ade/util/zip_range.hpp> // indexed
 
-#ifdef _WIN32
+
+
+#if defined( WINRT )
+#include <WinSock2.h>
+#elif defined( _WIN32 )
 #define NOMINMAX
 #include <winsock.h>      // htonl, ntohl
 #else

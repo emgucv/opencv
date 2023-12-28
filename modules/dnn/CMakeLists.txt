@@ -230,7 +230,11 @@ if(TARGET ocv.3rdparty.openvino AND OPENCV_DNN_OPENVINO)
     # opencv_world requires absolute path
     add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/misc/plugin/openvino" "${CMAKE_CURRENT_BINARY_DIR}/dnn_plugin_openvino")
   elseif(NOT OPENCV_DNN_BUILTIN_BACKEND)
-    list(APPEND dnn_runtime_libs ocv.3rdparty.openvino)
+    IF ("${OpenVINO_DIR}" STREQUAL "")
+		list(APPEND dnn_runtime_libs ocv.3rdparty.openvino)
+	ELSE()
+		MESSAGE(STATUS "Using prebuild OpenVINO, we will skip ocv_install_used_external_targets(ocv.3rdparty.openvino) in dnn module")
+	ENDIF()
   endif()
 endif()
 

@@ -65,6 +65,10 @@ using namespace cv::dnn::cuda4dnn;
 #endif
 #include <opencv2/core/utils/logger.hpp>
 
+#ifndef M_SQRT1_2
+#define M_SQRT1_2 0.707106781186547524401
+#endif // !M_SQRT1_2
+
 namespace cv
 {
 namespace dnn
