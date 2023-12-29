@@ -494,7 +494,7 @@ macro(ocv_cpu_aarch64_baseline_merge_feature_options FEATURE_NAME_LIST FLAG_STRI
       if(NOT ${OPT_FOUND} EQUAL -1)
         string(REPLACE "${COMMON_OPTION}" "" TRAILING_PART "${CPU_${OPT}_FLAGS_ON}")
         string(APPEND _POSTFIX "${TRAILING_PART}")
-        string(REPLACE " ${CPU_${OPT}_FLAGS_ON}" "" ${FLAG_STRING} ${${FLAG_STRING}})
+        string(REPLACE " ${CPU_${OPT}_FLAGS_ON}" "" ${FLAG_STRING} "${${FLAG_STRING}}")
       endif()
     endforeach()
     # If more than one option found, merge them
