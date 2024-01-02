@@ -33,8 +33,11 @@ if(NOT ZLIB_FOUND)
   set(ZLIB_INCLUDE_DIR "${${ZLIB_LIBRARY}_SOURCE_DIR}" "${${ZLIB_LIBRARY}_BINARY_DIR}" CACHE INTERNAL "")
   set(ZLIB_INCLUDE_DIRS ${ZLIB_INCLUDE_DIR})
   set(ZLIB_LIBRARIES ${ZLIB_LIBRARY})
-
-  ocv_parse_header_version(ZLIB "${${ZLIB_LIBRARY}_SOURCE_DIR}/zlib.h" ZLIB_VERSION)
+  IF(WINRT)
+	ocv_parse_header2(ZLIB "${${ZLIB_LIBRARY}_SOURCE_DIR}/zlib.h" ZLIB_VERSION)
+  ELSE()
+	ocv_parse_header_version(ZLIB "${${ZLIB_LIBRARY}_SOURCE_DIR}/zlib.h" ZLIB_VERSION)
+  ENDIF()
 endif()
 
 # --- libavif (optional) ---
@@ -284,7 +287,12 @@ if(NOT HAVE_SPNG AND WITH_PNG)
     add_subdirectory("${OpenCV_SOURCE_DIR}/3rdparty/libpng")
     set(PNG_INCLUDE_DIR "${${PNG_LIBRARY}_SOURCE_DIR}" CACHE INTERNAL "")
     set(PNG_DEFINITIONS "")
-    ocv_parse_header_version(PNG "${PNG_INCLUDE_DIR}/png.h" PNG_LIBPNG_VER_STRING)
+	
+	IF(WINRT)
+	  ocv_parse_header2(PNG "${PNG_INCLUDE_DIR}/png.h" PNG_LIBPNG_VER_STRING)
+	ELSE()
+      ocv_parse_header_version(PNG "${PNG_INCLUDE_DIR}/png.h" PNG_LIBPNG_VER_STRING)
+	ENDIF()
   endif()
 
   set(HAVE_PNG YES)
