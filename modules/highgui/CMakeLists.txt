@@ -159,7 +159,7 @@ elseif(WINRT)
 
   # libraries below are neither available nor required
   # on ARM devices and/or Windows Phone
-  if(WINRT_PHONE OR (OpenCV_ARCH STREQUAL "ARM"))
+  if(HIGHGUI_LIBRARIES AND (WINRT_PHONE OR (OpenCV_ARCH STREQUAL "ARM")))
     list(REMOVE_ITEM HIGHGUI_LIBRARIES "comctl32" "gdi32" "ole32" "setupapi")
     if(WINRT_PHONE)
       message(STATUS "  ${name}: Windows Phone detected")
