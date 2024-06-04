@@ -6,7 +6,7 @@ if(NOT HAVE_OBSENSOR)
   endif()
 
   if(OBSENSOR_USE_ORBBEC_SDK)
-    include(${CMAKE_SOURCE_DIR}/3rdparty/orbbecsdk/orbbecsdk.cmake)
+    include(${CMAKE_CURRENT_LIST_DIR}/../../../3rdparty/orbbecsdk/orbbecsdk.cmake)
     download_orbbec_sdk(ORBBEC_SDK_ROOT_DIR)
     message(STATUS "ORBBEC_SDK_ROOT_DIR: ${ORBBEC_SDK_ROOT_DIR}")
     if(ORBBEC_SDK_ROOT_DIR)
