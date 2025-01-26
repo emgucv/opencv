@@ -99,12 +99,13 @@ namespace
         auto dump_info = cv::gapi::getCompileArg<cv::graph_dump_path>(args);
         if (!dump_info.has_value())
         {
-#if WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP || WINRT_10
-            return cv::util::make_optional(path)
+#if (defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP)) || WINRT_10
+            return cv::util::optional<std::string>();
 #else
             const std::string path = cv::utils::getConfigurationParameterString("GRAPH_DUMP_PATH");
             return !path.empty()
                 ? cv::util::make_optional(path)
+                : cv::util::optional<std::string>();
 #endif
 
         }
