@@ -2632,11 +2632,12 @@ CVAPI(int) cvGetErrInfo( const char** errcode_desc, const char** description,
 /** Maps IPP error codes to the counterparts from OpenCV */
 CVAPI(int) cvErrorFromIppStatus( int ipp_status );
 
+
 typedef int (CV_CDECL *CvErrorCallback)( int status, const char* func_name,
                                         const char* err_msg, const char* file_name, int line, void* userdata );
-
+                                        
 /** Assigns a new error-handling function */
-CVAPI(CvErrorCallback) cvRedirectError( CvErrorCallback error_handler,
+CVAPI(cv::ErrorCallback) cveRedirectError( cv::ErrorCallback error_handler,
                                        void* userdata CV_DEFAULT(NULL),
                                        void** prev_userdata CV_DEFAULT(NULL) );
 
