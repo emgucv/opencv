@@ -97,8 +97,15 @@ include(CheckCSourceCompiles)
 include(CheckIncludeFiles)
 include(CheckTypeSize)
 
-check_type_size("size_t" SIZE_T)
-check_type_size("unsigned long" UNSIGNED_LONG)
+IF(MAC_CATALYST AND (("${IOS_ARCH}" STREQUAL "x86_64") OR ("${IOS_ARCH}" STREQUAL "arm64")))
+  SET(HAVE_SIZEOF_SIZE_T TRUE)
+  SET(SIZEOF_SIZE_T 8)
+  SET(HAVE_SIZEOF_UNSIGNED_LONG)
+  SET(SIZEOF_UNSIGNED_LONG 4)
+ELSE()
+  check_type_size("size_t" SIZE_T)
+  check_type_size("unsigned long" UNSIGNED_LONG)
+ENDIF()
 
 if(SIZEOF_SIZE_T EQUAL SIZEOF_UNSIGNED_LONG)
   check_c_source_compiles("int main(int argc, char **argv) { unsigned long a = argc;  return __builtin_ctzl(a); }"

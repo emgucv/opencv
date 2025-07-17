@@ -49,7 +49,8 @@ endif()
 # Hidden visibility is required for cxx on iOS
 set (no_warn "-Wno-unused-function -Wno-overloaded-virtual")
 set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${no_warn}")
-set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++ -fvisibility=hidden -fvisibility-inlines-hidden ${no_warn}")
+set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++ ${no_warn}")
+#set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++ -fvisibility=hidden -fvisibility-inlines-hidden ${no_warn}")
 
 set(CMAKE_CXX_FLAGS_RELEASE "-DNDEBUG -O3 -ffast-math")
 if(NOT IOS_ARCH STREQUAL "armv7" AND NOT IOS_ARCH STREQUAL "armv7s")

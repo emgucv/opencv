@@ -25,9 +25,57 @@ else()
   cmake_minimum_required(VERSION "${MIN_VER_CMAKE}" FATAL_ERROR)
 endif()
 
-#
-# Configure CMake policies
-#
+option(ENABLE_PIC "Generate position independent code (necessary for shared libraries)" TRUE)
+set(CMAKE_POSITION_INDEPENDENT_CODE ${ENABLE_PIC})
+
+# Following block can break build in case of cross-compiling
+# but CMAKE_CROSSCOMPILING variable will be set only on project(OpenCV) command
+# so we will try to detect cross-compiling by the presence of CMAKE_TOOLCHAIN_FILE
+if(NOT DEFINED CMAKE_INSTALL_PREFIX)
+  if(NOT CMAKE_TOOLCHAIN_FILE)
+    # it _must_ go before project(OpenCV) in order to work
+    if(WIN32)
+      set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/install" CACHE PATH "Installation Directory")
+    else()
+      set(CMAKE_INSTALL_PREFIX "/usr/local" CACHE PATH "Installation Directory")
+    endif()
+  else()
+    #Android: set output folder to ${CMAKE_BINARY_DIR}
+    set(LIBRARY_OUTPUT_PATH_ROOT ${CMAKE_BINARY_DIR} CACHE PATH "root for library output, set this to change where android libs are compiled to" )
+    # any cross-compiling
+    set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/install" CACHE PATH "Installation Directory")
+  endif()
+endif()
+
+if(CMAKE_SYSTEM_NAME MATCHES WindowsPhone OR CMAKE_SYSTEM_NAME MATCHES WindowsStore)
+  set(WINRT TRUE)
+endif()
+
+if(WINRT)
+  add_definitions(-DWINRT -DNO_GETENV)
+
+  # Making definitions available to other configurations and
+  # to filter dependency restrictions at compile time.
+  if(CMAKE_SYSTEM_NAME MATCHES WindowsPhone)
+    set(WINRT_PHONE TRUE)
+    add_definitions(-DWINRT_PHONE)
+  elseif(CMAKE_SYSTEM_NAME MATCHES WindowsStore)
+    set(WINRT_STORE TRUE)
+    add_definitions(-DWINRT_STORE)
+  endif()
+
+  if(CMAKE_SYSTEM_VERSION MATCHES 10)
+    set(WINRT_10 TRUE)
+    add_definitions(-DWINRT_10)
+  elseif(CMAKE_SYSTEM_VERSION MATCHES 8.1)
+    set(WINRT_8_1 TRUE)
+    add_definitions(-DWINRT_8_1)
+  elseif(CMAKE_SYSTEM_VERSION MATCHES 8.0)
+    set(WINRT_8_0 TRUE)
+    add_definitions(-DWINRT_8_0)
+  endif()
+endif()
+
 if(POLICY CMP0026)
   cmake_policy(SET CMP0026 NEW)
 endif()
@@ -564,6 +612,9 @@ endif()
 # MathJax is used for math rendering by both Doxygen HTML and JavaDoc, so
 # this var have to be defined before "modules" AND "doc" are processed
 set(OPENCV_MATHJAX_RELPATH "https://cdn.jsdelivr.net/npm/mathjax@3.0.1" CACHE STRING "URI to a MathJax installation")
+IF(WITH_CUDA)
+  include(cmake/FindCUDA.cmake)
+ENDIF()
 
 # ----------------------------------------------------------------------------
 #  Get actual OpenCV version number from sources
@@ -1174,11 +1225,11 @@ endif()
 if(ANDROID OR NOT UNIX)
   install(FILES ${OPENCV_LICENSE_FILE}
         PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
-        DESTINATION ./ COMPONENT libs)
+        DESTINATION opencv COMPONENT libs)
   if(OPENCV_README_FILE)
     install(FILES ${OPENCV_README_FILE}
             PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
-            DESTINATION ./ COMPONENT libs)
+            DESTINATION opencv COMPONENT libs)
   endif()
 endif()
 
@@ -1267,6 +1318,7 @@ endif()
 status("")
 status("  CPU/HW features:")
 status("    Baseline:"  "${CPU_BASELINE_FINAL}")
+SET(CPU_BASELINE_FINAL ${CPU_BASELINE_FINAL} PARENT_SCOPE)
 if(NOT CPU_BASELINE STREQUAL CPU_BASELINE_FINAL)
   status("      requested:"  "${CPU_BASELINE}")
 endif()

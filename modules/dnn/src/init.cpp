@@ -206,11 +206,15 @@ void initializeLayerFactory()
     CV_DNN_REGISTER_LAYER_CLASS(Requantize,       RequantizeLayer);
     CV_DNN_REGISTER_LAYER_CLASS(ConvolutionInt8,  ConvolutionLayerInt8);
     CV_DNN_REGISTER_LAYER_CLASS(InnerProductInt8, InnerProductLayerInt8);
+#ifndef ANDROID	
     CV_DNN_REGISTER_LAYER_CLASS(PoolingInt8,      PoolingLayerInt8);
+#endif
     CV_DNN_REGISTER_LAYER_CLASS(EltwiseInt8,      EltwiseLayerInt8);
     CV_DNN_REGISTER_LAYER_CLASS(BatchNormInt8,    BatchNormLayerInt8);
-    CV_DNN_REGISTER_LAYER_CLASS(ScaleInt8,        ScaleLayerInt8);
+#ifndef ANDROID	
+    CV_DNN_REGISTER_LAYER_CLASS(ScaleInt8,        ScaleLayerInt8);	
     CV_DNN_REGISTER_LAYER_CLASS(ShiftInt8,        ShiftLayerInt8);
+#endif
 
     CV_DNN_REGISTER_LAYER_CLASS(ReLUInt8,         ActivationLayerInt8);
     CV_DNN_REGISTER_LAYER_CLASS(ReLU6Int8,        ActivationLayerInt8);
@@ -222,8 +226,11 @@ void initializeLayerFactory()
     CV_DNN_REGISTER_LAYER_CLASS(ELUInt8,          ActivationLayerInt8);
     CV_DNN_REGISTER_LAYER_CLASS(BNLLInt8,         ActivationLayerInt8);
     CV_DNN_REGISTER_LAYER_CLASS(AbsValInt8,       ActivationLayerInt8);
+	
+#ifndef ANDROID
     CV_DNN_REGISTER_LAYER_CLASS(SoftmaxInt8,      SoftmaxLayerInt8);
     CV_DNN_REGISTER_LAYER_CLASS(SoftMaxInt8,      SoftmaxLayerInt8);
+#endif
 
     CV_DNN_REGISTER_LAYER_CLASS(ConcatInt8,       ConcatLayer);
     CV_DNN_REGISTER_LAYER_CLASS(FlattenInt8,      FlattenLayer);
