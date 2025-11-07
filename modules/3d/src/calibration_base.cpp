@@ -41,7 +41,7 @@
 //M*/
 
 #include "precomp.hpp"
-#include "opencv2/imgproc/imgproc_c.h"
+#include "hal_replacement.hpp"
 #include "distortion_model.hpp"
 #include <stdio.h>
 #include <iterator>
@@ -146,7 +146,7 @@ void cv::Rodrigues(InputArray _src, OutputArray _dst, OutputArray _jacobian)
     dst.setZero();
 
     if( depth != CV_32F && depth != CV_64F )
-        CV_Error( CV_StsUnsupportedFormat, "The matrices must have 32f or 64f data type" );
+        CV_Error( cv::Error::StsUnsupportedFormat, "The matrices must have 32f or 64f data type" );
 
     if( v2m )
     {
@@ -532,7 +532,7 @@ void cv::projectPoints( InputArray _objectPoints,
     if(total % 3 != 0)
     {
         //we have stopped support of homogeneous coordinates because it cause ambiguity in interpretation of the input data
-        CV_Error( CV_StsBadArg, "Homogeneous coordinates are not supported" );
+        CV_Error( cv::Error::StsBadArg, "Homogeneous coordinates are not supported" );
     }
     count = total / 3;
     CV_Assert(objpt_depth == CV_32F || objpt_depth == CV_64F);
@@ -540,27 +540,22 @@ void cv::projectPoints( InputArray _objectPoints,
               (objectPoints.rows == count && objpt_cn*objectPoints.cols == 3) ||
               (objectPoints.rows == 3 && objpt_cn == 1 && objectPoints.cols == count));
 
-    Mat matM(objectPoints.size(), CV_64FC(objpt_cn));
-    objectPoints.convertTo(matM, CV_64F);
     if (objectPoints.rows == 3 && objectPoints.cols == count) {
         Mat temp;
-        transpose(matM, temp);
-        matM = temp;
+        transpose(objectPoints, temp);
+        objectPoints = temp;
     }
 
     CV_Assert( _imagePoints.needed() );
     _imagePoints.create(count, 1, CV_MAKETYPE(objpt_depth, 2), -1, true);
     Mat ipoints = _imagePoints.getMat();
-    ipoints.convertTo(_m, CV_64F);
-    const Point3d* M = matM.ptr<Point3d>();
-    Point2d* m = _m.ptr<Point2d>();
 
     Mat rvec = _rvec.getMat(), tvec = _tvec.getMat();
     if(!((rvec.depth() == CV_32F || rvec.depth() == CV_64F) &&
         (rvec.size() == Size(3, 3) ||
         (rvec.rows == 1 && rvec.cols*rvec.channels() == 3) ||
         (rvec.rows == 3 && rvec.cols*rvec.channels() == 1)))) {
-        CV_Error(CV_StsBadArg, "rvec must be 3x3 or 1x3 or 3x1 floating-point array");
+        CV_Error(cv::Error::StsBadArg, "rvec must be 3x3 or 1x3 or 3x1 floating-point array");
     }
 
     if( rvec.size() == Size(3, 3) )
@@ -582,7 +577,7 @@ void cv::projectPoints( InputArray _objectPoints,
     if(!((tvec.depth() == CV_32F || tvec.depth() == CV_64F) &&
         ((tvec.rows == 1 && tvec.cols*tvec.channels() == 3) ||
         (tvec.rows == 3 && tvec.cols*tvec.channels() == 1)))) {
-        CV_Error(CV_StsBadArg, "tvec must be 1x3 or 3x1 floating-point array");
+        CV_Error(cv::Error::StsBadArg, "tvec must be 1x3 or 3x1 floating-point array");
     }
 
     Mat _t(tvec.size(), CV_64FC(tvec.channels()), t);
@@ -591,7 +586,7 @@ void cv::projectPoints( InputArray _objectPoints,
     Mat cameraMatrix = _cameraMatrix.getMat();
 
     if(cameraMatrix.size() != Size(3, 3) || cameraMatrix.channels() != 1)
-        CV_Error( CV_StsBadArg, "Intrinsic parameters must be 3x3 floating-point matrix" );
+        CV_Error( cv::Error::StsBadArg, "Intrinsic parameters must be 3x3 floating-point matrix" );
     Mat _a(3, 3, CV_64F, a);
     cameraMatrix.convertTo(_a, CV_64F);
 
@@ -609,7 +604,7 @@ void cv::projectPoints( InputArray _objectPoints,
         ktotal = (int)distCoeffs.total()*kcn;
         if( (distCoeffs.rows != 1 && distCoeffs.cols != 1) ||
             (ktotal != 4 && ktotal != 5 && ktotal != 8 && ktotal != 12 && ktotal != 14))
-            CV_Error( CV_StsBadArg, cvDistCoeffErr );
+            CV_Error( cv::Error::StsBadArg, cvDistCoeffErr );
 
         Mat _k(distCoeffs.size(), CV_64FC(kcn), k);
         distCoeffs.convertTo(_k, CV_64F);
@@ -656,6 +651,127 @@ void cv::projectPoints( InputArray _objectPoints,
 
     bool calc_derivatives = dpdr.data || dpdt.data || dpdf.data ||
                             dpdc.data || dpdk.data || dpdo.data;
+
+    if (!calc_derivatives)
+    {
+        if (objpt_depth == CV_32F && ipoints.type() == CV_32F)
+        {
+            float rtMatrix[12] = { (float)R[0], (float)R[1], (float)R[2], (float)t[0],
+                                (float)R[3], (float)R[4], (float)R[5], (float)t[1],
+                                (float)R[6], (float)R[7], (float)R[8], (float)t[2] };
+
+            cv_camera_intrinsics_pinhole_32f intr;
+            intr.fx = (float)fx; intr.fy = (float)fy;
+            intr.cx = (float)cx; intr.cy = (float)cy;
+            intr.amt_k = 0; intr.amt_p = 0; intr.amt_s = 0; intr.use_tau = false;
+
+            switch (ktotal)
+            {
+            case  0: break;
+            case  4: // [k_1, k_2, p_1, p_2]
+                intr.amt_k = 2; intr.amt_p = 2;
+                break;
+            case  5: // [k_1, k_2, p_1, p_2, k_3]
+                intr.amt_k = 3; intr.amt_p = 2;
+                break;
+            case  8: // [k_1, k_2, p_1, p_2, k_3, k_4, k_5, k_6]
+                intr.amt_k = 6; intr.amt_p = 2;
+                break;
+            case 12: // [k_1, k_2, p_1, p_2, k_3, k_4, k_5, k_6, s_1, s_2, s_3, s_4]
+                intr.amt_k = 6; intr.amt_p = 2; intr.amt_s = 4;
+                break;
+            case 14: // [k_1, k_2, p_1, p_2, k_3, k_4, k_5, k_6, s_1, s_2, s_3, s_4, tau_x, tau_y]
+                intr.amt_k = 6; intr.amt_p = 2; intr.amt_s = 4; intr.use_tau = true;
+                break;
+            default:
+                CV_Error(cv::Error::StsInternal, "Wrong number of distortion coefficients");
+            }
+
+            intr.k[0] = (float)k[0];
+            intr.k[1] = (float)k[1];
+            intr.k[2] = (float)k[4];
+            intr.k[3] = (float)k[5];
+            intr.k[4] = (float)k[6];
+            intr.k[5] = (float)k[7];
+
+            intr.p[0] = (float)k[2];
+            intr.p[1] = (float)k[3];
+
+            for (int ctr = 0; ctr < 4; ctr++)
+            {
+                intr.s[ctr] = (float)k[8+ctr];
+            }
+
+            intr.tau_x = (float)k[12];
+            intr.tau_y = (float)k[13];
+
+            CALL_HAL(projectPoints, cv_hal_project_points_pinhole32f,
+                     (float*)objectPoints.data, objectPoints.step, count,
+                     (float*)ipoints.data, ipoints.step, rtMatrix, &intr);
+        }
+
+        if (objpt_depth == CV_64F && ipoints.type() == CV_64F)
+        {
+            double rtMatrix[12] = { R[0], R[1], R[2], t[0],
+                                    R[3], R[4], R[5], t[1],
+                                    R[6], R[7], R[8], t[2] };
+
+            cv_camera_intrinsics_pinhole_64f intr;
+            intr.fx = fx; intr.fy = fy;
+            intr.cx = cx; intr.cy = cy;
+            intr.amt_k = 0; intr.amt_p = 0; intr.amt_s = 0; intr.use_tau = false;
+
+            switch (ktotal)
+            {
+            case  0: break;
+            case  4: // [k_1, k_2, p_1, p_2]
+                intr.amt_k = 2; intr.amt_p = 2;
+                break;
+            case  5: // [k_1, k_2, p_1, p_2, k_3]
+                intr.amt_k = 3; intr.amt_p = 2;
+                break;
+            case  8: // [k_1, k_2, p_1, p_2, k_3, k_4, k_5, k_6]
+                intr.amt_k = 6; intr.amt_p = 2;
+                break;
+            case 12: // [k_1, k_2, p_1, p_2, k_3, k_4, k_5, k_6, s_1, s_2, s_3, s_4]
+                intr.amt_k = 6; intr.amt_p = 2; intr.amt_s = 4;
+                break;
+            case 14: // [k_1, k_2, p_1, p_2, k_3, k_4, k_5, k_6, s_1, s_2, s_3, s_4, tau_x, tau_y]
+                intr.amt_k = 6; intr.amt_p = 2; intr.amt_s = 4; intr.use_tau = true;
+                break;
+            default:
+                CV_Error(cv::Error::StsInternal, "Wrong number of distortion coefficients");
+            }
+
+            intr.k[0] = k[0];
+            intr.k[1] = k[1];
+            intr.k[2] = k[4];
+            intr.k[3] = k[5];
+            intr.k[4] = k[6];
+            intr.k[5] = k[7];
+
+            intr.p[0] = k[2];
+            intr.p[1] = k[3];
+
+            for (int ctr = 0; ctr < 4; ctr++)
+            {
+                intr.s[ctr] = k[8+ctr];
+            }
+
+            intr.tau_x = k[12];
+            intr.tau_y = k[13];
+
+            CALL_HAL(projectPoints, cv_hal_project_points_pinhole64f,
+                     (double*)objectPoints.data, objectPoints.step, count,
+                     (double*)ipoints.data, ipoints.step, rtMatrix, &intr);
+        }
+    }
+
+    Mat matM(objectPoints.size(), CV_64FC(objpt_cn));
+    objectPoints.convertTo(matM, CV_64F);
+    ipoints.convertTo(_m, CV_64F);
+    const Point3d* M = matM.ptr<Point3d>();
+    Point2d* m = _m.ptr<Point2d>();
 
     for( i = 0; i < count; i++ )
     {
@@ -934,9 +1050,9 @@ cv::Vec3d cv::RQDecomp3x3( InputArray _Marr,
     Qx = ( 0  c  s ), c = m33/sqrt(m32^2 + m33^2), s = m32/sqrt(m32^2 + m33^2)
          ( 0 -s  c )
     */
-    s = M(2, 1);
-    c = M(2, 2);
-    z = 1./std::sqrt(c * c + s * s + DBL_EPSILON);
+    s = std::abs(M(2, 1)) > DBL_EPSILON ? M(2, 1): 0.;
+    c = std::abs(M(2, 1)) > DBL_EPSILON ? M(2, 2): 1.;
+    z = 1./std::sqrt(c * c + s * s);
     c *= z;
     s *= z;
 
@@ -952,9 +1068,9 @@ cv::Vec3d cv::RQDecomp3x3( InputArray _Marr,
     Qy = ( 0  1  0 ), c = m33/sqrt(m31^2 + m33^2), s = -m31/sqrt(m31^2 + m33^2)
          ( s  0  c )
     */
-    s = -R(2, 0);
-    c = R(2, 2);
-    z = 1./std::sqrt(c * c + s * s + DBL_EPSILON);
+    s = std::abs(R(2, 0)) > DBL_EPSILON ? -R(2, 0): 0.;
+    c = std::abs(R(2, 0)) > DBL_EPSILON ? R(2, 2): 1.;
+    z = 1./std::sqrt(c * c + s * s);
     c *= z;
     s *= z;
 
@@ -971,9 +1087,9 @@ cv::Vec3d cv::RQDecomp3x3( InputArray _Marr,
          ( 0  0  1 )
     */
 
-    s = M(1, 0);
-    c = M(1, 1);
-    z = 1./std::sqrt(c * c + s * s + DBL_EPSILON);
+    s = std::abs(M(1, 0)) > DBL_EPSILON ? M(1, 0): 0.;
+    c = std::abs(M(1, 0)) > DBL_EPSILON ? M(1, 1): 1.;
+    z = 1./std::sqrt(c * c + s * s);
     c *= z;
     s *= z;
 
@@ -1367,12 +1483,25 @@ void cv::getUndistortRectangles(InputArray _cameraMatrix, InputArray _distCoeffs
 {
     const int N = 9;
     int x, y, k;
-    Mat _pts(1, N*N, CV_64FC2);
+    Mat _pts(1, 4*(N-1), CV_64FC2);
     Point2d* pts = _pts.ptr<Point2d>();
 
+    // generate a grid of points across the image to estimate the distortion deformation
+    double stepX = (imgSize.width - 1) / static_cast<double>(N - 1);
+    double stepY = (imgSize.height - 1) / static_cast<double>(N - 1);
     for( y = k = 0; y < N; y++ )
+    {
         for( x = 0; x < N; x++ )
-            pts[k++] = Point2d((double)x*(imgSize.width-1)/(N-1), (double)y*(imgSize.height-1)/(N-1));
+        {
+            if (x != 0 && x != N - 1 && y != 0 && y != N - 1)
+            {
+                // skip all points except those on the image border, because inner grid points
+                // have no influence on the two deformation rectangles that are calculated below
+                continue;
+            }
+            pts[k++] = Point2d(x * stepX, y * stepY);
+        }
+    }
 
     undistortPoints(_pts, _pts, _cameraMatrix, _distCoeffs, R, newCameraMatrix);
 
@@ -1381,8 +1510,14 @@ void cv::getUndistortRectangles(InputArray _cameraMatrix, InputArray _distCoeffs
     // find the inscribed rectangle.
     // the code will likely not work with extreme rotation matrices (R) (>45%)
     for( y = k = 0; y < N; y++ )
+    {
         for( x = 0; x < N; x++ )
         {
+            if (x != 0 && x != N - 1 && y != 0 && y != N - 1)
+            {
+                continue;
+            }
+
             Point2d p = pts[k++];
             oX0 = MIN(oX0, p.x);
             oX1 = MAX(oX1, p.x);
@@ -1398,6 +1533,7 @@ void cv::getUndistortRectangles(InputArray _cameraMatrix, InputArray _distCoeffs
             if( y == N-1 )
                 iY1 = MIN(iY1, p.y);
         }
+    }
     inner = Rect_<double>(iX0, iY0, iX1-iX0, iY1-iY0);
     outer = Rect_<double>(oX0, oY0, oX1-oX0, oY1-oY0);
 }

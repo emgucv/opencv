@@ -86,7 +86,6 @@ TEST_F(fisheyeTest, distortUndistortPoints)
     int height = imageSize.height;
 
     /* Create test points */
-    std::vector<cv::Point2d> points0Vector;
     cv::Mat principalPoints = (cv::Mat_<double>(5, 2) << K(0, 2), K(1, 2), // (cx, cy)
                                                                     /* Image corners */
                                                                     0, 0,
@@ -129,6 +128,175 @@ TEST_F(fisheyeTest, distortUndistortPoints)
     }
 }
 
+TEST_F(fisheyeTest, distortUndistortPointsNewCameraFixed)
+{
+    int width = imageSize.width;
+    int height = imageSize.height;
+
+    /* Random points inside image */
+    cv::Mat xy[2] = {};
+    xy[0].create(100, 1, CV_64F);
+    theRNG().fill(xy[0], cv::RNG::UNIFORM, 0, width); // x
+    xy[1].create(100, 1, CV_64F);
+    theRNG().fill(xy[1], cv::RNG::UNIFORM, 0, height); // y
+
+    cv::Mat randomPoints;
+    merge(xy, 2, randomPoints);
+
+    cv::Mat points0 = randomPoints;
+    cv::Mat Reye = cv::Mat::eye(3, 3, CV_64FC1);
+
+    cv::Mat Knew;
+    cv::fisheye::estimateNewCameraMatrixForUndistortRectify(K, D, imageSize, Reye,  Knew);
+
+    /* Distort -> Undistort */
+    cv::Mat distortedPoints;
+    cv::fisheye::distortPoints(points0, distortedPoints, Knew, K, D);
+    cv::Mat undistortedPoints;
+    cv::fisheye::undistortPoints(distortedPoints, undistortedPoints, K, D, Reye, Knew);
+
+    EXPECT_MAT_NEAR(points0, undistortedPoints, 1e-8);
+
+    /* Undistort -> Distort */
+    cv::fisheye::undistortPoints(points0, undistortedPoints, K, D, Reye, Knew);
+    cv::fisheye::distortPoints(undistortedPoints, distortedPoints, Knew, K, D);
+
+    EXPECT_MAT_NEAR(points0, distortedPoints, 1e-8);
+}
+
+TEST_F(fisheyeTest, distortUndistortPointsNewCameraRandom)
+{
+    int width = imageSize.width;
+    int height = imageSize.height;
+
+    /* Create test points */
+    std::vector<cv::Point2d> points0Vector;
+    cv::Mat principalPoints = (cv::Mat_<double>(5, 2) << K(0, 2), K(1, 2), // (cx, cy)
+                                                                    /* Image corners */
+                                                                    0, 0,
+                                                                    0, height,
+                                                                    width, 0,
+                                                                    width, height
+                                                                    );
+
+    /* Random points inside image */
+    cv::Mat xy[2] = {};
+    xy[0].create(100, 1, CV_64F);
+    theRNG().fill(xy[0], cv::RNG::UNIFORM, 0, width); // x
+    xy[1].create(100, 1, CV_64F);
+    theRNG().fill(xy[1], cv::RNG::UNIFORM, 0, height); // y
+
+    cv::Mat randomPoints;
+    merge(xy, 2, randomPoints);
+
+    cv::Mat points0;
+    cv::Mat Reye = cv::Mat::eye(3, 3, CV_64FC1);
+    cv::vconcat(principalPoints.reshape(2), randomPoints, points0);
+
+    /* Test with random D set */
+    for (size_t i = 0; i < 10; ++i) {
+        cv::Mat distortion(1, 4, CV_64F);
+        theRNG().fill(distortion, cv::RNG::UNIFORM, -0.001, 0.001);
+
+        cv::Mat Knew;
+        cv::fisheye::estimateNewCameraMatrixForUndistortRectify(K, distortion, imageSize, Reye,  Knew);
+
+        /* Distort -> Undistort */
+        cv::Mat distortedPoints;
+        cv::fisheye::distortPoints(points0, distortedPoints, Knew, K, distortion);
+        cv::Mat undistortedPoints;
+        cv::fisheye::undistortPoints(distortedPoints, undistortedPoints, K, distortion, Reye, Knew);
+
+        EXPECT_MAT_NEAR(points0, undistortedPoints, 1e-8);
+
+        /* Undistort -> Distort */
+        cv::fisheye::undistortPoints(points0, undistortedPoints, K, distortion, Reye, Knew);
+        cv::fisheye::distortPoints(undistortedPoints, distortedPoints, Knew, K, distortion);
+
+        EXPECT_MAT_NEAR(points0, distortedPoints, 1e-8);
+    }
+}
+
+TEST_F(fisheyeTest, solvePnP)
+{
+    const int n = 16;
+
+    const cv::Matx33d R_mat ( 9.9756700084424932e-01, 6.9698277640183867e-02, 1.4929569991321144e-03,
+                            -6.9711825162322980e-02, 9.9748249845531767e-01, 1.2997180766418455e-02,
+                            -5.8331736398316541e-04,-1.3069635393884985e-02, 9.9991441852366736e-01);
+
+    const cv::Vec3d T(-9.9217369356044638e-02, 3.1741831972356663e-03, 1.8551007952921010e-04);
+
+    cv::Mat obj_points(1, n, CV_64FC3);
+    theRNG().fill(obj_points, cv::RNG::NORMAL, 2, 1);
+    obj_points = cv::abs(obj_points) * 10;
+
+    cv::Mat R;
+    cv::Rodrigues(R_mat, R);
+    cv::Mat img_points;
+    cv::fisheye::projectPoints(obj_points, img_points, R, T, this->K, this->D);
+
+    cv::Mat rvec_pred;
+    cv::Mat tvec_pred;
+    bool converged = cv::fisheye::solvePnP(obj_points, img_points, this->K, this->D, rvec_pred, tvec_pred);
+    EXPECT_MAT_NEAR(R, rvec_pred, 1e-6);
+    EXPECT_MAT_NEAR(T, tvec_pred, 1e-6);
+
+    ASSERT_TRUE(converged);
+}
+
+TEST_F(fisheyeTest, solvePnPRansac)
+{
+    const int inliers_n = 16;
+    const int outliers_n = 4;
+    const bool use_extrinsic_guess = false;
+    const int iterations_count = 100;
+    const float reprojection_error = 1.0;
+    const double confidence = 0.99;
+
+    const cv::Matx33d R_mat ( 9.9756700084424932e-01, 6.9698277640183867e-02, 1.4929569991321144e-03,
+                              -6.9711825162322980e-02, 9.9748249845531767e-01, 1.2997180766418455e-02,
+                              -5.8331736398316541e-04,-1.3069635393884985e-02, 9.9991441852366736e-01);
+
+    const cv::Vec3d T(-9.9217369356044638e-02, 3.1741831972356663e-03, 1.8551007952921010e-04);
+
+    cv::Mat rvec;
+    cv::Rodrigues(R_mat, rvec);
+
+    // inliers
+    cv::Mat inlier_obj_points(1, inliers_n, CV_64FC3);
+    theRNG().fill(inlier_obj_points, cv::RNG::NORMAL, 2, 1);
+    inlier_obj_points = cv::abs(inlier_obj_points) * 10;
+    cv::Mat inlier_img_points;
+    cv::fisheye::projectPoints(inlier_obj_points, inlier_img_points, rvec, T, this->K, this->D);
+
+    // outliers
+    cv::Mat outlier_obj_points(1, outliers_n, CV_64FC3);
+    theRNG().fill(outlier_obj_points, cv::RNG::NORMAL, 2, 1);
+    outlier_obj_points = cv::abs(outlier_obj_points) * 10;
+    cv::Mat outlier_img_points;
+    cv::fisheye::projectPoints(outlier_obj_points, outlier_img_points, rvec, (T * 10), this->K, this->D);
+
+    cv::Mat obj_points;
+    cv::hconcat(outlier_obj_points, inlier_obj_points, obj_points);
+
+    cv::Mat img_points;
+    cv::hconcat(outlier_img_points, inlier_img_points, img_points);
+
+    cv::Mat rvec_pred;
+    cv::Mat tvec_pred;
+    cv::Mat inliers_pred;
+
+    bool converged = cv::fisheye::solvePnPRansac(obj_points, img_points, this->K, this->D,
+                                                 rvec_pred, tvec_pred, use_extrinsic_guess,
+                                                 iterations_count, reprojection_error, confidence, inliers_pred);
+
+    EXPECT_MAT_NEAR(rvec, rvec_pred, 1e-5);
+    EXPECT_MAT_NEAR(T, tvec_pred, 1e-5);
+    EXPECT_EQ(inliers_pred.size[0], inliers_n);
+    ASSERT_TRUE(converged);
+}
+
 TEST_F(fisheyeTest, undistortImage)
 {
     // we use it to reduce patch size for images in testdata
@@ -142,7 +310,7 @@ TEST_F(fisheyeTest, undistortImage)
 
     cv::Matx33d theK = this->K;
     cv::Mat theD = cv::Mat(this->D);
-    std::string file = combine(datasets_repository_path, "/calib-3_stereo_from_JY/left/stereo_pair_014.jpg");
+    std::string file = combine(datasets_repository_path, "stereo_pair_014.png");
     cv::Matx33d newK = theK;
     cv::Mat distorted = cv::imread(file), undistorted;
     {

@@ -1,7 +1,7 @@
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/highgui.hpp>
-#include <opencv2/features2d.hpp>
+#include <opencv2/features.hpp>
 #include <iostream>
 
 using namespace std;
@@ -78,6 +78,7 @@ int main()
             tm.start();
             // do something ...
             tm.stop();
+            cout << "Last iteration: " << tm.getLastTimeSec() << endl;
         }
         cout << "Average time per iteration in seconds: " << tm.getAvgTimeSec() << endl;
         cout << "Average FPS: " << tm.getFPS() << endl;

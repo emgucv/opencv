@@ -1,6 +1,6 @@
 if(PROJECT_NAME STREQUAL "OpenCV")
   set(ENABLE_PLUGINS_DEFAULT ON)
-  if(EMSCRIPTEN OR IOS OR WINRT)
+  if(EMSCRIPTEN OR IOS)
     set(ENABLE_PLUGINS_DEFAULT OFF)
   endif()
   set(HIGHGUI_PLUGIN_LIST "" CACHE STRING "List of GUI backends to be compiled as plugins (gtk, gtk2/gtk3, qt, win32 or special value 'all')")
@@ -39,6 +39,8 @@ endmacro()
 add_backend("gtk" WITH_GTK)
 add_backend("win32ui" WITH_WIN32UI)
 add_backend("wayland" WITH_WAYLAND)
+add_backend("framebuffer" WITH_FRAMEBUFFER)
+
 # TODO cocoa
 # TODO qt
 # TODO opengl

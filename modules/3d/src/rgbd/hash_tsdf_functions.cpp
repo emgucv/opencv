@@ -90,13 +90,13 @@ Point3f ocl_getNormalVoxel(
 
 void integrateHashTsdfVolumeUnit(
     const VolumeSettings& settings, const Matx44f& cameraPose, int& lastVolIndex, const int frameId, const int volumeUnitDegree, bool enableGrowth,
-    InputArray _depth, InputArray _pixNorms, InputArray _volUnitsData, VolumeUnitIndexes& volumeUnits)
+    InputArray _depth, InputArray _pixNorms, InputOutputArray _volUnitsData, VolumeUnitIndexes& volumeUnits)
 {
     CV_TRACE_FUNCTION();
 
     CV_Assert(_depth.type() == DEPTH_TYPE);
     Depth depth = _depth.getMat();
-    Mat volUnitsData = _volUnitsData.getMat();
+    Mat& volUnitsData = _volUnitsData.getMatRef();
     Mat pixNorms = _pixNorms.getMat();
 
     Matx44f _pose;
@@ -184,11 +184,12 @@ void integrateHashTsdfVolumeUnit(
 
             vu.pose = subvolumePose;
             vu.index = lastVolIndex;
-            lastVolIndex++;
-            if (lastVolIndex > int(volUnitsData.size().height))
+            if (lastVolIndex >= int(volUnitsData.size().height))
             {
-                volUnitsData.resize((lastVolIndex - 1) * 2);
+                volUnitsData.resize(lastVolIndex * 2);
+                CV_LOG_DEBUG(NULL, "HashTSDF storage extended from " << lastVolIndex << " to " << lastVolIndex * 2 << " volume units");
             }
+            lastVolIndex++;
             volUnitsData.row(vu.index).forEach<VecTsdfVoxel>([](VecTsdfVoxel &vv, const int * /* position */)
             {
                 TsdfVoxel& v = reinterpret_cast<TsdfVoxel&>(vv);
@@ -408,7 +409,7 @@ void allocateVolumeUnits(
             Vec4i node = _thm.data[i];
             Vec3i idx(node[0], node[1], node[2]);
 
-            std::lock_guard<std::recursive_mutex> al(_mutex);
+            std::lock_guard<Mutex> al(_mutex);
 
             int result = _globalHashMap.insert(idx);
             if (result == 0)
@@ -480,15 +481,15 @@ void markActive(
 
 void ocl_integrateHashTsdfVolumeUnit(
     const VolumeSettings& settings, const Matx44f& cameraPose, int& lastVolIndex, const int frameId, int& bufferSizeDegree, const int volumeUnitDegree, bool enableGrowth,
-    InputArray _depth, InputArray _pixNorms, InputArray _lastVisibleIndices, InputArray _volUnitsDataCopy,  InputArray _volUnitsData, CustomHashSet& hashTable, InputArray _isActiveFlags)
+    InputArray _depth, InputArray _pixNorms, InputArray _lastVisibleIndices, InputOutputArray _volUnitsDataCopy,  InputOutputArray _volUnitsData, CustomHashSet& hashTable, InputArray _isActiveFlags)
 {
     CV_TRACE_FUNCTION();
     UMat depth = _depth.getUMat();
     CV_Assert(!depth.empty());
     CV_Assert(lastVolIndex >= 0);
     UMat pixNorms = _pixNorms.getUMat();
-    UMat volUnitsData = _volUnitsData.getUMat();
-    Mat volUnitsDataCopy = _volUnitsDataCopy.getMat();
+    UMat& volUnitsData = _volUnitsData.getUMatRef();
+    Mat& volUnitsDataCopy = _volUnitsDataCopy.getMatRef();
     UMat isActiveFlags = _isActiveFlags.getUMat();
     UMat lastVisibleIndices = _lastVisibleIndices.getUMat();
 
@@ -799,9 +800,9 @@ Point3f getNormalVoxel(
     v_float32x8 czp = v_lut(vals, v256_load(idxzp));
     v_float32x8 czn = v_lut(vals, v256_load(idxzn));
 
-    v_float32x8 vcxv = cxn - cxp;
-    v_float32x8 vcyv = cyn - cyp;
-    v_float32x8 vczv = czn - czp;
+    v_float32x8 vcxv = v_sub(cxn, cxp);
+    v_float32x8 vcyv = v_sub(cyn, cyp);
+    v_float32x8 vczv = v_sub(czn, czp);
 
     v_store(cxv, vcxv);
     v_store(cyv, vcyv);
@@ -942,9 +943,9 @@ Point3f ocl_getNormalVoxel(
     v_float32x8 czp = v_lut(vals, v256_load(idxzp));
     v_float32x8 czn = v_lut(vals, v256_load(idxzn));
 
-    v_float32x8 vcxv = cxn - cxp;
-    v_float32x8 vcyv = cyn - cyp;
-    v_float32x8 vczv = czn - czp;
+    v_float32x8 vcxv = v_sub(cxn, cxp);
+    v_float32x8 vcyv = v_sub(cyn, cyp);
+    v_float32x8 vczv = v_sub(czn, czp);
 
     v_store(cxv, vcxv);
     v_store(cyv, vcyv);

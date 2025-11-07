@@ -134,13 +134,6 @@ static inline int cvAlign( int size, int align )
     return (size + align - 1) & -align;
 }
 
-#ifdef IPL_DEPTH_8U
-static inline cv::Size cvGetMatSize( const CvMat* mat )
-{
-    return cv::Size(mat->cols, mat->rows);
-}
-#endif
-
 namespace cv
 {
 CV_EXPORTS void scalarToRawData(const cv::Scalar& s, void* buf, int type, int unroll_to = 0);
@@ -197,8 +190,6 @@ T* allocSingletonNew() { return new(allocSingletonNewBuffer(sizeof(T))) T(); }
 #define IPP_DISABLE_PYRAMIDS_UP         1 // Different results
 #define IPP_DISABLE_PYRAMIDS_DOWN       1 // Different results
 #define IPP_DISABLE_PYRAMIDS_BUILD      1 // Different results
-#define IPP_DISABLE_WARPAFFINE          1 // Different results
-#define IPP_DISABLE_WARPPERSPECTIVE     1 // Different results
 #define IPP_DISABLE_REMAP               1 // Different results
 #define IPP_DISABLE_YUV_RGB             1 // accuracy difference
 #define IPP_DISABLE_RGB_YUV             1 // breaks OCL accuracy tests
@@ -212,7 +203,6 @@ T* allocSingletonNew() { return new(allocSingletonNewBuffer(sizeof(T))) T(); }
 
 // Temporary disabled named IPP region. Performance
 #define IPP_DISABLE_PERF_COPYMAKE       1 // performance variations
-#define IPP_DISABLE_PERF_LUT            1 // there are no performance benefits (PR #2653)
 #define IPP_DISABLE_PERF_TRUE_DIST_MT   1 // cv::distanceTransform OpenCV MT performance is better
 #define IPP_DISABLE_PERF_CANNY_MT       1 // cv::Canny OpenCV MT performance is better
 

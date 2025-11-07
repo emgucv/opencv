@@ -4,7 +4,6 @@
 
 #include "precomp.hpp"
 #include "opencv2/core/mat.hpp"
-#include "opencv2/core/types_c.h"
 #include "opencl_kernels_core.hpp"
 
 #undef HAVE_IPP
@@ -30,24 +29,8 @@ void cv::swap( Mat& a, Mat& b )
     std::swap(a.allocator, b.allocator);
     std::swap(a.u, b.u);
 
-    std::swap(a.size.p, b.size.p);
-    std::swap(a.step.p, b.step.p);
-    std::swap(a.step.buf[0], b.step.buf[0]);
-    std::swap(a.step.buf[1], b.step.buf[1]);
-
-    if(a.dims <= 2)
-    {
-        int a_1d = a.dims <= 1;
-        a.step.p = &a.step.buf[a_1d];
-        a.size.p = &a.rows + a_1d;
-    }
-
-    if(b.dims <= 2)
-    {
-        int b_1d = b.dims <= 1;
-        b.step.p = &b.step.buf[b_1d];
-        b.size.p = &b.rows + b_1d;
-    }
+    std::swap(a.size, b.size);
+    std::swap(a.step, b.step);
 }
 
 
@@ -93,7 +76,7 @@ void cv::hconcat(InputArray _src, OutputArray dst)
 
     std::vector<Mat> src;
     _src.getMatVector(src);
-    hconcat(!src.empty() ? &src[0] : 0, src.size(), dst);
+    hconcat(!src.empty() ? &src[0] : nullptr, src.size(), dst);
 }
 
 void cv::vconcat(const Mat* src, size_t nsrc, OutputArray _dst)
@@ -138,7 +121,7 @@ void cv::vconcat(InputArray _src, OutputArray dst)
 
     std::vector<Mat> src;
     _src.getMatVector(src);
-    vconcat(!src.empty() ? &src[0] : 0, src.size(), dst);
+    vconcat(!src.empty() ? &src[0] : nullptr, src.size(), dst);
 }
 
 //////////////////////////////////////// set identity ////////////////////////////////////////////
@@ -176,7 +159,7 @@ static bool ocl_setIdentity( InputOutputArray _m, const Scalar& s )
            ocl::KernelArg::Constant(Mat(1, 1, sctype, s)));
 
     size_t globalsize[2] = { (size_t)m.cols * cn / kercn, ((size_t)m.rows + rowsPerWI - 1) / rowsPerWI };
-    return k.run(2, globalsize, NULL, false);
+    return k.run(2, globalsize, nullptr, false);
 }
 
 }
@@ -217,8 +200,9 @@ void cv::setIdentity( InputOutputArray _m, const Scalar& s )
 
         for( int i = 0; i < rows; i++, data += step )
         {
-            for( int j = 0; j < cols; j++ )
-                data[j] = j == i ? val : 0;
+            std::fill(data, data + cols, 0.0);
+            if (i < cols)
+                data[i] = val;
         }
     }
     else
@@ -965,7 +949,7 @@ void cv::reduce(InputArray _src, OutputArray _dst, int dim, int op, int dtype)
     }
 
     if( !func )
-        CV_Error( CV_StsUnsupportedFormat,
+        CV_Error( cv::Error::StsUnsupportedFormat,
                   "Unsupported combination of input and output array formats" );
 
     func( src, temp );
@@ -1270,7 +1254,7 @@ void cv::sort( InputArray _src, OutputArray _dst, int flags )
     Mat dst = _dst.getMat();
     CV_IPP_RUN_FAST(ipp_sort(src, dst, flags));
 
-    static SortFunc tab[] =
+    static SortFunc tab[CV_DEPTH_MAX] =
     {
         sort_<uchar>, sort_<schar>, sort_<ushort>, sort_<short>,
         sort_<int>, sort_<float>, sort_<double>, 0
@@ -1295,7 +1279,7 @@ void cv::sortIdx( InputArray _src, OutputArray _dst, int flags )
 
     CV_IPP_RUN_FAST(ipp_sortIdx(src, dst, flags));
 
-    static SortFunc tab[] =
+    static SortFunc tab[CV_DEPTH_MAX] =
     {
         sortIdx_<uchar>, sortIdx_<schar>, sortIdx_<ushort>, sortIdx_<short>,
         sortIdx_<int>, sortIdx_<float>, sortIdx_<double>, 0

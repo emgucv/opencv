@@ -105,7 +105,7 @@ public:
         if (params.has("operation"))
         {
             String operation = toLowerCase(params.get<String>("operation"));
-            if (operation == "prod")
+            if (operation == "prod" || operation == "mul")
                 op = PROD;
             else if (operation == "sum")
                 op = SUM;
@@ -191,19 +191,23 @@ public:
                          std::vector<MatShape> &internals) const CV_OVERRIDE
     {
         CV_Assert(inputs.size() >= 2);
-        CV_Assert(inputs[0].size() >= 2);
+        if (inputs[0].size() == 0){
+            outputs.assign(1, inputs[0]);
+            return false;
+        }
+        CV_Assert(inputs[0].size() >= 1);
         CV_Assert(coeffs.size() == 0 || coeffs.size() == inputs.size());
         CV_Assert(op == SUM || coeffs.size() == 0);
 
         int dims = inputs[0].size();
         // Number of channels in output shape is determined by the first input tensor.
         bool variableChannels = false;
-        int numChannels = inputs[0][1];
+        int numChannels = (dims == 1) ? inputs[0][0] : inputs[0][1];
         for (size_t i = 1; i < inputs.size(); i++)
         {
             CV_Assert(inputs[0][0] == inputs[i][0]);  // batch sizes are equal
 
-            int input_channels = inputs[i][1];
+            int input_channels = (dims == 1) ? inputs[i][0] : inputs[i][1];
             if (numChannels != input_channels)
                 variableChannels = true;
 
@@ -233,15 +237,15 @@ public:
         outputChannels = numChannels;
 
         outputs.assign(1, inputs[0]);
-        outputs[0][1] = numChannels;
+        outputs[0][(dims == 1) ? 0 : 1] = numChannels;
 
-        if (dims > 2)
+        if (dims >= 1)
         {
             size_t vecIdx = 0;
             bool isVecFound = false;
             for (size_t i = 0; i < inputs.size(); i++)
             {
-                bool allOnes = isAllOnes(inputs[i], 2, dims);
+                bool allOnes = isAllOnes(inputs[i], (dims != 1) ? 2 : 1, dims);
                 if (!allOnes && !isVecFound)
                 {
                     vecIdx = i;
@@ -276,8 +280,8 @@ public:
 
         for (size_t i = 0; i < inputs.size(); i++)
         {
-            MatShape inpShape = shape(inputs[i].size);
-            if (isAllOnes(inpShape, 2, inputs[i].dims))
+            MatShape inpShape = inputs[i].shape();
+            if (isAllOnes(inpShape, 0, inputs[i].dims))
             {
                 hasVecInput = true;
                 return;
@@ -310,11 +314,14 @@ public:
                         int nstripes)
         {
             const EltwiseOp op = self.op;
-            CV_Check(dst.dims, 1 < dst.dims && dst.dims <= 5, ""); CV_CheckTypeEQ(dst.type(), CV_32FC1, ""); CV_Assert(dst.isContinuous());
+            CV_Check(dst.dims, 0 <= dst.dims && dst.dims <= 5, "");
+            CV_CheckTypeEQ(dst.type(), CV_32FC1, "");
+            CV_Assert(dst.isContinuous());
             CV_Assert(self.coeffs.empty() || self.coeffs.size() == (size_t)nsrcs);
             CV_CheckGE(nsrcs, 2, "");
 
-            CV_Assert(self.outputChannels == dst.size[1]);
+            if (dst.dims > 1)
+                CV_Assert(self.outputChannels == dst.size[1]);
 
             EltwiseInvoker p(self);
             p.srcs.resize(nsrcs);
@@ -587,7 +594,7 @@ public:
         std::vector<UMat> inputs;
         std::vector<UMat> outputs;
 
-        if ((inputs_.depth() == CV_16S && op != SUM) || (channelsMode != ELTWISE_CHANNNELS_SAME))
+        if ((inputs_.depth() == CV_16F && op != SUM) || (channelsMode != ELTWISE_CHANNNELS_SAME))
             return false;
 
         if (hasVecInput)
@@ -607,7 +614,7 @@ public:
                         size_t localsize[] = { 128 };
                         size_t globalsize[] = { (size_t)channels / 4 * localsize[0] };
                         String opts;
-                        if (inputs_.depth() == CV_16S)
+                        if (inputs_.depth() == CV_16F)
                             opts = " -DDtype=half -DDtype4=half4 -DDtype8=half8";
                         else
                             opts = " -DDtype=float -DDtype4=float4 -DDtype8=float8";
@@ -633,7 +640,7 @@ public:
                     }
                     else
                     {
-                        if (inputs_.depth() == CV_16S)
+                        if (inputs_.depth() == CV_16F)
                             return false;
 
                         float coeff1 = coeffs.empty() ? 1.f : coeffs[0];
@@ -686,7 +693,7 @@ public:
         CV_OCL_RUN(IS_DNN_OPENCL_TARGET(preferableTarget),
                    forward_ocl(inputs_arr, outputs_arr, internals_arr))
 
-        if (inputs_arr.depth() == CV_16S)
+        if (inputs_arr.depth() == CV_16F)
         {
             forward_fallback(inputs_arr, outputs_arr, internals_arr);
             return;
@@ -703,15 +710,15 @@ public:
         {
             for (size_t i = 0; i < inputs.size(); i++)
             {
-                MatShape inpShape = shape(inputs[i].size);
+                MatShape inpShape = inputs[i].shape();
                 bool allOnes = isAllOnes(inpShape, 2, inputs[i].dims);
 
                 if (allOnes)
                 {
                     Mat tmpInput = inputs[i];
-                    MatShape outShape = shape(outputs[0].size);
+                    MatShape outShape = outputs[0].shape();
                     size_t xSize = outShape[2];
-                    for (size_t j = 3; j < outShape.size(); j++)
+                    for (int j = 3; j < outShape.dims; j++)
                         xSize *= outShape[j];
 
                     int dimVec[3] = {outShape[0], outShape[1], (int) xSize};
@@ -838,24 +845,24 @@ public:
         CV_Assert(nodes.size() >= 2);
         auto curr_node = nodes[0].dynamicCast<InfEngineNgraphNode>()->node;
         if (!coeffs.empty()) {
-            auto coeff = std::make_shared<ngraph::op::Constant>(ngraph::element::f32, ngraph::Shape{1}, &coeffs[0]);
-            curr_node = std::make_shared<ngraph::op::v1::Multiply>(curr_node, coeff, ngraph::op::AutoBroadcastType::NUMPY);
+            auto coeff = std::make_shared<ov::op::v0::Constant>(ov::element::f32, ov::Shape{1}, &coeffs[0]);
+            curr_node = std::make_shared<ov::op::v1::Multiply>(curr_node, coeff, ov::op::AutoBroadcastType::NUMPY);
         }
 
-        std::shared_ptr<ngraph::Node> res;
+        std::shared_ptr<ov::Node> res;
         for (size_t i = 1; i < nodes.size(); i++)
         {
             auto next_node = nodes[i].dynamicCast<InfEngineNgraphNode>()->node;
             if (!coeffs.empty()) {
-                auto coeff = std::make_shared<ngraph::op::Constant>(ngraph::element::f32, ngraph::Shape{1}, &coeffs[i]);
-                next_node = std::make_shared<ngraph::op::v1::Multiply>(next_node, coeff, ngraph::op::AutoBroadcastType::NUMPY);
+                auto coeff = std::make_shared<ov::op::v0::Constant>(ov::element::f32, ov::Shape{1}, &coeffs[i]);
+                next_node = std::make_shared<ov::op::v1::Multiply>(next_node, coeff, ov::op::AutoBroadcastType::NUMPY);
             }
             switch (op) {
-                case SUM:  res = std::make_shared<ngraph::op::v1::Add>(curr_node, next_node); break;
-                case PROD: res = std::make_shared<ngraph::op::v1::Multiply>(curr_node, next_node); break;
-                case DIV:  res = std::make_shared<ngraph::op::v1::Divide>(curr_node, next_node); break;
-                case MAX:  res = std::make_shared<ngraph::op::v1::Maximum>(curr_node, next_node); break;
-                case MIN:  res = std::make_shared<ngraph::op::v1::Minimum>(curr_node, next_node); break;
+                case SUM:  res = std::make_shared<ov::op::v1::Add>(curr_node, next_node); break;
+                case PROD: res = std::make_shared<ov::op::v1::Multiply>(curr_node, next_node); break;
+                case DIV:  res = std::make_shared<ov::op::v1::Divide>(curr_node, next_node); break;
+                case MAX:  res = std::make_shared<ov::op::v1::Maximum>(curr_node, next_node); break;
+                case MIN:  res = std::make_shared<ov::op::v1::Minimum>(curr_node, next_node); break;
                 default: CV_Error(Error::StsNotImplemented, "Unsupported eltwise operation");
             }
             curr_node = res;
@@ -863,38 +870,6 @@ public:
         return Ptr<BackendNode>(new InfEngineNgraphNode(res));
     }
 #endif  // HAVE_DNN_NGRAPH
-
-    virtual bool tryQuantize(const std::vector<std::vector<float> > &scales,
-                             const std::vector<std::vector<int> > &zeropoints, LayerParams& params) CV_OVERRIDE
-    {
-        params.set("input_scales", DictValue::arrayReal(scales[0].data(), scales[0].size()));
-        params.set("input_zeropoints", DictValue::arrayInt(zeropoints[0].data(), zeropoints[0].size()));
-        if (op == SUM)
-        {
-            std::vector<float> newCoeffs;
-            float offset = zeropoints[1][0];
-            float out_sc = scales[1][0];
-            for (int i = 0; i < scales[0].size(); i++)
-            {
-                float coeff = coeffs.empty() ? 1.f : coeffs[i];
-                float newcoeff = (scales[0][i] * coeff) / out_sc;
-                newCoeffs.push_back(newcoeff);
-                offset -= (newcoeff * zeropoints[0][i]);
-            }
-            params.set("coeff", DictValue::arrayReal(newCoeffs.data(), newCoeffs.size()));
-            params.set("offset", offset);
-            return true;
-        }
-        else if (op == PROD)
-        {
-            std::vector<float> newCoeffs = scales[0];
-            newCoeffs[0] /= scales[1][0];
-            params.set("coeff", DictValue::arrayReal(newCoeffs.data(), newCoeffs.size()));
-            params.set("offset", zeropoints[1][0]);
-            return true;
-        }
-        return op == MAX;
-    }
 
     virtual int64 getFLOPS(const std::vector<MatShape> &inputs,
                            const std::vector<MatShape> &outputs) const CV_OVERRIDE

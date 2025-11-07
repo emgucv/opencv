@@ -134,7 +134,8 @@ struct DataLayer : public Layer
 
     virtual bool supportBackend(int backendId) CV_OVERRIDE
     {
-        return backendId == DNN_BACKEND_OPENCV;
+        return backendId == DNN_BACKEND_OPENCV ||
+               backendId == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH;
     }
 
     void forward(InputArrayOfArrays inputs_arr, OutputArrayOfArrays outputs_arr, OutputArrayOfArrays internals_arr) CV_OVERRIDE
@@ -146,20 +147,26 @@ struct DataLayer : public Layer
         CV_OCL_RUN(IS_DNN_OPENCL_TARGET(preferableTarget),
                 forward_ocl(inputs_arr, outputs_arr, internals_arr))
 
-        bool isFP16 = outputs_arr.depth() == CV_16S;
-
         std::vector<Mat> outputs, internals;
         outputs_arr.getMatVector(outputs);
         internals_arr.getMatVector(internals);
 
         for (int i = 0; i < inputsData.size(); ++i)
         {
+            bool isFP16 = outputs[i].depth() == CV_16F;
+            if (inputsData[i].type() != CV_32F)
+            {
+                CV_CheckTypeEQ(outputs[i].type(), inputsData[i].type(), "");
+                CV_CheckTrue(means[i] == Scalar() && scaleFactors[i] == 1.0, "Input mean and scale are supported only for float32 input");
+                inputsData[i].copyTo(outputs[i]);
+                continue;
+            }
             double scale = scaleFactors[i];
             Scalar& mean = means[i];
 
             CV_Assert(mean == Scalar() || inputsData[i].size[1] <= 4);
             if (isFP16)
-                CV_CheckTypeEQ(outputs[i].type(), CV_16SC1, "");
+                CV_CheckTypeEQ(outputs[i].type(), CV_16FC1, "");
             else
                 CV_CheckTypeEQ(outputs[i].type(), CV_32FC1, "");
 
@@ -175,7 +182,7 @@ struct DataLayer : public Layer
                 {
                     Mat input_f32;
                     inputsData[i].convertTo(input_f32, CV_32F, scale, -mean[0] * scale);
-                    convertFp16(input_f32, outputs[i]);
+                    input_f32.convertTo(outputs[i], CV_16F);
                 }
                 else
                 {
@@ -194,7 +201,7 @@ struct DataLayer : public Layer
                         {
                             Mat input_f32;
                             inp.convertTo(input_f32, CV_32F, scale, -mean[c] * scale);
-                            convertFp16(input_f32, out);
+                            input_f32.convertTo(out, CV_16F);
                         }
                         else
                         {
@@ -209,13 +216,19 @@ struct DataLayer : public Layer
 #ifdef HAVE_OPENCL
     bool forward_ocl(InputArrayOfArrays, OutputArrayOfArrays outputs_, OutputArrayOfArrays internals_)
     {
-        bool isFP16 = outputs_.depth() == CV_16S;
-
         std::vector<UMat> outputs;
         outputs_.getUMatVector(outputs);
 
         for (int i = 0; i < inputsData.size(); ++i)
         {
+            bool isFP16 = outputs[i].depth() == CV_16F;
+            if (inputsData[i].type() != CV_32F)
+            {
+                CV_CheckTypeEQ(outputs[i].type(), inputsData[i].type(), "");
+                CV_CheckTrue(means[i] == Scalar() && scaleFactors[i] == 1.0, "Input mean and scale are supported only for float32 input");
+                inputsData[i].copyTo(outputs[i]);
+                continue;
+            }
             Mat inputData = inputsData[i];
 
             double scale = scaleFactors[i];
@@ -223,14 +236,17 @@ struct DataLayer : public Layer
 
             CV_Assert(mean == Scalar() || inputData.size[1] <= 4);
             if (isFP16)
-                CV_CheckTypeEQ(outputs[i].type(), CV_16SC1, "");
+                CV_CheckTypeEQ(outputs[i].type(), CV_16FC1, "");
             else
                 CV_CheckTypeEQ(outputs[i].type(), CV_32FC1, "");
 
             bool singleMean = true;
-            for (int j = 1; j < std::min(4, inputData.size[1]) && singleMean; ++j)
+            if (mean != Scalar())
             {
-                singleMean = mean[j] == mean[j - 1];
+                for (int j = 1; j < std::min(4, inputData.size[1]) && singleMean; ++j)
+                {
+                    singleMean = mean[j] == mean[j - 1];
+                }
             }
 
             if (singleMean)
@@ -239,7 +255,7 @@ struct DataLayer : public Layer
                 {
                     UMat input_i;
                     inputData.convertTo(input_i, CV_32F, scale, -mean[0] * scale);
-                    convertFp16(input_i, outputs[i]);
+                    input_i.convertTo(outputs[i], CV_16F);
                 }
                 else
                 {
@@ -257,13 +273,13 @@ struct DataLayer : public Layer
                         std::vector<cv::Range> plane(4, Range::all());
                         plane[0] = Range(n, n + 1);
                         plane[1] = Range(c, c + 1);
-                        UMat out = outputs[i](plane).reshape(1, inp.dims, inp.size);
+                        UMat out = outputs[i](plane).reshape(1, inp.size);
 
                         if (isFP16)
                         {
                             UMat input_i;
                             inp.convertTo(input_i, CV_32F, scale, -mean[c] * scale);
-                            convertFp16(input_i, out);
+                            input_i.convertTo(out, CV_16F);
                         }
                         else
                         {
@@ -306,9 +322,19 @@ struct DataLayer : public Layer
             std::vector<MatShape>& outputs,
             std::vector<MatShape>& internals) const CV_OVERRIDE
     {
-        CV_Assert(inputs.size() == requiredOutputs);
+        CV_Assert(inputs.size() == requiredOutputs || requiredOutputs == 0);
         outputs.assign(inputs.begin(), inputs.end());
         return false;
+    }
+
+    void getTypes(const std::vector<MatType>& inputs,
+        const int requiredOutputs,
+        const int requiredInternals,
+        std::vector<MatType>& outputs,
+        std::vector<MatType>& internals) const CV_OVERRIDE
+    {
+        CV_Assert(inputs.size());
+        outputs = inputs;
     }
 
     virtual void finalize(InputArrayOfArrays, OutputArrayOfArrays outputs_arr) CV_OVERRIDE

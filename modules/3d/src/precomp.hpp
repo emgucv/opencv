@@ -42,6 +42,11 @@
 #ifndef __OPENCV_PRECOMP_H__
 #define __OPENCV_PRECOMP_H__
 
+#ifdef _MSC_VER
+#  define _SILENCE_CXX17_C_HEADER_DEPRECATION_WARNING
+#  define _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING
+#endif
+
 #include "opencv2/core/utility.hpp"
 
 #include "opencv2/core/private.hpp"
@@ -58,7 +63,7 @@
 
 #include "opencv2/3d.hpp"
 #include "opencv2/imgproc.hpp"
-#include "opencv2/features2d.hpp"
+#include "opencv2/features.hpp"
 
 #include "opencv2/core/ocl.hpp"
 #include "opencv2/core/hal/intrin.hpp"
@@ -67,8 +72,10 @@
 #include "opencv2/3d/detail/kinfu_frame.hpp"
 
 #include <atomic>
+#include <algorithm>
 #include <functional>
 #include <limits>
+#include <stack>
 #include <vector>
 #include <list>
 #include <set>

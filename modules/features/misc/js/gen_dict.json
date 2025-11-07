@@ -1,0 +1,15 @@
+{
+    "whitelist":
+    {
+        "Feature2D": ["detect", "compute", "detectAndCompute", "descriptorSize", "descriptorType", "defaultNorm", "empty", "getDefaultName"],
+        "ORB": ["create", "setMaxFeatures", "setScaleFactor", "setNLevels", "setEdgeThreshold", "setFastThreshold", "setFirstLevel", "setWTA_K", "setScoreType", "setPatchSize", "getFastThreshold", "getDefaultName"],
+        "MSER": ["create", "detectRegions", "setDelta", "getDelta", "setMinArea", "getMinArea", "setMaxArea", "getMaxArea", "setPass2Only", "getPass2Only", "getDefaultName"],
+        "FastFeatureDetector": ["create", "setThreshold", "getThreshold", "setNonmaxSuppression", "getNonmaxSuppression", "setType", "getType", "getDefaultName"],
+        "GFTTDetector": ["create", "setMaxFeatures", "getMaxFeatures", "setQualityLevel", "getQualityLevel", "setMinDistance", "getMinDistance", "setBlockSize", "getBlockSize", "setHarrisDetector", "getHarrisDetector", "setK", "getK", "getDefaultName"],
+        "SimpleBlobDetector": ["create", "setParams", "getParams", "getDefaultName"],
+        "SimpleBlobDetector_Params": [],
+        "DescriptorMatcher": ["add", "clear", "empty", "isMaskSupported", "train", "match", "knnMatch", "radiusMatch", "clone", "create"],
+        "BFMatcher": ["isMaskSupported", "create"],
+        "": ["drawKeypoints", "drawMatches", "drawMatchesKnn"]
+    }
+}

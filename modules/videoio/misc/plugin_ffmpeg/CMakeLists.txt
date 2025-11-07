@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.13)
 
 get_filename_component(OpenCV_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../.." ABSOLUTE)
 include("${OpenCV_SOURCE_DIR}/cmake/OpenCVPluginStandalone.cmake")
@@ -15,7 +15,6 @@ message(STATUS "FFMPEG_libavcodec_VERSION=${FFMPEG_libavcodec_VERSION}")
 message(STATUS "FFMPEG_libavformat_VERSION=${FFMPEG_libavformat_VERSION}")
 message(STATUS "FFMPEG_libavutil_VERSION=${FFMPEG_libavutil_VERSION}")
 message(STATUS "FFMPEG_libswscale_VERSION=${FFMPEG_libswscale_VERSION}")
-message(STATUS "FFMPEG_libavresample_VERSION=${FFMPEG_libavresample_VERSION}")
 if(OPENCV_FFMPEG_ENABLE_LIBAVDEVICE)
   message(STATUS "FFMPEG_libavdevice_VERSION=${FFMPEG_libavdevice_VERSION}")
 endif()

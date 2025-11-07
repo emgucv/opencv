@@ -28,21 +28,7 @@ if(NOT DEFINED CV_GCC AND CMAKE_CXX_COMPILER_ID MATCHES "GNU")
 endif()
 if(NOT DEFINED CV_CLANG AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")  # Clang or AppleClang (see CMP0025)
   set(CV_CLANG 1)
-  set(CMAKE_COMPILER_IS_CLANGCXX 1)  # TODO next release: remove this
-  set(CMAKE_COMPILER_IS_CLANGCC 1)   # TODO next release: remove this
 endif()
-
-function(access_CMAKE_COMPILER_IS_CLANGCXX)
-  if(NOT OPENCV_SUPPRESS_DEPRECATIONS)
-    message(WARNING "DEPRECATED: CMAKE_COMPILER_IS_CLANGCXX support is deprecated in OpenCV.
-    Consider using:
-    - CV_GCC    # GCC
-    - CV_CLANG  # Clang or AppleClang (see CMP0025)
-")
-  endif()
-endfunction()
-variable_watch(CMAKE_COMPILER_IS_CLANGCXX access_CMAKE_COMPILER_IS_CLANGCXX)
-variable_watch(CMAKE_COMPILER_IS_CLANGCC access_CMAKE_COMPILER_IS_CLANGCXX)
 
 
 # ----------------------------------------------------------------------------
@@ -96,6 +82,10 @@ endif()
 if(NOT DEFINED CMAKE_SIZEOF_VOID_P
     AND NOT OPENCV_SUPPRESS_MESSAGE_MISSING_CMAKE_SIZEOF_VOID_P)
   message(WARNING "OpenCV: CMAKE_SIZEOF_VOID_P is not defined. Perhaps CMake toolchain is broken")
+endif()
+if(NOT CMAKE_SIZEOF_VOID_P GREATER 0)
+  message(FATAL_ERROR "CMake fails to determine the bitness of the target platform.
+  Please check your CMake and compiler installation. If you are cross-compiling then ensure that your CMake toolchain file correctly sets the compiler details.")
 endif()
 
 message(STATUS "Detected processor: ${CMAKE_SYSTEM_PROCESSOR}")
@@ -170,8 +160,10 @@ elseif(MSVC)
     set(OpenCV_ARCH "ARM")
   elseif("${CMAKE_SIZEOF_VOID_P}" STREQUAL "8")
     set(OpenCV_ARCH "x64")
+  elseif("${CMAKE_SIZEOF_VOID_P}" STREQUAL "4")
+    set(OpenCV_ARCH "x86")
   else()
-    set(OpenCV_ARCH x86)
+    message(FATAL_ERROR "Failed to determine system architecture")
   endif()
 
   if(MSVC_VERSION EQUAL 1400)
@@ -190,7 +182,7 @@ elseif(MSVC)
     set(OpenCV_RUNTIME vc15)
   elseif(MSVC_VERSION MATCHES "^192[0-9]$")
     set(OpenCV_RUNTIME vc16)
-  elseif(MSVC_VERSION MATCHES "^193[0-9]$")
+  elseif(MSVC_VERSION MATCHES "^19[34][0-9]$")
     set(OpenCV_RUNTIME vc17)
   else()
     message(WARNING "OpenCV does not recognize MSVC_VERSION \"${MSVC_VERSION}\". Cannot set OpenCV_RUNTIME")
@@ -205,38 +197,41 @@ elseif(MINGW)
   endif()
 endif()
 
-# Fix handling of duplicated files in the same static library:
-# https://public.kitware.com/Bug/view.php?id=14874
-if(CMAKE_VERSION VERSION_LESS "3.1")
-  foreach(var CMAKE_C_ARCHIVE_APPEND CMAKE_CXX_ARCHIVE_APPEND)
-    if(${var} MATCHES "^<CMAKE_AR> r")
-      string(REPLACE "<CMAKE_AR> r" "<CMAKE_AR> q" ${var} "${${var}}")
-    endif()
-  endforeach()
-endif()
-
 if(NOT OPENCV_SKIP_CMAKE_CXX_STANDARD)
-  ocv_update(CMAKE_CXX_STANDARD 11)
+  ocv_update(CMAKE_CXX_STANDARD 17)
   ocv_update(CMAKE_CXX_STANDARD_REQUIRED TRUE)
-  ocv_update(CMAKE_CXX_EXTENSIONS OFF) # use -std=c++11 instead of -std=gnu++11
-  if(CMAKE_CXX11_COMPILE_FEATURES)
+  ocv_update(CMAKE_CXX_EXTENSIONS OFF) # use -std=c++17 instead of -std=gnu++17
+  if("cxx_std_11" IN_LIST CMAKE_CXX_COMPILE_FEATURES)
     set(HAVE_CXX11 ON)
   endif()
-endif()
-if(NOT HAVE_CXX11)
-  ocv_check_compiler_flag(CXX "" HAVE_CXX11 "${OpenCV_SOURCE_DIR}/cmake/checks/cxx11.cpp")
-  if(NOT HAVE_CXX11)
-    ocv_check_compiler_flag(CXX "-std=c++11" HAVE_STD_CXX11 "${OpenCV_SOURCE_DIR}/cmake/checks/cxx11.cpp")
-    if(HAVE_STD_CXX11)
-      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
-      set(HAVE_CXX11 ON)
-    endif()
+  if("cxx_std_17" IN_LIST CMAKE_CXX_COMPILE_FEATURES)
+    set(HAVE_CXX17 ON)
   endif()
 endif()
 
 if(NOT HAVE_CXX11)
-  message(FATAL_ERROR "OpenCV 4.x requires C++11")
+  message(WARNING "OpenCV 5.x requires C++11 support, but it was not detected. Your compilation may fail.")
 endif()
+if(NOT HAVE_CXX17)
+  message(WARNING "OpenCV 5.x requires C++17 support, but it was not detected. Your compilation may fail.")
+endif()
+
+# Debian 10 - GCC 8.3.0
+if(CV_GCC AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 8)
+  message(WARNING "OpenCV requires GCC >= 8.x (detected ${CMAKE_CXX_COMPILER_VERSION}). Your compilation may fail.")
+endif()
+
+# Debian 10 - Clang 7.0
+if(CV_CLANG AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 7)
+  message(WARNING "OpenCV requires LLVM/Clang >= 7.x (detected ${CMAKE_CXX_COMPILER_VERSION}). Your compilation may fail.")
+endif()
+
+# Visual Studio 2017 15.7
+if(MSVC AND MSVC_VERSION LESS 1914)
+  message(WARNING "OpenCV requires MSVC >= 2017 15.7 / 1914 (detected ${CMAKE_CXX_COMPILER_VERSION} / ${MSVC_VERSION}). Your compilation may fail.")
+endif()
+
+# TODO: check other known compilers versions
 
 set(__OPENCV_ENABLE_ATOMIC_LONG_LONG OFF)
 if(HAVE_CXX11 AND (X86 OR X86_64))

@@ -85,7 +85,7 @@ struct SkipThisTest : public ::testing::Test {
     };\
     class test_case_name##test_name##_factory : public ::testing::internal::TestFactoryBase { \
      public:\
-      virtual ::testing::Test* CreateTest() { \
+      virtual ::testing::Test* CreateTest() CV_OVERRIDE { \
         try { \
           return new GTEST_TEST_CLASS_NAME_(test_case_name, test_name); \
         } catch (const cvtest::details::SkipTestExceptionBase& e) { \
@@ -128,7 +128,7 @@ struct SkipThisTest : public ::testing::Test {
     } \
 
 // Special type of tests which require / use or validate processing of huge amount of data (>= 2Gb)
-#if defined(_M_X64) || defined(_M_ARM64) || defined(__x86_64__) || defined(__aarch64__)
+#if defined(_M_X64) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__x86_64__) || defined(__aarch64__)
 #define BIGDATA_TEST(test_case_name, test_name) TEST_(BigData_ ## test_case_name, test_name, ::testing::Test, Body,, CV__TEST_BIGDATA_BODY_IMPL)
 #else
 #define BIGDATA_TEST(test_case_name, test_name) TEST_(BigData_ ## test_case_name, DISABLED_ ## test_name, ::testing::Test, Body,, CV__TEST_BIGDATA_BODY_IMPL)
@@ -150,7 +150,7 @@ struct SkipThisTest : public ::testing::Test {
     };\
     class test_fixture##test_name##_factory : public ::testing::internal::TestFactoryBase { \
      public:\
-      virtual ::testing::Test* CreateTest() { \
+      virtual ::testing::Test* CreateTest() CV_OVERRIDE { \
         try { \
           return new GTEST_TEST_CLASS_NAME_(test_fixture, test_name); \
         } catch (const cvtest::details::SkipTestExceptionBase& e) { \

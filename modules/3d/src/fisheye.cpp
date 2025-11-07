@@ -266,6 +266,48 @@ void cv::fisheye::distortPoints(InputArray undistorted, OutputArray distorted, I
     }
 }
 
+void cv::fisheye::distortPoints(InputArray _undistorted, OutputArray distorted, InputArray Kundistorted, InputArray K, InputArray D, double alpha)
+{
+    CV_INSTRUMENT_REGION();
+
+    CV_Assert(_undistorted.type() == CV_32FC2 || _undistorted.type() == CV_64FC2);
+    CV_Assert(Kundistorted.size() == Size(3,3) && (Kundistorted.type() == CV_32F || Kundistorted.type() == CV_64F));
+
+    cv::Mat undistorted = _undistorted.getMat();
+    cv::Mat normalized(undistorted.size(), CV_64FC2);
+
+    Mat Knew = Kundistorted.getMat();
+
+    double cx, cy, fx, fy;
+    if (Knew.depth() == CV_32F)
+    {
+        fx = (double)Knew.at<float>(0, 0);
+        fy = (double)Knew.at<float>(1, 1);
+        cx = (double)Knew.at<float>(0, 2);
+        cy = (double)Knew.at<float>(1, 2);
+    }
+    else
+    {
+        fx = Knew.at<double>(0, 0);
+        fy = Knew.at<double>(1, 1);
+        cx = Knew.at<double>(0, 2);
+        cy = Knew.at<double>(1, 2);
+    }
+
+    size_t n = undistorted.total();
+    const Vec2f* Xf = undistorted.ptr<Vec2f>();
+    const Vec2d* Xd = undistorted.ptr<Vec2d>();
+    Vec2d* normXd = normalized.ptr<Vec2d>();
+    for (size_t i = 0; i < n; i++)
+    {
+        Vec2d p = undistorted.depth() == CV_32F ? (Vec2d)Xf[i] : Xd[i];
+        normXd[i][0] = (p[0] - cx) / fx;
+        normXd[i][1] = (p[1] - cy) / fy;
+    }
+
+    cv::fisheye::distortPoints(normalized, distorted, K, D, alpha);
+}
+
 void cv::fisheye::undistortPoints( InputArray distorted, OutputArray undistorted, InputArray K, InputArray D,
                                    InputArray R, InputArray P, TermCriteria criteria)
 {
@@ -335,8 +377,15 @@ void cv::fisheye::undistortPoints( InputArray distorted, OutputArray undistorted
     for(size_t i = 0; i < n; i++ )
     {
         Vec2d pi = sdepth == CV_32F ? (Vec2d)srcf[i] : srcd[i];  // image point
+        // u = fx * x' + cx (alpha = 0), v = fy * y' + cy =>
+        // x' = (u - cx) / fx, y' = (v - cy) / fy
         Vec2d pw((pi[0] - c[0])/f[0], (pi[1] - c[1])/f[1]);      // world point
 
+        // x' = (theta_d / r) * a, y' = (theta_d / r) * b =>
+        // x'^2 + y'^2 = theta_d^2 * (a^2 + b^2) / r^2 =>
+        // (r^2 = a^2 + b^2)
+        // x'^2 + y'^2 = theta_d^2 =>
+        // theta_d = sqrt(x'^2 + y'^2)
         double theta_d = sqrt(pw[0]*pw[0] + pw[1]*pw[1]);
 
         // the current camera model is only valid up to 180 FOV
@@ -355,9 +404,14 @@ void cv::fisheye::undistortPoints( InputArray distorted, OutputArray undistorted
 
             for (int j = 0; j < maxCount; j++)
             {
+                // theta_d = theta * (1 + k1 * theta^2 + k2 * theta^4 + k3 * theta^6 + k4 * theta^8) =>
+                // f(theta) := theta * (1 + k1 * theta^2 + k2 * theta^4 + k3 * theta^6 + k4 * theta^8) - theta_d = 0
+                // Newton's method: new_theta = theta - theta_fix, theta_fix := f(theta) / f'(theta)
+                // f'(theta) = (theta * (1 + k1 * theta^2 + k2 * theta^4 + k3 * theta^6 + k4 * theta^8) - theta_d)' =
+                // (theta + k1 * theta^3 + k2 * theta^5 + k3 * theta^7 + k4 * theta^9 - theta_d)' =
+                // 1 + 3 * k1 * theta^2 + 5 * k2 * theta^4 + 7 * k3 * theta^6 + 9 * k4 * theta^8
                 double theta2 = theta*theta, theta4 = theta2*theta2, theta6 = theta4*theta2, theta8 = theta6*theta2;
                 double k0_theta2 = k[0] * theta2, k1_theta4 = k[1] * theta4, k2_theta6 = k[2] * theta6, k3_theta8 = k[3] * theta8;
-                /* new_theta = theta - theta_fix, theta_fix = f0(theta) / f0'(theta) */
                 double theta_fix = (theta * (1 + k0_theta2 + k1_theta4 + k2_theta6 + k3_theta8) - theta_d) /
                                    (1 + 3*k0_theta2 + 5*k1_theta4 + 7*k2_theta6 + 9*k3_theta8);
                 theta = theta - theta_fix;
@@ -369,6 +423,10 @@ void cv::fisheye::undistortPoints( InputArray distorted, OutputArray undistorted
                 }
             }
 
+            // x' = (theta_d / r) * a, y' = (theta_d / r) * b =>
+            // a = x' * r / theta_d, b = y' * r / theta_d =>
+            // (theta = atan(r) => r = tan(theta), scale := r / theta_d = tan(theta) / theta_d)
+            // a = x' * scale, b = y' * scale
             scale = std::tan(theta) / theta_d;
         }
         else
@@ -383,11 +441,20 @@ void cv::fisheye::undistortPoints( InputArray distorted, OutputArray undistorted
 
         if ((converged || !isEps) && !theta_flipped)
         {
+            // a = x' * scale, b = y' * scale
             Vec2d pu = pw * scale; //undistorted point
+            Vec2d fi;
 
-            // reproject
-            Vec3d pr = RR * Vec3d(pu[0], pu[1], 1.0); // rotated point optionally multiplied by new camera matrix
-            Vec2d fi(pr[0]/pr[2], pr[1]/pr[2]);       // final
+            if (!R.empty() || !P.empty())
+            {
+                // reproject
+                Vec3d pr = RR * Vec3d(pu[0], pu[1], 1.0); // rotated point optionally multiplied by new camera matrix
+                fi = Vec2d(pr[0]/pr[2], pr[1]/pr[2]);     // final
+            }
+            else
+            {
+                fi = pu;
+            }
 
             if( sdepth == CV_32F )
                 dstf[i] = fi;
@@ -492,8 +559,8 @@ void cv::fisheye::initUndistortRectifyMap( InputArray K, InputArray D, InputArra
 
             if( m1type == CV_16SC2 )
             {
-                int iu = cv::saturate_cast<int>(u*cv::INTER_TAB_SIZE);
-                int iv = cv::saturate_cast<int>(v*cv::INTER_TAB_SIZE);
+                int iu = cv::saturate_cast<int>(u*static_cast<double>(cv::INTER_TAB_SIZE));
+                int iv = cv::saturate_cast<int>(v*static_cast<double>(cv::INTER_TAB_SIZE));
                 m1[j*2+0] = (short)(iu >> cv::INTER_BITS);
                 m1[j*2+1] = (short)(iv >> cv::INTER_BITS);
                 m2[j] = (ushort)((iv & (cv::INTER_TAB_SIZE-1))*cv::INTER_TAB_SIZE + (iu & (cv::INTER_TAB_SIZE-1)));
@@ -591,6 +658,30 @@ void cv::fisheye::undistortImage(InputArray distorted, OutputArray undistorted,
     Mat map1, map2;
     fisheye::initUndistortRectifyMap(K, D, Matx33d::eye(), Knew, size, CV_16SC2, map1, map2 );
     cv::remap(distorted, undistorted, map1, map2, INTER_LINEAR, BORDER_CONSTANT);
+}
+
+bool cv::fisheye::solvePnP( InputArray opoints, InputArray ipoints,
+               InputArray cameraMatrix, InputArray distCoeffs,
+               OutputArray rvec, OutputArray tvec, bool useExtrinsicGuess,
+               int flags, TermCriteria criteria)
+{
+
+    Mat imagePointsNormalized;
+    cv::fisheye::undistortPoints(ipoints, imagePointsNormalized, cameraMatrix, distCoeffs, noArray(), cameraMatrix, criteria);
+    return cv::solvePnP(opoints, imagePointsNormalized, cameraMatrix, noArray(), rvec, tvec, useExtrinsicGuess, flags);
+}
+
+bool cv::fisheye::solvePnPRansac( InputArray opoints, InputArray ipoints,
+                                  InputArray cameraMatrix, InputArray distCoeffs,
+                                  OutputArray rvec, OutputArray tvec, bool useExtrinsicGuess,
+                                  int iterationsCount, float reprojectionError,
+                                  double confidence, OutputArray inliers,
+                                  int flags, TermCriteria criteria)
+{
+    Mat imagePointsNormalized;
+    cv::fisheye::undistortPoints(ipoints, imagePointsNormalized, cameraMatrix, distCoeffs, noArray(), cameraMatrix, criteria);
+    return cv::solvePnPRansac(opoints, imagePointsNormalized, cameraMatrix, noArray(), rvec, tvec,
+                              useExtrinsicGuess, iterationsCount, reprojectionError, confidence, inliers, flags);
 }
 
 } // namespace cv

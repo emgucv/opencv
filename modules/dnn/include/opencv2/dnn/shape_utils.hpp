@@ -43,7 +43,7 @@
 #define OPENCV_DNN_DNN_SHAPE_UTILS_HPP
 
 #include <opencv2/dnn/dnn.hpp>
-#include <opencv2/core/types_c.h>  // CV_MAX_DIM
+#include <opencv2/core/cvdef.h>  // CV_MAX_DIM
 #include <iostream>
 #include <ostream>
 #include <sstream>
@@ -125,17 +125,12 @@ static inline MatShape shape(const int* dims, const int n)
 
 static inline MatShape shape(const Mat& mat)
 {
-    return shape(mat.size.p, mat.dims);
-}
-
-static inline MatShape shape(const MatSize& sz)
-{
-    return shape(sz.p, sz.dims());
+    return mat.shape();
 }
 
 static inline MatShape shape(const UMat& mat)
 {
-    return shape(mat.size.p, mat.dims);
+    return mat.shape();
 }
 
 #if 0  // issues with MatExpr wrapped into InputArray
@@ -152,10 +147,9 @@ namespace {inline bool is_neg(int i) { return i < 0; }}
 
 static inline MatShape shape(int a0, int a1=-1, int a2=-1, int a3=-1)
 {
-    int dims[] = {a0, a1, a2, a3};
-    MatShape s = shape(dims, 4);
-    s.erase(std::remove_if(s.begin(), s.end(), is_neg), s.end());
-    return s;
+    int shape_[] = {a0, a1, a2, a3};
+    int dims = 1 + (a1 >= 0) + (a1 >= 0 && a2 >= 0) + (a1 >= 0 && a2 >= 0 && a3 >= 0);
+    return shape(shape_, dims);
 }
 
 static inline int total(const MatShape& shape, int start = -1, int end = -1)
@@ -206,9 +200,21 @@ static inline int total(const Mat& mat, int start = -1, int end = -1)
 static inline MatShape concat(const MatShape& a, const MatShape& b)
 {
     MatShape c = a;
-    c.insert(c.end(), b.begin(), b.end());
-
+    size_t a_size = a.size(), b_size = b.size(), c_size = a_size + b_size;
+    c.resize(c_size);
+    for (size_t i = 0; i < b_size; i++) {
+        c[i+a_size] = b[i];
+    }
     return c;
+}
+
+static inline std::string toString(const MatShape& shape, const String& name = "")
+{
+    std::ostringstream ss;
+    if (!name.empty())
+        ss << name << ' ';
+    ss << shape;
+    return ss.str();
 }
 
 template<typename _Tp>
@@ -269,14 +275,11 @@ Range normalize_axis_range(const Range& r, int axisSize)
 static inline
 bool isAllOnes(const MatShape &inputShape, int startPos, int endPos)
 {
-    CV_Assert(!inputShape.empty());
-
-    CV_CheckGE((int) inputShape.size(), startPos, "");
     CV_CheckGE(startPos, 0, "");
     CV_CheckLE(startPos, endPos, "");
-    CV_CheckLE((size_t)endPos, inputShape.size(), "");
+    CV_CheckLE(endPos, inputShape.dims, "");
 
-    for (size_t i = startPos; i < endPos; i++)
+    for (int i = startPos; i < endPos; i++)
     {
         if (inputShape[i] != 1)
             return false;

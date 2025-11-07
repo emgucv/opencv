@@ -1,8 +1,3 @@
-if (NOT CMAKE_CROSSCOMPILING)
-  file(RELATIVE_PATH __loc_relative "${OpenCV_BINARY_DIR}" "${CMAKE_CURRENT_LIST_DIR}/pattern_tools\n")
-  file(APPEND "${OpenCV_BINARY_DIR}/opencv_apps_python_tests.cfg" "${__loc_relative}")
-endif()
-
 if(NOT BUILD_DOCS)
   return()
 endif()
@@ -16,6 +11,10 @@ endif()
 
 find_package(Doxygen)
 if(DOXYGEN_FOUND)
+  if (DOXYGEN_VERSION VERSION_LESS 1.12)
+    message(WARNING "Found doxygen ${DOXYGEN_VERSION}, version 1.12 is used for testing, there is "
+                    "a chance your documentation will look different or have some limitations.")
+  endif()
   add_custom_target(doxygen)
 
   # not documented modules list
@@ -154,6 +153,7 @@ if(DOXYGEN_FOUND)
   set(CMAKE_DOXYGEN_TUTORIAL_JS_ROOT "- @ref tutorial_js_root")
   set(tutorial_js_path "${CMAKE_CURRENT_SOURCE_DIR}/js_tutorials")
   set(example_path "${CMAKE_SOURCE_DIR}/samples")
+  set(apps_path "${CMAKE_SOURCE_DIR}/apps")
 
   set(doxygen_image_path
       ${CMAKE_CURRENT_SOURCE_DIR}/images
@@ -175,7 +175,7 @@ if(DOXYGEN_FOUND)
   string(REPLACE ";" " \\\n" CMAKE_DOXYGEN_EXCLUDE_LIST "${CMAKE_DOXYGEN_EXCLUDE_LIST}")
   string(REPLACE ";" " " CMAKE_DOXYGEN_ENABLED_SECTIONS "${CMAKE_DOXYGEN_ENABLED_SECTIONS}")
   # TODO: remove paths_doc from EXAMPLE_PATH after face module tutorials/samples moved to separate folders
-  string(REPLACE ";" " \\\n" CMAKE_DOXYGEN_EXAMPLE_PATH  "${example_path} ; ${paths_doc} ; ${paths_sample}")
+  string(REPLACE ";" " \\\n" CMAKE_DOXYGEN_EXAMPLE_PATH  "${example_path} ; ${apps_path} ; ${paths_doc} ; ${paths_sample}")
   string(REPLACE ";" " \\\n" CMAKE_DOXYGEN_INCLUDE_ROOTS "${paths_include}")
   set(CMAKE_DOXYGEN_LAYOUT "${CMAKE_CURRENT_BINARY_DIR}/DoxygenLayout.xml")
   set(CMAKE_DOXYGEN_OUTPUT_PATH "doxygen")
@@ -191,15 +191,23 @@ if(DOXYGEN_FOUND)
   list(APPEND CMAKE_DOXYGEN_HTML_FILES "${CMAKE_CURRENT_SOURCE_DIR}/opencv.ico")
   list(APPEND CMAKE_DOXYGEN_HTML_FILES "${CMAKE_CURRENT_SOURCE_DIR}/pattern.png")
   list(APPEND CMAKE_DOXYGEN_HTML_FILES "${CMAKE_CURRENT_SOURCE_DIR}/acircles_pattern.png")
+  list(APPEND CMAKE_DOXYGEN_HTML_FILES "${CMAKE_CURRENT_SOURCE_DIR}/charuco_board_pattern.png")
   list(APPEND CMAKE_DOXYGEN_HTML_FILES "${CMAKE_CURRENT_SOURCE_DIR}/bodybg.png")
   # list(APPEND CMAKE_DOXYGEN_HTML_FILES "${CMAKE_CURRENT_SOURCE_DIR}/mymath.sty")
   list(APPEND CMAKE_DOXYGEN_HTML_FILES "${CMAKE_CURRENT_SOURCE_DIR}/tutorial-utils.js")
   string(REPLACE ";" " \\\n" CMAKE_DOXYGEN_HTML_FILES "${CMAKE_DOXYGEN_HTML_FILES}")
 
-  set(OPENCV_DOCS_DOT_PATH "" CACHE PATH "Doxygen/DOT_PATH value")
+  if (DOXYGEN_DOT_EXECUTABLE)
+    message(STATUS "Found DOT executable: ${DOXYGEN_DOT_EXECUTABLE}")
+    set(init_dot_path "${DOXYGEN_DOT_EXECUTABLE}")
+    set(init_dot_mode "YES")
+  else()
+    set(init_dot_path "")
+    set(init_dot_mode "NO")
+  endif()
+  set(OPENCV_DOCS_DOT_PATH "${init_dot_path}" CACHE PATH "Doxygen/DOT_PATH value")
+  set(OPENCV_DOCS_HAVE_DOT "${init_dot_mode}" CACHE BOOL "Doxygen: build extra diagrams")
   set(CMAKECONFIG_DOT_PATH "${OPENCV_DOCS_DOT_PATH}")
-
-  set(OPENCV_DOCS_HAVE_DOT "NO" CACHE BOOL "Doxygen: build extra diagrams")
   set(CMAKECONFIG_HAVE_DOT "${OPENCV_DOCS_HAVE_DOT}")
 
   # 'png' is good enough for compatibility (but requires +50% storage space)
@@ -239,12 +247,6 @@ if(DOXYGEN_FOUND)
   elseif(DEFINED OPENCV_JS_LOCATION)
     list(APPEND js_assets "${OPENCV_JS_LOCATION}")
   endif()
-
-  # copy haar cascade files
-  set(haar_cascade_files "")
-  set(data_harrcascades_path "${OpenCV_SOURCE_DIR}/data/haarcascades/")
-  list(APPEND js_tutorials_assets_deps "${data_harrcascades_path}/haarcascade_frontalface_default.xml" "${data_harrcascades_path}/haarcascade_eye.xml")
-  list(APPEND js_assets "${data_harrcascades_path}/haarcascade_frontalface_default.xml" "${data_harrcascades_path}/haarcascade_eye.xml")
 
   foreach(f ${js_assets})
     get_filename_component(fname "${f}" NAME)

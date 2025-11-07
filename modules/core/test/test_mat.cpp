@@ -304,9 +304,6 @@ void Core_ReduceTest::run( int )
     ts->set_failed_test_info( code );
 }
 
-
-#define CHECK_C
-
 TEST(Core_PCA, accuracy)
 {
     const Size sz(200, 500);
@@ -322,7 +319,7 @@ TEST(Core_PCA, accuracy)
     rng.fill( rPoints, RNG::UNIFORM, Scalar::all(0.0), Scalar::all(1.0) );
     rng.fill( rTestPoints, RNG::UNIFORM, Scalar::all(0.0), Scalar::all(1.0) );
 
-    PCA rPCA( rPoints, Mat(), CV_PCA_DATA_AS_ROW, maxComponents ), cPCA;
+    PCA rPCA( rPoints, Mat(), PCA::DATA_AS_ROW, maxComponents ), cPCA;
 
     // 1. check C++ PCA & ROW
     Mat rPrjTestPoints = rPCA.project( rTestPoints );
@@ -342,11 +339,6 @@ TEST(Core_PCA, accuracy)
     Mat subEval( maxComponents, 1, eval.type(), eval.ptr() ),
     subEvec( maxComponents, evec.cols, evec.type(), evec.ptr() );
 
-#ifdef CHECK_C
-    Mat prjTestPoints, backPrjTestPoints, cPoints = rPoints.t(), cTestPoints = rTestPoints.t();
-    CvMat _points, _testPoints, _avg, _eval, _evec, _prjTestPoints, _backPrjTestPoints;
-#endif
-
     // check eigen()
     double eigenEps = 1e-4;
     double err;
@@ -362,7 +354,7 @@ TEST(Core_PCA, accuracy)
     // check pca eigenvalues
     evalEps = 1e-5, evecEps = 5e-3;
     err = cvtest::norm(rPCA.eigenvalues, subEval, NORM_L2 | NORM_RELATIVE);
-    EXPECT_LE(err , evalEps) << "pca.eigenvalues is incorrect (CV_PCA_DATA_AS_ROW)";
+    EXPECT_LE(err , evalEps) << "pca.eigenvalues is incorrect (PCA::DATA_AS_ROW)";
     // check pca eigenvectors
     for(int i = 0; i < subEvec.rows; i++)
     {
@@ -379,7 +371,7 @@ TEST(Core_PCA, accuracy)
             double mval = 0; Point mloc;
             minMaxLoc(tmp, 0, &mval, 0, &mloc);
 
-            EXPECT_LE(err, evecEps) << "pca.eigenvectors is incorrect (CV_PCA_DATA_AS_ROW) at " << i << " "
+            EXPECT_LE(err, evecEps) << "pca.eigenvectors is incorrect (PCA::DATA_AS_ROW) at " << i << " "
                 << cv::format("max diff is %g at (i=%d, j=%d) (%g vs %g)\n",
                         mval, mloc.y, mloc.x, rPCA.eigenvectors.at<float>(mloc.y, mloc.x),
                         subEvec.at<float>(mloc.y, mloc.x))
@@ -399,7 +391,7 @@ TEST(Core_PCA, accuracy)
         err = cvtest::norm(rPrjTestPoints.row(i), prj, NORM_L2 | NORM_RELATIVE);
         if (err < prjEps)
         {
-            EXPECT_LE(err, prjEps) << "bad accuracy of project() (CV_PCA_DATA_AS_ROW)";
+            EXPECT_LE(err, prjEps) << "bad accuracy of project() (PCA::DATA_AS_ROW)";
             continue;
         }
         // check pca backProject
@@ -407,22 +399,22 @@ TEST(Core_PCA, accuracy)
         err = cvtest::norm(rBackPrjTestPoints.row(i), backPrj, NORM_L2 | NORM_RELATIVE);
         if (err > backPrjEps)
         {
-            EXPECT_LE(err, backPrjEps) << "bad accuracy of backProject() (CV_PCA_DATA_AS_ROW)";
+            EXPECT_LE(err, backPrjEps) << "bad accuracy of backProject() (PCA::DATA_AS_ROW)";
             continue;
         }
     }
 
     // 2. check C++ PCA & COL
-    cPCA( rPoints.t(), Mat(), CV_PCA_DATA_AS_COL, maxComponents );
+    cPCA( rPoints.t(), Mat(), PCA::DATA_AS_COL, maxComponents );
     diffPrjEps = 1, diffBackPrjEps = 1;
     Mat ocvPrjTestPoints = cPCA.project(rTestPoints.t());
     err = cvtest::norm(cv::abs(ocvPrjTestPoints), cv::abs(rPrjTestPoints.t()), NORM_L2 | NORM_RELATIVE);
-    ASSERT_LE(err, diffPrjEps) << "bad accuracy of project() (CV_PCA_DATA_AS_COL)";
+    ASSERT_LE(err, diffPrjEps) << "bad accuracy of project() (PCA::DATA_AS_COL)";
     err = cvtest::norm(cPCA.backProject(ocvPrjTestPoints), rBackPrjTestPoints.t(), NORM_L2 | NORM_RELATIVE);
-    ASSERT_LE(err, diffBackPrjEps) << "bad accuracy of backProject() (CV_PCA_DATA_AS_COL)";
+    ASSERT_LE(err, diffBackPrjEps) << "bad accuracy of backProject() (PCA::DATA_AS_COL)";
 
     // 3. check C++ PCA w/retainedVariance
-    cPCA( rPoints.t(), Mat(), CV_PCA_DATA_AS_COL, retainedVariance );
+    cPCA( rPoints.t(), Mat(), PCA::DATA_AS_COL, retainedVariance );
     diffPrjEps = 1, diffBackPrjEps = 1;
     Mat rvPrjTestPoints = cPCA.project(rTestPoints.t());
 
@@ -431,49 +423,10 @@ TEST(Core_PCA, accuracy)
     else
         err = cvtest::norm(cv::abs(rvPrjTestPoints), cv::abs(rPrjTestPoints.colRange(0,cPCA.eigenvectors.rows).t()), NORM_L2 | NORM_RELATIVE);
 
-    ASSERT_LE(err, diffPrjEps) << "bad accuracy of project() (CV_PCA_DATA_AS_COL); retainedVariance=" << retainedVariance;
+    ASSERT_LE(err, diffPrjEps) << "bad accuracy of project() (PCA::DATA_AS_COL); retainedVariance=" << retainedVariance;
     err = cvtest::norm(cPCA.backProject(rvPrjTestPoints), rBackPrjTestPoints.t(), NORM_L2 | NORM_RELATIVE);
-    ASSERT_LE(err, diffBackPrjEps) << "bad accuracy of backProject() (CV_PCA_DATA_AS_COL); retainedVariance=" << retainedVariance;
+    ASSERT_LE(err, diffBackPrjEps) << "bad accuracy of backProject() (PCA::DATA_AS_COL); retainedVariance=" << retainedVariance;
 
-#ifdef CHECK_C
-    // 4. check C PCA & ROW
-    _points = cvMat(rPoints);
-    _testPoints = cvMat(rTestPoints);
-    _avg = cvMat(avg);
-    _eval = cvMat(eval);
-    _evec = cvMat(evec);
-    prjTestPoints.create(rTestPoints.rows, maxComponents, rTestPoints.type() );
-    backPrjTestPoints.create(rPoints.size(), rPoints.type() );
-    _prjTestPoints = cvMat(prjTestPoints);
-    _backPrjTestPoints = cvMat(backPrjTestPoints);
-
-    cvCalcPCA( &_points, &_avg, &_eval, &_evec, CV_PCA_DATA_AS_ROW );
-    cvProjectPCA( &_testPoints, &_avg, &_evec, &_prjTestPoints );
-    cvBackProjectPCA( &_prjTestPoints, &_avg, &_evec, &_backPrjTestPoints );
-
-    err = cvtest::norm(prjTestPoints, rPrjTestPoints, NORM_L2 | NORM_RELATIVE);
-    ASSERT_LE(err, diffPrjEps) << "bad accuracy of cvProjectPCA() (CV_PCA_DATA_AS_ROW)";
-    err = cvtest::norm(backPrjTestPoints, rBackPrjTestPoints, NORM_L2 | NORM_RELATIVE);
-    ASSERT_LE(err, diffBackPrjEps) << "bad accuracy of cvBackProjectPCA() (CV_PCA_DATA_AS_ROW)";
-
-    // 5. check C PCA & COL
-    _points = cvMat(cPoints);
-    _testPoints = cvMat(cTestPoints);
-    avg = avg.t(); _avg = cvMat(avg);
-    eval = eval.t(); _eval = cvMat(eval);
-    evec = evec.t(); _evec = cvMat(evec);
-    prjTestPoints = prjTestPoints.t(); _prjTestPoints = cvMat(prjTestPoints);
-    backPrjTestPoints = backPrjTestPoints.t(); _backPrjTestPoints = cvMat(backPrjTestPoints);
-
-    cvCalcPCA( &_points, &_avg, &_eval, &_evec, CV_PCA_DATA_AS_COL );
-    cvProjectPCA( &_testPoints, &_avg, &_evec, &_prjTestPoints );
-    cvBackProjectPCA( &_prjTestPoints, &_avg, &_evec, &_backPrjTestPoints );
-
-    err = cvtest::norm(cv::abs(prjTestPoints), cv::abs(rPrjTestPoints.t()), NORM_L2 | NORM_RELATIVE);
-    ASSERT_LE(err, diffPrjEps) << "bad accuracy of cvProjectPCA() (CV_PCA_DATA_AS_COL)";
-    err = cvtest::norm(backPrjTestPoints, rBackPrjTestPoints.t(), NORM_L2 | NORM_RELATIVE);
-    ASSERT_LE(err, diffBackPrjEps) << "bad accuracy of cvBackProjectPCA() (CV_PCA_DATA_AS_COL)";
-#endif
     // Test read and write
     const std::string filename = cv::tempfile("PCA_store.yml");
     FileStorage fs( filename, FileStorage::WRITE );
@@ -549,13 +502,6 @@ static double getValue(SparseMat& M, const int* idx, RNG& rng)
     return !ptr ? 0 : M.type() == CV_32F ? *(float*)ptr : M.type() == CV_64F ? *(double*)ptr : 0;
 }
 
-static double getValue(const CvSparseMat* M, const int* idx)
-{
-    int type = 0;
-    const uchar* ptr = cvPtrND(M, idx, &type, 0);
-    return !ptr ? 0 : type == CV_32F ? *(float*)ptr : type == CV_64F ? *(double*)ptr : 0;
-}
-
 static void eraseValue(SparseMat& M, const int* idx, RNG& rng)
 {
     int d = M.dims();
@@ -573,11 +519,6 @@ static void eraseValue(SparseMat& M, const int* idx, RNG& rng)
         M.erase(idx[0], idx[1], idx[2], phv);
     else
         M.erase(idx, phv);
-}
-
-static void eraseValue(CvSparseMat* M, const int* idx)
-{
-    cvClearND(M, idx);
 }
 
 static void setValue(SparseMat& M, const int* idx, double value, RNG& rng)
@@ -599,10 +540,10 @@ static void setValue(SparseMat& M, const int* idx, double value, RNG& rng)
     else if( M.type() == CV_64F )
         *(double*)ptr = value;
     else
-        CV_Error(CV_StsUnsupportedFormat, "");
+        CV_Error(cv::Error::StsUnsupportedFormat, "");
 }
 
-#if defined(__GNUC__) && (__GNUC__ == 11 || __GNUC__ == 12 || __GNUC__ == 13)
+#if defined(__GNUC__) && (__GNUC__ >= 11)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Warray-bounds"
 #endif
@@ -645,39 +586,6 @@ void Core_ArrayOpTest::run( int /* start_from */)
 {
     int errcount = 0;
 
-    // dense matrix operations
-    {
-        int sz3[] = {5, 10, 15};
-        MatND A(3, sz3, CV_32F), B(3, sz3, CV_16SC4);
-        CvMatND matA = cvMatND(A), matB = cvMatND(B);
-        RNG rng;
-        rng.fill(A, CV_RAND_UNI, Scalar::all(-10), Scalar::all(10));
-        rng.fill(B, CV_RAND_UNI, Scalar::all(-10), Scalar::all(10));
-
-        int idx0[] = {3,4,5}, idx1[] = {0, 9, 7};
-        float val0 = 130;
-        Scalar val1(-1000, 30, 3, 8);
-        cvSetRealND(&matA, idx0, val0);
-        cvSetReal3D(&matA, idx1[0], idx1[1], idx1[2], -val0);
-        cvSetND(&matB, idx0, cvScalar(val1));
-        cvSet3D(&matB, idx1[0], idx1[1], idx1[2], cvScalar(-val1));
-        Ptr<CvMatND> matC(cvCloneMatND(&matB));
-
-        if( A.at<float>(idx0[0], idx0[1], idx0[2]) != val0 ||
-           A.at<float>(idx1[0], idx1[1], idx1[2]) != -val0 ||
-           cvGetReal3D(&matA, idx0[0], idx0[1], idx0[2]) != val0 ||
-           cvGetRealND(&matA, idx1) != -val0 ||
-
-           Scalar(B.at<Vec4s>(idx0[0], idx0[1], idx0[2])) != val1 ||
-           Scalar(B.at<Vec4s>(idx1[0], idx1[1], idx1[2])) != -val1 ||
-           Scalar(cvGet3D(matC, idx0[0], idx0[1], idx0[2])) != val1 ||
-           Scalar(cvGetND(matC, idx1)) != -val1 )
-        {
-            ts->printf(cvtest::TS::LOG, "one of cvSetReal3D, cvSetRealND, cvSet3D, cvSetND "
-                       "or the corresponding *Get* functions is not correct\n");
-            errcount++;
-        }
-    }
     // test cv::Mat::forEach
     {
         const int dims[3] = { 101, 107, 7 };
@@ -808,7 +716,7 @@ void Core_ArrayOpTest::run( int /* start_from */)
         all_vals.resize(nz0);
         all_vals2.resize(nz0);
         Mat_<double> _all_vals(all_vals), _all_vals2(all_vals2);
-        rng.fill(_all_vals, CV_RAND_UNI, Scalar(-1000), Scalar(1000));
+        rng.fill(_all_vals, RNG::UNIFORM, Scalar(-1000), Scalar(1000));
         if( depth == CV_32F )
         {
             Mat _all_vals_f;
@@ -824,9 +732,9 @@ void Core_ArrayOpTest::run( int /* start_from */)
         }
 
         minMaxLoc(_all_vals, &min_val, &max_val);
-        double _norm0 = cv/*test*/::norm(_all_vals, CV_C);
-        double _norm1 = cv/*test*/::norm(_all_vals, CV_L1);
-        double _norm2 = cv/*test*/::norm(_all_vals, CV_L2);
+        double _norm0 = cv/*test*/::norm(_all_vals, NORM_INF);
+        double _norm1 = cv/*test*/::norm(_all_vals, NORM_L1);
+        double _norm2 = cv/*test*/::norm(_all_vals, NORM_L2);
 
         for( i = 0; i < nz0; i++ )
         {
@@ -855,15 +763,14 @@ void Core_ArrayOpTest::run( int /* start_from */)
             }
         }
 
-        Ptr<CvSparseMat> M2(cvCreateSparseMat(M));
         MatND Md;
         M.copyTo(Md);
         SparseMat M3; SparseMat(Md).convertTo(M3, Md.type(), 2);
 
         int nz1 = (int)M.nzcount(), nz2 = (int)M3.nzcount();
-        double norm0 = cv/*test*/::norm(M, CV_C);
-        double norm1 = cv/*test*/::norm(M, CV_L1);
-        double norm2 = cv/*test*/::norm(M, CV_L2);
+        double norm0 = cv/*test*/::norm(M, NORM_INF);
+        double norm1 = cv/*test*/::norm(M, NORM_L1);
+        double norm2 = cv/*test*/::norm(M, NORM_L2);
         double eps = depth == CV_32F ? FLT_EPSILON*100 : DBL_EPSILON*1000;
 
         if( nz1 != nz0 || nz2 != nz0)
@@ -889,7 +796,7 @@ void Core_ArrayOpTest::run( int /* start_from */)
 
         for( i = 0; i < n; i++ )
         {
-            double val1, val2, val3, val0;
+            double val1, val3, val0;
             if(i < nz0)
             {
                 sidx = all_idxs[i];
@@ -904,20 +811,19 @@ void Core_ArrayOpTest::run( int /* start_from */)
                 val0 = M0[sidx];
             }
             val1 = getValue(M, idx, rng);
-            val2 = getValue(M2, idx);
             val3 = getValue(M3, idx, rng);
 
-            if( val1 != val0 || val2 != val0 || fabs(val3 - val0*2) > fabs(val0*2)*FLT_EPSILON )
+            if( val1 != val0 || fabs(val3 - val0*2) > fabs(val0*2)*FLT_EPSILON )
             {
                 errcount++;
-                ts->printf(cvtest::TS::LOG, "SparseMat M[%s] = %g/%g/%g (while it should be %g)\n", sidx.c_str(), val1, val2, val3, val0 );
+                ts->printf(cvtest::TS::LOG, "SparseMat M[%s] = %g/%g (while it should be %g)\n", sidx.c_str(), val1, val3, val0 );
                 break;
             }
         }
 
         for( i = 0; i < n; i++ )
         {
-            double val1, val2;
+            double val1;
             if(i < nz0)
             {
                 sidx = all_idxs[i];
@@ -930,13 +836,11 @@ void Core_ArrayOpTest::run( int /* start_from */)
                 sidx = idx2string(idx, dims);
             }
             eraseValue(M, idx, rng);
-            eraseValue(M2, idx);
             val1 = getValue(M, idx, rng);
-            val2 = getValue(M2, idx);
-            if( val1 != 0 || val2 != 0 )
+            if( val1 != 0 )
             {
                 errcount++;
-                ts->printf(cvtest::TS::LOG, "SparseMat: after deleting M[%s], it is =%g/%g (while it should be 0)\n", sidx.c_str(), val1, val2 );
+                ts->printf(cvtest::TS::LOG, "SparseMat: after deleting M[%s], it is = %g (while it should be 0)\n", sidx.c_str(), val1 );
                 break;
             }
         }
@@ -1304,6 +1208,42 @@ TEST(Core_Mat, reshape_ndims_4)
     }
 }
 
+TEST(Core_Mat, reinterpret_Mat_8UC3_8SC3)
+{
+    cv::Mat A(8, 16, CV_8UC3, cv::Scalar(1, 2, 3));
+    cv::Mat B = A.reinterpret(CV_8SC3);
+
+    EXPECT_EQ(A.data, B.data);
+    EXPECT_EQ(B.type(), CV_8SC3);
+}
+
+TEST(Core_Mat, reinterpret_Mat_8UC4_32FC1)
+{
+    cv::Mat A(8, 16, CV_8UC4, cv::Scalar(1, 2, 3, 4));
+    cv::Mat B = A.reinterpret(CV_32FC1);
+
+    EXPECT_EQ(A.data, B.data);
+    EXPECT_EQ(B.type(), CV_32FC1);
+}
+
+TEST(Core_Mat, reinterpret_OutputArray_8UC3_8SC3) {
+    cv::Mat A(8, 16, CV_8UC3, cv::Scalar(1, 2, 3));
+    cv::OutputArray C(A);
+    cv::Mat B = C.reinterpret(CV_8SC3);
+
+    EXPECT_EQ(A.data, B.data);
+    EXPECT_EQ(B.type(), CV_8SC3);
+}
+
+TEST(Core_Mat, reinterpret_OutputArray_8UC4_32FC1) {
+    cv::Mat A(8, 16, CV_8UC4, cv::Scalar(1, 2, 3, 4));
+    cv::OutputArray C(A);
+    cv::Mat B = C.reinterpret(CV_32FC1);
+
+    EXPECT_EQ(A.data, B.data);
+    EXPECT_EQ(B.type(), CV_32FC1);
+}
+
 TEST(Core_Mat, push_back)
 {
     Mat a = (Mat_<float>(1,2) << 3.4884074f, 1.4159607f);
@@ -1383,6 +1323,13 @@ TEST(Core_Mat, copyMakeBoderUndefinedBehavior)
     EXPECT_EQ(0, cv::norm(src.col(2), dst(Rect(5,1,1,4))));
 }
 
+TEST(Core_Mat, zeros)
+{
+  // Should not fail during linkage.
+  const int dims[] = {2, 2, 4};
+  cv::Mat1f mat = cv::Mat1f::zeros(3, dims);
+}
+
 TEST(Core_Matx, fromMat_)
 {
     Mat_<double> a = (Mat_<double>(2,2) << 10, 11, 12, 13);
@@ -1404,10 +1351,37 @@ TEST(Core_Mat, regression_9507)
     EXPECT_EQ(25u, m2.total());
 }
 
+TEST(Core_Mat, empty)
+{
+    // Should not crash.
+    uint8_t data[2] = {0, 1};
+    cv::Mat mat_nd(/*ndims=*/0, /*sizes=*/nullptr, CV_8UC1, /*data=*/data);
+    cv::Mat1b mat(0, 0, /*data=*/data, /*steps=*/1);
+    EXPECT_EQ(mat_nd.dims, 0);
+    EXPECT_EQ(mat.dims, 2);
+#if CV_VERSION_MAJOR < 5
+    EXPECT_LE(mat_nd.total(), 0u);
+    EXPECT_TRUE(mat_nd.empty());
+#else
+    EXPECT_LE(mat_nd.total(), 1u);
+    EXPECT_FALSE(mat_nd.empty());
+#endif
+    EXPECT_EQ(mat.total(), 0u);
+    EXPECT_TRUE(mat.empty());
+}
+
 TEST(Core_InputArray, empty)
 {
     vector<vector<Point> > data;
     ASSERT_TRUE( _InputArray(data).empty() );
+}
+
+TEST(Core_InputArray, convert_from_vector_over2GB)
+{
+    applyTestTag(CV_TEST_TAG_MEMORY_6GB);
+    // empty buffer more than 2GB size
+    std::vector<uint8_t> buf(size_t(INT_MAX) + 4096);
+    EXPECT_ANY_THROW(auto work = _InputArray(buf));
 }
 
 TEST(Core_CopyMask, bug1918)
@@ -1751,18 +1725,22 @@ TEST(Core_Mat_array, copyTo_roi_row)
     EXPECT_EQ(5, (int)dst2[4]);
 }
 
-TEST(Core_Mat_array, SplitMerge)
+typedef testing::TestWithParam< tuple<int, perf::MatType> > Core_Mat_arrays;
+
+TEST_P(Core_Mat_arrays, SplitMerge)
 {
-    std::array<cv::Mat, 3> src;
+    int cn =  get<0>(GetParam());
+    int type =  get<1>(GetParam());
+    std::vector<cv::Mat> src(cn);
     for (size_t i = 0; i < src.size(); ++i)
     {
-        src[i] = Mat(10, 10, CV_8U, Scalar((double)(16 * (i + 1))));
+        src[i] = Mat(10, 10, type, Scalar((double)(16 * (i + 1))));
     }
 
     Mat merged;
     merge(src, merged);
 
-    std::array<cv::Mat, 3> dst;
+    std::vector<cv::Mat> dst(cn);
     split(merged, dst);
 
     for (size_t i = 0; i < dst.size(); ++i)
@@ -1770,6 +1748,17 @@ TEST(Core_Mat_array, SplitMerge)
         EXPECT_EQ(0, cvtest::norm(src[i], dst[i], NORM_INF));
     }
 }
+
+INSTANTIATE_TEST_CASE_P(/*nothing*/, Core_Mat_arrays, testing::Combine(
+    testing::Range(1, 9),
+    testing::Values(
+        perf::MatType(CV_8U),
+        perf::MatType(CV_16U),
+        perf::MatType(CV_32S),
+        perf::MatType(CV_64F)
+    )
+)
+);
 
 TEST(Mat, regression_8680)
 {
@@ -2262,6 +2251,27 @@ TEST(Core_Eigen, eigen2cv_check_Mat_type)
     EXPECT_ANY_THROW(eigen2cv(eigen_A, d_mat));
     //EXPECT_EQ(CV_64FC1, d_mat.type());
 }
+
+TEST(Core_Eigen, cv2eigen_check_RowMajor)
+{
+    Mat A(3, 2, CV_32FC1, Scalar::all(0));
+    A.at<float>(0,0) = 1.0;
+    A.at<float>(0,1) = 2.0;
+    A.at<float>(1,0) = 3.0;
+    A.at<float>(1,1) = 4.0;
+    A.at<float>(2,0) = 5.0;
+    A.at<float>(2,1) = 6.0;
+
+    Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> eigen_A;
+    EXPECT_NO_THROW(cv2eigen(A, eigen_A));
+
+    ASSERT_EQ(1.0, eigen_A(0, 0));
+    ASSERT_EQ(2.0, eigen_A(0, 1));
+    ASSERT_EQ(3.0, eigen_A(1, 0));
+    ASSERT_EQ(4.0, eigen_A(1, 1));
+    ASSERT_EQ(5.0, eigen_A(2, 0));
+    ASSERT_EQ(6.0, eigen_A(2, 1));
+}
 #endif // HAVE_EIGEN
 
 #ifdef OPENCV_EIGEN_TENSOR_SUPPORT
@@ -2392,7 +2402,15 @@ TEST(Mat, regression_18473)
     EXPECT_EQ((int)5, (int)m.at<short>(19, 49, 99));
 }
 
-// FITIT: remove DISABLE_ when 1D Mat is supported
+TEST(Mat0D, basic)
+{
+    Mat1b m1, m2(0, nullptr);
+    ASSERT_EQ(0, m1.size().width);
+    ASSERT_EQ(0, m1.size().height);
+    ASSERT_EQ(1, m2.size().width);
+    ASSERT_EQ(1, m2.size().height);
+}
+
 TEST(Mat1D, basic)
 {
     std::vector<int> sizes { 100 };
@@ -2401,7 +2419,7 @@ TEST(Mat1D, basic)
     m1.at<uchar>(50) = 10;
     EXPECT_FALSE(m1.empty());
     ASSERT_EQ(1, m1.dims);
-    ASSERT_EQ(1, m1.size.dims());  // hack map on .rows
+    ASSERT_EQ(1, m1.size.dims);  // hack map on .rows
     EXPECT_EQ(Size(100, 1), m1.size());
 
     {
@@ -2461,21 +2479,6 @@ TEST(Mat1D, basic)
         Mat m(5, 100, CV_32FC1, Scalar::all(0));
         const Mat row2D = m.row(2);
         EXPECT_NO_THROW(m1.convertTo(row2D, CV_32FC1));
-    }
-
-    {
-        SCOPED_TRACE("CvMat");
-        CvMat c_mat = cvMat(m1);
-        EXPECT_EQ(100, c_mat.cols);
-        EXPECT_EQ(1, c_mat.rows);
-    }
-
-    {
-        SCOPED_TRACE("CvMatND");
-        CvMatND c_mat = cvMatND(m1);
-        EXPECT_EQ(2, c_mat.dims);
-        EXPECT_EQ(1, c_mat.dim[0].size);
-        EXPECT_EQ(100, c_mat.dim[1].size);
     }
 
     {
@@ -2603,7 +2606,7 @@ TEST(Mat, Recreate1DMatWithSameMeta)
     cv::Mat m(dims, depth);
 
     // By default m has dims: [1, 100]
-    m.dims = 1;
+    m.size.dims = m.dims = 1;
 
     EXPECT_NO_THROW(m.create(dims, depth));
 }
@@ -2615,6 +2618,243 @@ TEST(InputArray, dumpEmpty)
     EXPECT_EQ(s, "InputArray: noArray()");
     s = cv::utils::dumpInputArray(Mat());
     EXPECT_EQ(s, "InputArray: empty()=true kind=0x00010000 flags=0x01010000 total(-1)=0 dims(-1)=0 size(-1)=0x0 type(-1)=CV_8UC1");
+}
+
+TEST(Mat, regression_26322)
+{
+    cv::Mat1b mat;
+    EXPECT_TRUE(mat.empty());
+    EXPECT_EQ(0, (int)mat.total());
+
+    cv::Mat mat2(mat.dims, mat.size.p, mat.type(), mat.data, mat.step.p);
+    EXPECT_TRUE(mat2.empty());
+    EXPECT_EQ(mat.cols, mat2.cols);
+    EXPECT_EQ(mat.rows, mat2.rows);
+    EXPECT_EQ(0, (int)(mat2.cols * mat2.rows * mat2.elemSize()));
+    EXPECT_EQ(0, (int)mat2.total());
+
+    // the new way of doing the same in 5.x
+    cv::Mat mat3(mat.shape(), mat.type(), mat.data, mat.step.p);
+    EXPECT_TRUE(mat3.empty());
+    EXPECT_EQ(mat.cols, mat3.cols);
+    EXPECT_EQ(mat.rows, mat3.rows);
+    EXPECT_EQ(0, (int)(mat3.cols * mat3.rows * mat3.elemSize()));
+    EXPECT_EQ(0, (int)mat3.total());
+}
+
+TEST(Mat, reshape_1d)
+{
+    std::vector<int> v = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+    int newrows = 2;
+    Mat m = Mat(v).reshape(0, newrows);
+
+    EXPECT_EQ(m.dims, 2);
+    EXPECT_EQ(m.type(), CV_32S);
+    EXPECT_EQ(m.ptr<int>(), &v[0]);
+    EXPECT_EQ(m.rows, newrows);
+    EXPECT_EQ(m.total(), v.size());
+
+    int sz[] = {(int)v.size()};
+    Mat m1 = m.reshape(0, 1, sz);
+    EXPECT_EQ(m1.dims, 1);
+    EXPECT_EQ(m1.type(), CV_32S);
+    EXPECT_EQ(m1.ptr<int>(), &v[0]);
+    EXPECT_EQ(m1.rows, 1);
+    EXPECT_EQ(m1.total(), v.size());
+
+    int sz3d[] = {2, -1, 3};
+    Mat m3 = m1.reshape(0, 3, sz3d);
+    EXPECT_EQ(m3.dims, 3);
+    EXPECT_EQ(m3.type(), CV_32S);
+    EXPECT_EQ(m3.ptr<int>(), &v[0]);
+    EXPECT_EQ(m3.size[0], 2);
+    EXPECT_EQ(m3.size[1], 2);
+    EXPECT_EQ(m3.size[2], 3);
+    EXPECT_EQ(m3.total(), v.size());
+}
+
+TEST(UMat, reshape_1d)
+{
+    std::vector<int> v = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+    UMat m_, m;
+    int newrows = 2;
+    Mat(v).copyTo(m_);
+    m = m_.reshape(0, newrows);
+
+    EXPECT_EQ(m.dims, 2);
+    EXPECT_EQ(m.type(), CV_32S);
+    EXPECT_EQ(m.u->handle, m_.u->handle);
+    EXPECT_EQ(m.offset, m_.offset);
+    EXPECT_EQ(m.rows, newrows);
+    EXPECT_EQ(m.total(), v.size());
+
+    int sz[] = {(int)v.size()};
+    UMat m1 = m.reshape(0, 1, sz);
+    EXPECT_EQ(m1.dims, 1);
+    EXPECT_EQ(m1.type(), CV_32S);
+    EXPECT_EQ(m.u->handle, m_.u->handle);
+    EXPECT_EQ(m.offset, m_.offset);
+    EXPECT_EQ(m1.rows, 1);
+    EXPECT_EQ(m1.total(), v.size());
+
+    int sz3d[] = {2, -1, 3};
+    UMat m3 = m1.reshape(0, 3, sz3d);
+    EXPECT_EQ(m3.dims, 3);
+    EXPECT_EQ(m3.type(), CV_32S);
+    EXPECT_EQ(m.u->handle, m_.u->handle);
+    EXPECT_EQ(m.offset, m_.offset);
+    EXPECT_EQ(m3.size[0], 2);
+    EXPECT_EQ(m3.size[1], 2);
+    EXPECT_EQ(m3.size[2], 3);
+    EXPECT_EQ(m3.total(), v.size());
+}
+
+TEST(Mat, reshape_0d)
+{
+    int v = 1001;
+    Mat m0d(0, nullptr, CV_32S, &v);
+
+    EXPECT_EQ(m0d.dims, 0);
+    EXPECT_EQ(m0d.type(), CV_32S);
+    EXPECT_EQ(m0d.ptr<int>(), &v);
+    EXPECT_EQ(m0d.rows, 1);
+    EXPECT_EQ(m0d.total(), (size_t)1);
+    EXPECT_EQ(m0d.empty(), false);
+
+    int sz = 1;
+    Mat m1d = m0d.reshape(0, 1, &sz);
+    EXPECT_EQ(m1d.dims, 1);
+    EXPECT_EQ(m1d.type(), CV_32S);
+    EXPECT_EQ(m1d.ptr<int>(), &v);
+    EXPECT_EQ(m1d.rows, 1);
+    EXPECT_EQ(m1d.total(), (size_t)1);
+
+    Mat m2d = m1d.reshape(0, 1);
+    EXPECT_EQ(m2d.dims, 2);
+    EXPECT_EQ(m2d.type(), CV_32S);
+    EXPECT_EQ(m2d.ptr<int>(), &v);
+    EXPECT_EQ(m2d.size(), Size(1, 1));
+    EXPECT_EQ(m2d.total(), (size_t)1);
+
+    Mat m0d_ = m2d.reshape(0, 0, nullptr);
+    EXPECT_EQ(m0d_.dims, 0);
+    EXPECT_EQ(m0d_.type(), CV_32S);
+    EXPECT_EQ(m0d_.ptr<int>(), &v);
+    EXPECT_EQ(m0d_.size(), Size(1, 1));
+    EXPECT_EQ(m0d_.total(), (size_t)1);
+    EXPECT_EQ(m0d_.empty(), false);
+}
+
+TEST(UMat, reshape_0d)
+{
+    int v = 1001;
+    Mat m0dcpu(0, nullptr, CV_32S, &v);
+    UMat m0d;
+    m0dcpu.copyTo(m0d);
+
+    EXPECT_EQ(m0d.dims, 0);
+    EXPECT_EQ(m0d.type(), CV_32S);
+    EXPECT_EQ(m0d.rows, 1);
+    EXPECT_EQ(m0d.total(), (size_t)1);
+    EXPECT_EQ(m0d.empty(), false);
+
+    int sz = 1;
+    UMat m1d = m0d.reshape(0, 1, &sz);
+    EXPECT_EQ(m1d.dims, 1);
+    EXPECT_EQ(m1d.type(), CV_32S);
+    EXPECT_EQ(m1d.u->handle, m0d.u->handle);
+    EXPECT_EQ(m1d.offset, m0d.offset);
+    EXPECT_EQ(m1d.rows, 1);
+    EXPECT_EQ(m1d.total(), (size_t)1);
+
+    UMat m2d = m1d.reshape(0, 1);
+    EXPECT_EQ(m2d.dims, 2);
+    EXPECT_EQ(m2d.type(), CV_32S);
+    EXPECT_EQ(m2d.u->handle, m0d.u->handle);
+    EXPECT_EQ(m2d.offset, m0d.offset);
+    EXPECT_EQ(m2d.size(), Size(1, 1));
+    EXPECT_EQ(m2d.total(), (size_t)1);
+
+    UMat m0d_ = m2d.reshape(0, 0, nullptr);
+    EXPECT_EQ(m0d_.dims, 0);
+    EXPECT_EQ(m0d_.type(), CV_32S);
+    EXPECT_EQ(m0d_.u->handle, m0d.u->handle);
+    EXPECT_EQ(m0d_.offset, m0d.offset);
+    EXPECT_EQ(m0d_.size(), Size(1, 1));
+    EXPECT_EQ(m0d_.total(), (size_t)1);
+    EXPECT_EQ(m0d_.empty(), false);
+}
+
+
+TEST(Mat, reshape_empty)
+{
+    std::vector<int> v;
+    int sz = 0;
+    Mat m = Mat(v).reshape(0, 1, &sz);
+
+    EXPECT_EQ(m.empty(), true);
+    EXPECT_EQ(m.dims, 1);
+    EXPECT_EQ(m.type(), CV_32S);
+    EXPECT_EQ(m.ptr<int>(), nullptr);
+    EXPECT_EQ(m.rows, 1);
+    EXPECT_EQ(m.total(), (size_t)0);
+
+    Mat m2d = m.reshape(0, 2); // let's make it 2x0
+
+    EXPECT_EQ(m2d.empty(), true);
+    EXPECT_EQ(m2d.dims, 2);
+    EXPECT_EQ(m2d.type(), CV_32S);
+    EXPECT_EQ(m2d.ptr<int>(), nullptr);
+    EXPECT_EQ(m2d.rows, 2);
+    EXPECT_EQ(m2d.total(), (size_t)0);
+
+    int sz4[] = { 3, 7, 1, 0 };
+    Mat m4d = m2d.reshape(0, 4, sz4); // let's make it 2x0
+
+    EXPECT_EQ(m4d.empty(), true);
+    EXPECT_EQ(m4d.dims, 4);
+    EXPECT_EQ(m4d.type(), CV_32S);
+    EXPECT_EQ(m4d.ptr<int>(), nullptr);
+    EXPECT_EQ(m4d.size[0], 3);
+    EXPECT_EQ(m4d.size[1], 7);
+    EXPECT_EQ(m4d.size[2], 1);
+    EXPECT_EQ(m4d.size[3], 0);
+    EXPECT_EQ(m4d.total(), (size_t)0);
+}
+
+TEST(UMat, reshape_empty)
+{
+    std::vector<int> v;
+    int sz = 0;
+    UMat m_, m;
+    Mat(v).copyTo(m_);
+    m = m_.reshape(0, 1, &sz);
+
+    EXPECT_EQ(m.empty(), true);
+    EXPECT_EQ(m.dims, 1);
+    EXPECT_EQ(m.type(), CV_32S);
+    EXPECT_EQ(m.rows, 1);
+    EXPECT_EQ(m.total(), (size_t)0);
+
+    UMat m2d = m.reshape(0, 2); // let's make it 2x0
+
+    EXPECT_EQ(m2d.empty(), true);
+    EXPECT_EQ(m2d.dims, 2);
+    EXPECT_EQ(m2d.type(), CV_32S);
+    EXPECT_EQ(m2d.rows, 2);
+    EXPECT_EQ(m2d.total(), (size_t)0);
+
+    int sz4[] = { 3, 7, 1, 0 };
+    UMat m4d = m2d.reshape(0, 4, sz4); // let's make it 2x0
+
+    EXPECT_EQ(m4d.empty(), true);
+    EXPECT_EQ(m4d.dims, 4);
+    EXPECT_EQ(m4d.type(), CV_32S);
+    EXPECT_EQ(m4d.size[0], 3);
+    EXPECT_EQ(m4d.size[1], 7);
+    EXPECT_EQ(m4d.size[2], 1);
+    EXPECT_EQ(m4d.size[3], 0);
+    EXPECT_EQ(m4d.total(), (size_t)0);
 }
 
 }} // namespace

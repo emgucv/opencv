@@ -10,9 +10,12 @@
 #ifdef HAVE_PROTOBUF
 #include "../graph_simplifier.hpp"
 #include "onnx_graph_simplifier.hpp"
+#include <opencv2/core/utils/filesystem.hpp>
+#include "opencv2/core/utils/filesystem.private.hpp"
 
 #include <opencv2/core/utils/logger.hpp>
 #include <queue>
+#include <limits>
 
 namespace cv { namespace dnn {
 CV__DNN_INLINE_NS_BEGIN
@@ -64,6 +67,12 @@ class ONNXGraphWrapper : public ImportGraphWrapper
 public:
     ONNXGraphWrapper(opencv_onnx::GraphProto& _net) : net(_net)
     {
+        // Add a fake initializer with empty name.
+        // Some ONNX models skip their inputs. For example,
+        // Resize which has 4 inputs but 2 of them have empty names.
+        // So we add a fake empty node to which such ops may refer as input.
+        net.add_initializer();
+
         numInputs = net.input_size();
         numInitializers = net.initializer_size();
     }
@@ -74,6 +83,36 @@ public:
         if (idx >= numInputs + numInitializers)
             node = net.mutable_node(idx - numInputs - numInitializers);
         return makePtr<ONNXNodeWrapper>(node);
+    }
+
+    int getTensorShapeSize(int node_id, int node_input_id) {
+        const auto node = getNode(node_id);
+        const auto &input_name = node->getInputName(node_input_id);
+        // try to get from value_info
+        for (int i = 0; i < net.value_info_size(); i++) {
+            const auto value_info = net.value_info(i);
+            if (value_info.name() == input_name) {
+                if (value_info.has_type() && value_info.type().has_tensor_type() &&
+                    value_info.type().tensor_type().has_shape()) {
+                    return value_info.type().tensor_type().shape().dim_size();
+                } else {
+                    return -1;
+                }
+            }
+        }
+        // try to get from input
+        for (int i = 0; i < net.input_size(); i++) {
+            const auto input = net.input(i);
+            if (input.name() == input_name) {
+                if (input.has_type() && input.type().has_tensor_type() &&
+                    input.type().tensor_type().has_shape()) {
+                    return input.type().tensor_type().shape().dim_size();
+                } else {
+                    return -1;
+                }
+            }
+        }
+        return -1;
     }
 
     int getInputInitializerId(int node_id, int node_input_id)
@@ -125,13 +164,488 @@ public:
 
     virtual void removeNode(int idx) CV_OVERRIDE
     {
-        CV_Assert(idx >= numInputs + numInitializers);
-        net.mutable_node()->DeleteSubrange(idx - numInputs - numInitializers, 1);
+        if (idx >= numInputs + numInitializers)
+            net.mutable_node()->DeleteSubrange(idx - numInputs - numInitializers, 1);
+    }
+
+    virtual inline bool isCommutativeOp(const std::string& type) const CV_OVERRIDE
+    {
+        return type == "Add" || type == "Mul" || type == "Equal" || type == "Max";
     }
 
 private:
     int numInputs, numInitializers;
     opencv_onnx::GraphProto& net;
+};
+
+static Mat extractConstant(const Ptr<ImportGraphWrapper>& net, int node_id, int input_id)
+{
+    auto onnx_net = net.dynamicCast<ONNXGraphWrapper>();
+    int initializer_id = onnx_net->getInputInitializerId(node_id, input_id);
+    if (initializer_id != -1)
+    {
+        return onnx_net->getMatFromInitializer(initializer_id);
+    }
+    else
+    {
+        const Ptr<ImportNodeWrapper> node = net->getNode(node_id);
+        int constant_id = Subgraph::getInputNodeId(net, node, input_id);
+        Ptr<ImportNodeWrapper> constant_ptr = net->getNode(constant_id);
+        opencv_onnx::NodeProto* constant_node = constant_ptr.dynamicCast<ONNXNodeWrapper>()->node;
+        opencv_onnx::TensorProto constant_proto = constant_node->attribute(0).t();
+        return getMatFromTensor(constant_proto);
+    }
+}
+
+static std::string getInputName(const Ptr<ImportGraphWrapper>& net, int node_id, int input_id) {
+    auto onnx_net = net.dynamicCast<ONNXGraphWrapper>();
+    int initializer_id = onnx_net->getInputInitializerId(node_id, input_id);
+    if (initializer_id != -1) {
+        return onnx_net->getNameOfInitializer(initializer_id);
+    } else {
+        const auto node = net->getNode(node_id);
+        return node->getInputName(input_id);
+    }
+}
+
+/*  Slice operator has two optional inputs "axes" and "steps". Some models may be set to have
+    Slice with optional inputs of default values, some of them don't. This Subgraph adjusts
+    all optional inputs of Slice up to 5.
+*/
+class AdjustSliceAllOptionalInputsSubgraph : public Subgraph {
+ public:
+    AdjustSliceAllOptionalInputsSubgraph(size_t num_inputs = 4) {
+        num_inputs_ = num_inputs;
+
+        int input = addNodeToMatch("");
+        int starts = addNodeToMatch("");
+        int ends = addNodeToMatch("");
+        std::vector<int> inputs{input, starts, ends};
+        for (size_t i = 3; i < num_inputs_; i++) { // axes and steps
+            inputs.push_back(addNodeToMatch(""));
+        }
+
+        slice_id = addNodeToMatch("Slice", inputs);
+
+        setFusedNode("Slice", inputs);
+    }
+
+    virtual void finalize(const Ptr<ImportGraphWrapper>&,
+                          const Ptr<ImportNodeWrapper>& fusedNode,
+                          std::vector<Ptr<ImportNodeWrapper> >&) CV_OVERRIDE
+    {
+        opencv_onnx::NodeProto* node = fusedNode.dynamicCast<ONNXNodeWrapper>()->node;
+        for (int i = num_inputs_; i < 5; ++i) {
+            node->add_input("");
+        }
+    }
+ private:
+    int slice_id;
+    size_t num_inputs_;
+};
+
+/* Fusion for biased MatMul.
+
+   Graph before fusion: [Input] -> MatMul -> Add -> [Output]
+
+   Graph after fusion:  [Input] -> MatMul -> [Output]
+                                     \
+                                     bias
+*/
+
+class BiasedMatmulSubgraph : public Subgraph {
+ public:
+    BiasedMatmulSubgraph() {
+        int input = addNodeToMatch("");
+        matmul_id = addNodeToMatch("MatMul", input, addNodeToMatch(""));
+        add_id = addNodeToMatch("Add", addNodeToMatch(""), matmul_id);
+
+        setFusedNode("MatMul", input);
+    }
+
+    virtual bool match(const Ptr<ImportGraphWrapper>& net, int nodeId,
+                       std::vector<int>& matchedNodesIds) CV_OVERRIDE {
+        if (Subgraph::match(net, nodeId, matchedNodesIds)) {
+            auto onnx_net = net.dynamicCast<ONNXGraphWrapper>();
+
+            // get input weight from MatMul
+            {
+                // make sure that input A is not Constant
+                if (onnx_net->getInputInitializerId(matchedNodesIds[matmul_id], 0) >= 0) {
+                    return false;
+                } else {
+                    const Ptr<ImportNodeWrapper> node = net->getNode(matchedNodesIds[matmul_id]);
+
+                    int constant_id = Subgraph::getInputNodeId(net, node, 0);
+                    auto constant_node = net->getNode(constant_id);
+                    if (constant_node->getType() == "Constant") {
+                        return false;
+                    }
+                }
+
+                bool is_weight_const = false;
+                int initializer_id = onnx_net->getInputInitializerId(matchedNodesIds[matmul_id], 1);
+                if (initializer_id != -1) { // Initializer
+                    weight_name = onnx_net->getNameOfInitializer(initializer_id);
+                    is_weight_const = true;
+                } else { // Constant layer
+                    const Ptr<ImportNodeWrapper> node = net->getNode(matchedNodesIds[matmul_id]);
+
+                    int constant_id = Subgraph::getInputNodeId(net, node, 1);
+                    auto constant_node = net->getNode(constant_id);
+                    if (constant_node->getType() == "Constant") {
+                        weight_name = node->getInputName(1);
+                        is_weight_const = true;
+                    }
+                }
+
+                if (!is_weight_const) {
+                    return false;
+                }
+            }
+
+            // get input bias from Add
+            {
+                bool is_bias_const = false;
+                int initializer_id = std::max(onnx_net->getInputInitializerId(matchedNodesIds[add_id], 0),
+                                              onnx_net->getInputInitializerId(matchedNodesIds[add_id], 1));
+                if (initializer_id != -1) {
+                    bias_name = onnx_net->getNameOfInitializer(initializer_id);
+                    is_bias_const = true;
+                } else { // Constant layer
+                    const Ptr<ImportNodeWrapper> node = net->getNode(matchedNodesIds[add_id]);
+
+                    int constant_id = Subgraph::getInputNodeId(net, node, 0);
+                    auto constant_node = net->getNode(constant_id);
+                    if (constant_node->getType() == "Constant") {
+                        bias_name = node->getInputName(0);
+                        is_bias_const = true;
+                    } else {
+                        constant_id = Subgraph::getInputNodeId(net, node, 1);
+                        constant_node = net->getNode(constant_id);
+                        if (constant_node->getType() == "Constant") {
+                            bias_name = node->getInputName(1);
+                            is_bias_const = true;
+                        }
+                    }
+                }
+                if (!is_bias_const) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+        return false;
+    }
+
+    virtual void finalize(const Ptr<ImportGraphWrapper>& net,
+                          const Ptr<ImportNodeWrapper>& fusedNode,
+                          std::vector<Ptr<ImportNodeWrapper> >&) CV_OVERRIDE {
+        opencv_onnx::NodeProto* node = fusedNode.dynamicCast<ONNXNodeWrapper>()->node;
+        // add inputs
+        node->add_input(weight_name);
+        node->add_input(bias_name);
+    }
+
+ private:
+    int matmul_id, add_id;
+    std::string weight_name, bias_name;
+};
+
+/*  The fusion for the multi-head attention from vision transformer.
+
+    Abbreviations:
+        B - batch_size, symbolic;
+        S - sequence_length, symbolic;
+        W - hidden_size, W = N * H;
+        N - num_heads;
+        H - head_size;
+
+    Graph before fusion:
+                    [Input](BxSxW)
+                      |
+                   LayerNorm
+                      |
+                   Transpose(perm=[1, 0, 2])
+                      |
+                      | (SxBxW)
+                      |
+                    Matmul[Weight(Wx3W)]
+                      |
+                     Add[Bias(3W)]
+          /           |           \
+      q_Slice      k_Slice      v_Slice   (output(SxBxW))
+         |            |            |
+     q_Reshape    k_Reshape    v_Reshape  (output(Sx(BxN)xH), could be optional if N=1)
+         |            |            |
+    q_Transpose  k_Transpose  v_Transpose
+      (1,0,2)      (1,2,0)    (perm=1,0,2)
+         |((BxN)xSxH) |((BxN)xHxS) |
+       q_Div         /            /
+         \          /            /
+          qk_MatMul             /
+              |                /
+         qk_Softmax           /
+              | ((BxN)xSxS)  / ((BxN)xSxH)
+               \            /
+                 qkv_MatMul  (output((BxN)xSxH))
+                     |
+                 Transpose(perm=1,2,0)
+                     |
+                  Reshape  (output(SxH))
+                     |
+                   MatMul
+                     |
+                    Add
+                     |
+                  [Output](BxSxW)
+
+
+    Attributes:
+        num_heads - number of attention heads
+        qkv_hidden_sizes - hidden size of qkv respectively, [qk_hidden_size, qk_hidden_size, v_hidden_size],
+                          assume qk_hidden_size = v_hidden_size for now. TODO: support qk_hidden_size != v_hidden_size
+        scale - scale factor of q, defaults to sqrt(1/num_heads)
+    Inputs:
+        weight - merged Q, K, V weights of shape [input_hidden_size, qk_hidden_size + qk_hidden_size + v_hidden_size]
+        bias - bias of shape [qk_hidden_size + qk_hidden_size + v_hidden_size]
+
+    Graph after fusion:
+            [Input](BxSxW)
+               |
+            LayerNorm
+               |
+           Transpose
+               |
+           Attention[weight, bias]
+               |
+             MatMul
+               |
+              Add
+               |
+            [Output](BxSxW)
+
+    More details see See https://github.com/microsoft/onnxruntime/blob/v1.16.1/docs/ContribOperators.md#com.microsoft.Attention.
+*/
+class AttentionSubGraph : public Subgraph {
+ public:
+    AttentionSubGraph() {
+        int input = addNodeToMatch("");
+        int transpose = addNodeToMatch("Transpose", input); // tranpose does not make any differences to the accuracy here in this subgraph
+        att_matmul = addNodeToMatch("MatMul", transpose, addNodeToMatch(""), addNodeToMatch("")); // add is fused into matmul via BiasedMatMulSubgraph
+
+        // v_path
+        slice_v = addNodeToMatch("Slice", std::vector<int>{att_matmul, addNodeToMatch(""), addNodeToMatch(""), addNodeToMatch(""), addNodeToMatch("")});
+        int reshape_v = addNodeToMatch("Reshape", slice_v, addNodeToMatch(""));
+        int transpose_v = addNodeToMatch("Transpose", reshape_v);
+
+        // q_path
+        slice_q = addNodeToMatch("Slice", std::vector<int>{att_matmul, addNodeToMatch(""), addNodeToMatch(""), addNodeToMatch(""), addNodeToMatch("")});
+        reshape_q = addNodeToMatch("Reshape", slice_q, addNodeToMatch(""));
+        int transpose_q = addNodeToMatch("Transpose", reshape_q);
+        div_q = addNodeToMatch("Div", transpose_q, addNodeToMatch(""));
+
+        // k_path
+        slice_k = addNodeToMatch("Slice", std::vector<int>{att_matmul, addNodeToMatch(""), addNodeToMatch(""), addNodeToMatch(""), addNodeToMatch("")});
+        int reshape_k = addNodeToMatch("Reshape", slice_k, addNodeToMatch(""));
+        int transpose_k = addNodeToMatch("Transpose", reshape_k);
+
+        // qk
+        int matmul_qk = addNodeToMatch("MatMul", div_q, transpose_k);
+        int softmax_qk = addNodeToMatch("Softmax", matmul_qk);
+
+        // qkv
+        int matmul_qkv = addNodeToMatch("MatMul", softmax_qk, transpose_v);
+        int transpose_qkv = addNodeToMatch("Transpose", matmul_qkv);
+        last_reshape = addNodeToMatch("Reshape", transpose_qkv, addNodeToMatch(""));
+
+        setFusedNode("Attention", input);
+    }
+
+    virtual bool match(const Ptr<ImportGraphWrapper>& net, int nodeId,
+                       std::vector<int>& matchedNodesIds) CV_OVERRIDE {
+        if (Subgraph::match(net, nodeId, matchedNodesIds)) {
+            // get attrs - qkv_hidden_sizes
+            qkv_hidden_sizes.clear();
+            auto fill_qkv_hidden_sizes = [&] (const int slice_node_id) {
+                int slice_start = extractConstant(net, matchedNodesIds[slice_node_id], 1).at<int64_t>(0);
+                int slice_end = extractConstant(net, matchedNodesIds[slice_node_id], 2).at<int64_t>(0);
+                if (slice_end == std::numeric_limits<int>::max()) {
+                    qkv_hidden_sizes.push_back(0); // workaround for Slice with end=INT_MAX
+                } else {
+                    int64_t hidden_size = static_cast<int64_t>(slice_end - slice_start);
+                    qkv_hidden_sizes.push_back(hidden_size);
+                }
+            };
+            fill_qkv_hidden_sizes(slice_q);
+            fill_qkv_hidden_sizes(slice_k);
+            fill_qkv_hidden_sizes(slice_v); // TODO: take care of INT64_MAX
+            CV_CheckEQ(qkv_hidden_sizes.size(), static_cast<size_t>(3), "ONNXSimplifier/Attention: invalid qkv hidden sizes");
+            CV_CheckEQ(int(qkv_hidden_sizes[0]), int(qkv_hidden_sizes[1]), "ONNXSimplifier/Attention: invalid qkv hidden sizes, q_hidden_size == v_hidden_size is required");
+            // get attrs - num_heads, scale
+            num_heads = extractConstant(net, matchedNodesIds[reshape_q], 1).at<int64_t>(1);
+            scale = extractConstant(net, matchedNodesIds[div_q], 1).at<float>(0);
+            output_ndims = extractConstant(net, matchedNodesIds[last_reshape], 1).size[0];
+
+            // get names
+            weight_name = getInputName(net, matchedNodesIds[att_matmul], 1);
+            bias_name = getInputName(net, matchedNodesIds[att_matmul], 2);
+            return true;
+        }
+        return false;
+    }
+
+    virtual void finalize(const Ptr<ImportGraphWrapper>& net,
+                          const Ptr<ImportNodeWrapper>& fusedNode,
+                          std::vector<Ptr<ImportNodeWrapper> >&) CV_OVERRIDE {
+        // add attrs
+        opencv_onnx::NodeProto* node = fusedNode.dynamicCast<ONNXNodeWrapper>()->node;
+        opencv_onnx::AttributeProto* attr_num_heads = node->add_attribute();
+        attr_num_heads->set_name("num_heads");
+        attr_num_heads->set_i(num_heads);
+        opencv_onnx::AttributeProto* attr_qkv_hidden_sizes = node->add_attribute();
+        attr_qkv_hidden_sizes->set_name("qkv_hidden_sizes");
+        attr_qkv_hidden_sizes->add_ints(qkv_hidden_sizes[0]);
+        attr_qkv_hidden_sizes->add_ints(qkv_hidden_sizes[1]);
+        attr_qkv_hidden_sizes->add_ints(qkv_hidden_sizes[2]);
+        opencv_onnx::AttributeProto* attr_scale = node->add_attribute();
+        attr_scale->set_name("scale");
+        attr_scale->set_f(scale);
+
+        // add customized attrs
+        opencv_onnx::AttributeProto* attr_output_ndims = node->add_attribute();
+        attr_output_ndims->set_name("output_ndims");
+        attr_output_ndims->set_i(output_ndims);
+
+        // add inputs
+        node->add_input(weight_name);
+        node->add_input(bias_name);
+    }
+
+ private:
+    int att_matmul;
+    int slice_q, slice_k, slice_v;
+    int reshape_q, div_q, last_reshape;
+
+    std::vector<int64_t> qkv_hidden_sizes; // order: [qk_hidden_size, qk_hidden_size, v_hidden_size]
+    int64_t num_heads;
+    float scale;
+
+    int64_t output_ndims;
+
+    std::string weight_name;
+    std::string bias_name;
+};
+
+/*  Attention subgraph with single head.
+    No Reshape operator is appended after each Slice operator.
+*/
+class AttentionSingleHeadSubGraph : public Subgraph {
+ public:
+    AttentionSingleHeadSubGraph() {
+        int input = addNodeToMatch("");
+        int transpose = addNodeToMatch("Transpose", input); // tranpose does not make any differences to the accuracy here in this subgraph
+        att_matmul = addNodeToMatch("MatMul", transpose, addNodeToMatch(""), addNodeToMatch("")); // add is fused into matmul via BiasedMatMulSubgraph
+
+        // v_path
+        slice_v = addNodeToMatch("Slice", std::vector<int>{att_matmul, addNodeToMatch(""), addNodeToMatch(""), addNodeToMatch(""), addNodeToMatch("")});
+        int transpose_v = addNodeToMatch("Transpose", slice_v);
+
+        // q_path
+        slice_q = addNodeToMatch("Slice", std::vector<int>{att_matmul, addNodeToMatch(""), addNodeToMatch(""), addNodeToMatch(""), addNodeToMatch("")});
+        int transpose_q = addNodeToMatch("Transpose", slice_q);
+        div_q = addNodeToMatch("Div", transpose_q, addNodeToMatch(""));
+
+        // k_path
+        slice_k = addNodeToMatch("Slice", std::vector<int>{att_matmul, addNodeToMatch(""), addNodeToMatch(""), addNodeToMatch(""), addNodeToMatch("")});
+        int transpose_k = addNodeToMatch("Transpose", slice_k);
+
+        // qk
+        int matmul_qk = addNodeToMatch("MatMul", div_q, transpose_k);
+        int softmax_qk = addNodeToMatch("Softmax", matmul_qk);
+
+        // qkv
+        int matmul_qkv = addNodeToMatch("MatMul", softmax_qk, transpose_v);
+        int transpose_qkv = addNodeToMatch("Transpose", matmul_qkv);
+        last_reshape = addNodeToMatch("Reshape", transpose_qkv, addNodeToMatch(""));
+
+        setFusedNode("Attention", input);
+    }
+
+    virtual bool match(const Ptr<ImportGraphWrapper>& net, int nodeId,
+                       std::vector<int>& matchedNodesIds) CV_OVERRIDE {
+        if (Subgraph::match(net, nodeId, matchedNodesIds)) {
+            // get attrs - qkv_hidden_sizes
+            qkv_hidden_sizes.clear();
+            auto fill_qkv_hidden_sizes = [&] (const int slice_node_id) {
+                int slice_start = extractConstant(net, matchedNodesIds[slice_node_id], 1).at<int64_t>(0);
+                int slice_end = extractConstant(net, matchedNodesIds[slice_node_id], 2).at<int64_t>(0);
+                if (slice_end == std::numeric_limits<int>::max()) {
+                    qkv_hidden_sizes.push_back(0); // workaround for Slice with end=INT_MAX
+                } else {
+                    int64_t hidden_size = static_cast<int64_t>(slice_end - slice_start);
+                    qkv_hidden_sizes.push_back(hidden_size);
+                }
+            };
+            fill_qkv_hidden_sizes(slice_q);
+            fill_qkv_hidden_sizes(slice_k);
+            fill_qkv_hidden_sizes(slice_v);
+            CV_CheckEQ(qkv_hidden_sizes.size(), static_cast<size_t>(3), "ONNXSimplifier/Attention: invalid qkv hidden sizes");
+            CV_CheckEQ(int(qkv_hidden_sizes[0]), int(qkv_hidden_sizes[1]), "ONNXSimplifier/Attention: invalid qkv hidden sizes, q_hidden_size == v_hidden_size is required");
+            // get attrs - num_heads, scale
+            num_heads = 1;
+            scale = extractConstant(net, matchedNodesIds[div_q], 1).at<float>(0);
+            output_ndims = extractConstant(net, matchedNodesIds[last_reshape], 1).size[0];
+
+            // get names
+            weight_name = getInputName(net, matchedNodesIds[att_matmul], 1);
+            bias_name = getInputName(net, matchedNodesIds[att_matmul], 2);
+            return true;
+        }
+        return false;
+    }
+
+    virtual void finalize(const Ptr<ImportGraphWrapper>& net,
+                          const Ptr<ImportNodeWrapper>& fusedNode,
+                          std::vector<Ptr<ImportNodeWrapper> >&) CV_OVERRIDE {
+        // add attrs
+        opencv_onnx::NodeProto* node = fusedNode.dynamicCast<ONNXNodeWrapper>()->node;
+        opencv_onnx::AttributeProto* attr_num_heads = node->add_attribute();
+        attr_num_heads->set_name("num_heads");
+        attr_num_heads->set_i(num_heads);
+        opencv_onnx::AttributeProto* attr_qkv_hidden_sizes = node->add_attribute();
+        attr_qkv_hidden_sizes->set_name("qkv_hidden_sizes");
+        attr_qkv_hidden_sizes->add_ints(qkv_hidden_sizes[0]);
+        attr_qkv_hidden_sizes->add_ints(qkv_hidden_sizes[1]);
+        attr_qkv_hidden_sizes->add_ints(qkv_hidden_sizes[2]);
+        opencv_onnx::AttributeProto* attr_scale = node->add_attribute();
+        attr_scale->set_name("scale");
+        attr_scale->set_f(scale);
+
+        // add customized attrs
+        opencv_onnx::AttributeProto* attr_output_ndims = node->add_attribute();
+        attr_output_ndims->set_name("output_ndims");
+        attr_output_ndims->set_i(output_ndims);
+
+        // add inputs
+        node->add_input(weight_name);
+        node->add_input(bias_name);
+    }
+
+ protected:
+    int att_matmul;
+    int slice_q, slice_k, slice_v;
+    int div_q, last_reshape;
+
+    std::vector<int64_t> qkv_hidden_sizes; // order: [qk_hidden_size, qk_hidden_size, v_hidden_size]
+    int64_t num_heads;
+    float scale;
+
+    int64_t output_ndims;
+
+    std::string weight_name;
+    std::string bias_name;
 };
 
 /*  Fusion for Gelu.
@@ -151,54 +665,32 @@ public:
     GeluSubGraph()
     {
         int input = addNodeToMatch("");
-        int div = addNodeToMatch("Div", input, addNodeToMatch("") /* B=sqrt(2) */ );
+        div = addNodeToMatch("Div", input, addNodeToMatch("") /* B=sqrt(2) */ );
         int erf = addNodeToMatch("Erf", div);
-        int add = addNodeToMatch("Add", erf, addNodeToMatch("") /* B=1 */ );
+        add = addNodeToMatch("Add", erf, addNodeToMatch("") /* B=1 */ );
         int mul = addNodeToMatch("Mul", input, add);
-        addNodeToMatch("Mul", mul, addNodeToMatch("") /* B=0.5 */) ;
+        mul2 = addNodeToMatch("Mul", mul, addNodeToMatch("") /* B=0.5 */) ;
 
         setFusedNode("Gelu", input);
     }
 
-    static float extractConstant(const Ptr<ImportGraphWrapper>& net, int node_id, int input_id)
-    {
-        auto onnx_net = net.dynamicCast<ONNXGraphWrapper>();
-        int initializer_id = onnx_net->getInputInitializerId(node_id, input_id);
-        if (initializer_id != -1)
-        {
-            Mat const_mat = onnx_net->getMatFromInitializer(initializer_id);
-            return *const_mat.ptr<float>();
-        }
-        else
-        {
-            const Ptr<ImportNodeWrapper> node = net->getNode(node_id);
-            int constant_id = getInputNodeId(net, node, input_id);
-            Ptr<ImportNodeWrapper> constant_ptr = net->getNode(constant_id);
-            opencv_onnx::NodeProto* constant_node = constant_ptr.dynamicCast<ONNXNodeWrapper>()->node;
-            opencv_onnx::TensorProto constant_proto = constant_node->attribute(0).t();
-            Mat constant_mat = getMatFromTensor(constant_proto);
-            return *constant_mat.ptr<float>();
-        }
-    }
-
     virtual bool match(const Ptr<ImportGraphWrapper>& net, int nodeId,
-                       std::vector<int>& matchedNodesIds,
-                       std::vector<int>& targetNodesIds) CV_OVERRIDE
+                       std::vector<int>& matchedNodesIds) CV_OVERRIDE
     {
-        if (Subgraph::match(net, nodeId, matchedNodesIds, targetNodesIds))
+        if (Subgraph::match(net, nodeId, matchedNodesIds))
         {
             // Check Div[B=sqrt(2)]
-            float divisor = extractConstant(net, matchedNodesIds[0], 1);
+            float divisor = extractConstant(net, matchedNodesIds[div], 1).at<float>(0);
             if (std::fabs(divisor - M_SQRT2) >= std::numeric_limits<float>::epsilon())
                 return false;
 
             // Check Add[B=1]
-            float add_const = extractConstant(net, matchedNodesIds[2], 1);
+            float add_const = extractConstant(net, matchedNodesIds[add], 1).at<float>(0);
             if (std::fabs(add_const - 1.f) >= std::numeric_limits<float>::epsilon())
                 return false;
 
             // Check Mul[B=0.5]
-            float mul_const = extractConstant(net, matchedNodesIds[4], 1);
+            float mul_const = extractConstant(net, matchedNodesIds[mul2], 1).at<float>(0);
             if (std::fabs(mul_const - 0.5f) >= std::numeric_limits<float>::epsilon())
                 return false;
 
@@ -206,6 +698,9 @@ public:
         }
         return false;
     }
+
+private:
+    int div, add, mul2;
 };
 
 /*  Fusion for GeluApproximation.
@@ -229,61 +724,39 @@ public:
         int input = addNodeToMatch("");
         int mul0 = addNodeToMatch("Mul", input, input);
         int mul1 = addNodeToMatch("Mul", input, mul0);
-        int mul2 = addNodeToMatch("Mul", addNodeToMatch("") /* A=0.044714998453855515 */, mul1);
+        mul2 = addNodeToMatch("Mul", addNodeToMatch("") /* A=0.044714998453855515 */, mul1);
         int add0 = addNodeToMatch("Add", input, mul2);
-        int mul3 = addNodeToMatch("Mul", addNodeToMatch("") /* A=sqrt(2/pie) */, add0);
+        mul3 = addNodeToMatch("Mul", addNodeToMatch("") /* A=sqrt(2/pie) */, add0);
         int tanh = addNodeToMatch("Tanh", mul3);
-        int add1 = addNodeToMatch("Add", addNodeToMatch("") /* A=1 */, tanh);
+        add1 = addNodeToMatch("Add", addNodeToMatch("") /* A=1 */, tanh);
         int mul4 = addNodeToMatch("Mul", input, add1);
-        addNodeToMatch("Mul", addNodeToMatch("") /* A=0.5 */, mul4);
+        mul5 = addNodeToMatch("Mul", addNodeToMatch("") /* A=0.5 */, mul4);
 
         setFusedNode("GeluApproximation", input);
     }
 
-    static float extractConstant(const Ptr<ImportGraphWrapper>& net, int node_id, int input_id)
-    {
-        auto onnx_net = net.dynamicCast<ONNXGraphWrapper>();
-        int initializer_id = onnx_net->getInputInitializerId(node_id, input_id);
-        if (initializer_id != -1)
-        {
-            Mat const_mat = onnx_net->getMatFromInitializer(initializer_id);
-            return *const_mat.ptr<float>();
-        }
-        else
-        {
-            const Ptr<ImportNodeWrapper> node = net->getNode(node_id);
-            int constant_id = getInputNodeId(net, node, input_id);
-            Ptr<ImportNodeWrapper> constant_ptr = net->getNode(constant_id);
-            opencv_onnx::NodeProto* constant_node = constant_ptr.dynamicCast<ONNXNodeWrapper>()->node;
-            opencv_onnx::TensorProto constant_proto = constant_node->attribute(0).t();
-            Mat constant_mat = getMatFromTensor(constant_proto);
-            return *constant_mat.ptr<float>();
-        }
-    }
-
     virtual bool match(const Ptr<ImportGraphWrapper>& net, int nodeId,
-                       std::vector<int>& matchedNodesIds,
-                       std::vector<int>& targetNodesIds) CV_OVERRIDE
+                       std::vector<int>& matchedNodesIds) CV_OVERRIDE
     {
-        if (Subgraph::match(net, nodeId, matchedNodesIds, targetNodesIds))
+        if (Subgraph::match(net, nodeId, matchedNodesIds))
         {
             // Check Mul[A=0.044714998453855515]
-            float coef = extractConstant(net, matchedNodesIds[2], 0);
+            float coef = extractConstant(net, matchedNodesIds[mul2], 0).at<float>(0);
             if (coef - 0.044714998453855515 >= 1e-6)
                 return false;
 
             // Check Mul[A=sqrt(2/pie)]
-            float sqrt_2_pie = extractConstant(net, matchedNodesIds[4], 0);
+            float sqrt_2_pie = extractConstant(net, matchedNodesIds[mul3], 0).at<float>(0);
             if (sqrt_2_pie - 0.7978845834732056 >= 1e-6)
                 return false;
 
             // Check Add[A=1]
-            float add_const = extractConstant(net, matchedNodesIds[6], 0);
+            float add_const = extractConstant(net, matchedNodesIds[add1], 0).at<float>(0);
             if (add_const - 1.f >= 1e-6)
                 return false;
 
             // Check Mul[A=0.5]
-            float mul_const = extractConstant(net, matchedNodesIds[8], 0);
+            float mul_const = extractConstant(net, matchedNodesIds[mul5], 0).at<float>(0);
             if (mul_const - 0.5f >= 1e-6)
                 return false;
 
@@ -291,6 +764,9 @@ public:
         }
         return false;
     }
+
+private:
+    int mul2, mul3, add1, mul5;
 };
 
 /*  Fusion for LayerNormalization.
@@ -306,6 +782,10 @@ public:
         [Input] -> LayerNorm -> [Output]
                         \
                     [weight], [bias]
+
+    Note: axes of ReduceMean must be:
+          - last element is the axis of last dimension (-1 or (input_ndims - 1))
+          - a list of adjacent axes, e.g. [1, 2, 3, ..., input_ndims - 1]
 */
 class LayerNormSubGraph : public Subgraph
 {
@@ -313,93 +793,79 @@ public:
     LayerNormSubGraph() : axis(-1), epsilon(1e-5)
     {
         int input = addNodeToMatch("");
-        int mean = addNodeToMatch("ReduceMean", input);
+        mean = addNodeToMatch("ReduceMean", input);
 
         int sub = addNodeToMatch("Sub", input, mean);
 
-        int pow = addNodeToMatch("Pow", sub, addNodeToMatch(""));
-        int mean1 = addNodeToMatch("ReduceMean", pow);
-        int add = addNodeToMatch("Add", mean1, addNodeToMatch(""));
+        pow = addNodeToMatch("Pow", sub, addNodeToMatch(""));
+        mean1 = addNodeToMatch("ReduceMean", pow);
+        add = addNodeToMatch("Add", mean1, addNodeToMatch(""));
         int sqrt = addNodeToMatch("Sqrt", add);
 
         int div = addNodeToMatch("Div", sub, sqrt);
-        int mul = addNodeToMatch("Mul", div, addNodeToMatch(""));
-        addNodeToMatch("Add", mul, addNodeToMatch(""));
+        mul = addNodeToMatch("Mul", div, addNodeToMatch(""));
+        bias = addNodeToMatch("Add", mul, addNodeToMatch(""));
 
         setFusedNode("LayerNormalization", input);
     }
 
-    static float extractConstant(const Ptr<ImportGraphWrapper>& net, int node_id, int input_id)
+    static std::vector<int64_t> extractAxis(const Ptr<ImportGraphWrapper>& net, int node_id)
     {
-        auto onnx_net = net.dynamicCast<ONNXGraphWrapper>();
-        int initializer_id = onnx_net->getInputInitializerId(node_id, input_id);
-        if (initializer_id != -1) // initializer
-        {
-            Mat const_mat = onnx_net->getMatFromInitializer(initializer_id);
-            return *const_mat.ptr<float>();
-        }
-        else
-        {
-            const Ptr<ImportNodeWrapper> node = net->getNode(node_id);
-            int constant_id = getInputNodeId(net, node, input_id);
-            Ptr<ImportNodeWrapper> constant_ptr = net->getNode(constant_id);
-            opencv_onnx::NodeProto* constant_node = constant_ptr.dynamicCast<ONNXNodeWrapper>()->node;
-            opencv_onnx::TensorProto constant_proto = constant_node->attribute(0).t();
-            Mat constant_mat = getMatFromTensor(constant_proto);
-            return *constant_mat.ptr<float>();
-        }
-    }
-
-    static float extractAxis(const Ptr<ImportGraphWrapper>& net, int node_id)
-    {
+        // TODO: consider ReduceMean-18 which has axes as one of the inputs instead of attributes
         Ptr<ImportNodeWrapper> mean_ptr = net->getNode(node_id);
         opencv_onnx::NodeProto* mean_node = mean_ptr.dynamicCast<ONNXNodeWrapper>()->node;
-        int axis_ = -1;
+        std::vector<int64_t> axes;
         for (int i = 0; i < mean_node->attribute_size(); i++)
         {
             opencv_onnx::AttributeProto attr = mean_node->attribute(i);
             if (attr.name() != "axes")
                 continue;
-            axis_ = static_cast<int>(attr.ints(0));
+            for (int j = 0; j < attr.ints_size(); j++) {
+                axes.push_back(attr.ints(j));
+            }
         }
-        return axis_;
-    }
-
-    static std::string getInputName(const Ptr<ImportGraphWrapper>& net, int node_id, int input_id)
-    {
-        auto onnx_net = net.dynamicCast<ONNXGraphWrapper>();
-        int initializer_id = onnx_net->getInputInitializerId(node_id, input_id);
-        if (initializer_id != -1)
-        {
-            return onnx_net->getNameOfInitializer(initializer_id);
-        }
-        else
-        {
-            const auto node = net->getNode(node_id);
-            return node->getInputName(input_id);
-        }
+        return axes;
     }
 
     virtual bool match(const Ptr<ImportGraphWrapper>& net, int nodeId,
-                       std::vector<int>& matchedNodesIds,
-                       std::vector<int>& targetNodesIds) CV_OVERRIDE
+                       std::vector<int>& matchedNodesIds) CV_OVERRIDE
     {
-        if (Subgraph::match(net, nodeId, matchedNodesIds, targetNodesIds))
+        if (Subgraph::match(net, nodeId, matchedNodesIds))
         {
-            float pow_exp = extractConstant(net, matchedNodesIds[2], 1);
+            float pow_exp = extractConstant(net, matchedNodesIds[pow], 1).at<float>(0);
             if (pow_exp - 2 > 1e-5) // not pow(2)
                 return false;
 
-            int axis_mean1 = extractAxis(net, matchedNodesIds[0]);
-            int axis_mean2 = extractAxis(net, matchedNodesIds[3]);
-            if (axis_mean1 != axis_mean2)
+            std::vector<int64_t> axes = extractAxis(net, matchedNodesIds[mean]);
+            // check whether it is -1 or last_axis or [axis, ..., last_axis]
+            int64_t input_ndims = static_cast<int64_t>(net.dynamicCast<ONNXGraphWrapper>()->getTensorShapeSize(matchedNodesIds[mean], 0));
+            if (input_ndims == -1) {
+                return false; // input shape unknown
+            }
+            // assume that axes are sorted in ascending order, e.g. [0, 1, 2, 3] or [-3, -2, -1]
+            if (axes.back() != -1 && axes.back() != (input_ndims - 1)) {
                 return false;
-            axis = axis_mean1;
+            }
+            for (size_t i = 0; i < axes.size() - 1; i++) {
+                if (axes[i] - axes[i + 1] != -1) {
+                    return false;
+                }
+            }
 
-            epsilon = extractConstant(net, matchedNodesIds[4], 1);
+            std::vector<int64_t> axes1 = extractAxis(net, matchedNodesIds[mean1]);
+            if (axes.size() != axes1.size())
+                return false;
+            for (size_t i = 0; i < axes.size(); i++) {
+                if (((axes[i] + input_ndims) % input_ndims) != ((axes1[i] + input_ndims) % input_ndims)) {
+                    return false;
+                }
+            }
+            axis = axes[0];
 
-            weight_name = getInputName(net, matchedNodesIds[7], 1);
-            bias_name = getInputName(net, matchedNodesIds[8], 1);
+            epsilon = extractConstant(net, matchedNodesIds[add], 1).at<float>(0);
+
+            weight_name = getInputName(net, matchedNodesIds[mul], 1);
+            bias_name = getInputName(net, matchedNodesIds[bias], 1);
 
             return true;
         }
@@ -429,6 +895,7 @@ protected:
     float epsilon;
     std::string weight_name;
     std::string bias_name;
+    int pow, mean, mean1, add, mul, bias;
 };
 
 class SoftMaxSubgraphBase : public Subgraph
@@ -437,10 +904,9 @@ public:
     SoftMaxSubgraphBase() : axis(1), id(-1) {}
 
     virtual bool match(const Ptr<ImportGraphWrapper>& net, int nodeId,
-                       std::vector<int>& matchedNodesIds,
-                       std::vector<int>& targetNodesIds) CV_OVERRIDE
+                       std::vector<int>& matchedNodesIds) CV_OVERRIDE
     {
-        if (Subgraph::match(net, nodeId, matchedNodesIds, targetNodesIds))
+        if (Subgraph::match(net, nodeId, matchedNodesIds))
         {
             CV_Assert(id >= 0 && id < matchedNodesIds.size());
             Ptr<ImportNodeWrapper> sum = net->getNode(matchedNodesIds[id]);
@@ -485,7 +951,7 @@ public:
         int inpExp = addNodeToMatch("Exp", input);
 
         int sum = addNodeToMatch("ReduceSum", inpExp);
-        id = 1;
+        id = sum;
 
         addNodeToMatch("Div", inpExp, sum);
         setFusedNode("Softmax", input);
@@ -498,7 +964,7 @@ public:
         int input = addNodeToMatch("");
 
         int reducemax = addNodeToMatch("ReduceMax", input);
-        id = 0;
+        id = reducemax;
 
         int sub = addNodeToMatch("Sub", input, reducemax);
         int exp = addNodeToMatch("Exp", sub);
@@ -516,7 +982,7 @@ public:
         int input = addNodeToMatch("");
 
         int reducemax = addNodeToMatch("ReduceMax", input);
-        id = 0;
+        id = reducemax;
 
         int sub_1 = addNodeToMatch("Sub", input, reducemax);
         int exp = addNodeToMatch("Exp", sub_1);
@@ -533,18 +999,17 @@ public:
     HardSwishSubgraph()
     {
         int input = addNodeToMatch("");
-        int hardSigmoid = addNodeToMatch("HardSigmoid", input);
-        addNodeToMatch("Mul", input, hardSigmoid);
+        hardSigmoidId = addNodeToMatch("HardSigmoid", input);
+        addNodeToMatch("Mul", input, hardSigmoidId);
         setFusedNode("HardSwish", input);
     }
 
     virtual bool match(const Ptr<ImportGraphWrapper>& net, int nodeId,
-                       std::vector<int>& matchedNodesIds,
-                       std::vector<int>& targetNodesIds) CV_OVERRIDE
+                       std::vector<int>& matchedNodesIds) CV_OVERRIDE
     {
-        if (Subgraph::match(net, nodeId, matchedNodesIds, targetNodesIds))
+        if (Subgraph::match(net, nodeId, matchedNodesIds))
         {
-            Ptr<ImportNodeWrapper> hardSigmoid = net->getNode(matchedNodesIds[0]);
+            Ptr<ImportNodeWrapper> hardSigmoid = net->getNode(matchedNodesIds[hardSigmoidId]);
             opencv_onnx::NodeProto* node = hardSigmoid.dynamicCast<ONNXNodeWrapper>()->node;
 
             uint8_t matched = 0;
@@ -561,6 +1026,9 @@ public:
         }
         return false;
     }
+
+private:
+    int hardSigmoidId;
 };
 
 class CeluSubgraph : public Subgraph
@@ -569,9 +1037,9 @@ public:
     CeluSubgraph() : alpha(1.f)
     {
         int input = addNodeToMatch("");
-        int div = addNodeToMatch("Div", input, addNodeToMatch(""));
-        int elu = addNodeToMatch("Elu", div);
-        addNodeToMatch("Mul", addNodeToMatch(""), elu);
+        div = addNodeToMatch("Div", input, addNodeToMatch(""));
+        elu = addNodeToMatch("Elu", div);
+        mul = addNodeToMatch("Mul", addNodeToMatch(""), elu);
         setFusedNode("Celu", input);
     }
 
@@ -587,16 +1055,15 @@ public:
     }
 
     virtual bool match(const Ptr<ImportGraphWrapper>& net, int nodeId,
-                       std::vector<int>& matchedNodesIds,
-                       std::vector<int>& targetNodesIds) CV_OVERRIDE
+                       std::vector<int>& matchedNodesIds) CV_OVERRIDE
     {
-        if (Subgraph::match(net, nodeId, matchedNodesIds, targetNodesIds))
+        if (Subgraph::match(net, nodeId, matchedNodesIds))
         {
-            float alpha_div = extractAlpha(net, matchedNodesIds[0], 1);
-            float alpha_mul = extractAlpha(net, matchedNodesIds[2], 0);
+            float alpha_div = extractAlpha(net, matchedNodesIds[div], 1);
+            float alpha_mul = extractAlpha(net, matchedNodesIds[mul], 0);
             float alpha_elu = 1.f;
 
-            Ptr<ImportNodeWrapper> elu_ptr = net->getNode(matchedNodesIds[1]);
+            Ptr<ImportNodeWrapper> elu_ptr = net->getNode(matchedNodesIds[elu]);
             opencv_onnx::NodeProto* elu_node = elu_ptr.dynamicCast<ONNXNodeWrapper>()->node;
 
             for (int i = 0; i < elu_node->attribute_size(); i++)
@@ -625,18 +1092,18 @@ public:
 
 protected:
     float alpha;
+    int div, mul, elu;
 };
 
 class NormalizeSubgraphBase : public Subgraph
 {
 public:
-    NormalizeSubgraphBase(int _normNodeOrder = 0) : axis(1), normNodeOrder(_normNodeOrder) {}
+    NormalizeSubgraphBase(int _normNodeOrder = 1) : axis(1), normNodeOrder(_normNodeOrder) {}
 
     virtual bool match(const Ptr<ImportGraphWrapper>& net, int nodeId,
-                       std::vector<int>& matchedNodesIds,
-                       std::vector<int>& targetNodesIds) CV_OVERRIDE
+                       std::vector<int>& matchedNodesIds) CV_OVERRIDE
     {
-        if (Subgraph::match(net, nodeId, matchedNodesIds, targetNodesIds))
+        if (Subgraph::match(net, nodeId, matchedNodesIds))
         {
             Ptr<ImportNodeWrapper> norm = net->getNode(matchedNodesIds[normNodeOrder]);
             opencv_onnx::NodeProto* node = norm.dynamicCast<ONNXNodeWrapper>()->node;
@@ -725,7 +1192,7 @@ public:
 class NormalizeSubgraph3 : public NormalizeSubgraphBase
 {
 public:
-    NormalizeSubgraph3() : NormalizeSubgraphBase(1)
+    NormalizeSubgraph3() : NormalizeSubgraphBase(3)
     {
         int input = addNodeToMatch("");
         int power = addNodeToMatch("Constant");
@@ -743,7 +1210,7 @@ public:
 class NormalizeSubgraph4 : public NormalizeSubgraphBase
 {
 public:
-    NormalizeSubgraph4() : NormalizeSubgraphBase(1)
+    NormalizeSubgraph4() : NormalizeSubgraphBase(2)
     {
         int input = addNodeToMatch("");
         int mul = addNodeToMatch("Mul", input, input);
@@ -760,7 +1227,7 @@ public:
 class NormalizeSubgraph5 : public NormalizeSubgraphBase
 {
 public:
-    NormalizeSubgraph5() : NormalizeSubgraphBase(1)
+    NormalizeSubgraph5() : NormalizeSubgraphBase(2)
     {
         int input = addNodeToMatch("");
         int mul = addNodeToMatch("Mul", input, input);
@@ -781,25 +1248,24 @@ public:
     {
         int input = addNodeToMatch("");
         int index = addNodeToMatch("Constant");
-        int gather = addNodeToMatch("Gather", input, index);
-        addNodeToMatch("Cast", gather);
+        gather = addNodeToMatch("Gather", input, index);
+        cast = addNodeToMatch("Cast", gather);
         setFusedNode("Gather", input, index);
     }
 
     virtual bool match(const Ptr<ImportGraphWrapper>& net, int nodeId,
-                       std::vector<int>& matchedNodesIds,
-                       std::vector<int>& targetNodesIds) CV_OVERRIDE
+                       std::vector<int>& matchedNodesIds) CV_OVERRIDE
     {
-        bool retVal = Subgraph::match(net, nodeId, matchedNodesIds, targetNodesIds);
+        bool retVal = Subgraph::match(net, nodeId, matchedNodesIds);
         size_t matchedNodesNum = matchedNodesIds.size();
         // Now we check if merging can be made for these Gather and Cast nodes
         if (!retVal || matchedNodesNum < 2)
             return retVal;
         else {
-            int nodeToMatch = matchedNodesIds[matchedNodesNum - 1];
+            int nodeToMatch = matchedNodesIds[cast];
             const Ptr<ImportNodeWrapper> node = net->getNode(nodeToMatch);
             if (node->getType() == "Cast") {
-                int inpNodeId = matchedNodesIds[matchedNodesNum - 2];
+                int inpNodeId = matchedNodesIds[gather];
                 const Ptr<ImportNodeWrapper> inpNode = net->getNode(inpNodeId);
                 if (inpNode->getType() == "Gather") {
                     int numNodes = net->getNumNodes();
@@ -819,6 +1285,9 @@ public:
         }
         return retVal;
     }
+
+private:
+    int cast, gather;
 };
 
 /*  Constant folding shape for Expand.
@@ -838,12 +1307,12 @@ public:
     {
         int input = addNodeToMatch("");
         int values = addNodeToMatch("");
-        int init = addNodeToMatch("ConstantOfShape", values);
+        init = addNodeToMatch("ConstantOfShape", values);
         int coeff = addNodeToMatch("Constant");
-        int mul = addNodeToMatch("Mul", init, coeff);
+        mul = addNodeToMatch("Mul", init, coeff);
         int shape = addNodeToMatch("Constant");
-        int condition = addNodeToMatch("Equal", shape, mul);
-        int where = addNodeToMatch("Where", condition, init, addNodeToMatch("Constant"));
+        condition = addNodeToMatch("Equal", shape, mul);
+        where = addNodeToMatch("Where", condition, init, addNodeToMatch("Constant"));
         addNodeToMatch("Expand", input, where);
         setFusedNode("Expand", input, shape);
     }
@@ -862,9 +1331,12 @@ public:
             }
             Mat mat_value = getMatFromTensor(attr.t());
             switch (mat_value.type()) {
-                case CV_32S: {
+                case CV_32S:
                     val = static_cast<int64_t>(mat_value.at<int>());
-                } break;
+                    break;
+                case CV_64S:
+                    val = mat_value.at<int64_t>();
+                    break;
                 default: return 0;
             }
             return 1;
@@ -872,53 +1344,28 @@ public:
         return 0;
     }
 
-    static std::vector<int64_t> extractConstant(const Ptr<ImportGraphWrapper>& net, int node_id, int input_id)
-    {
-        auto onnx_net = net.dynamicCast<ONNXGraphWrapper>();
-        int initializer_id = onnx_net->getInputInitializerId(node_id, input_id);
-        Mat mat_constant;
-        if (initializer_id != -1) // initializer
-        {
-            mat_constant = onnx_net->getMatFromInitializer(initializer_id);
-        }
-        else
-        {
-            const Ptr<ImportNodeWrapper> node = net->getNode(node_id);
-            int constant_id = getInputNodeId(net, node, input_id);
-            Ptr<ImportNodeWrapper> constant_ptr = net->getNode(constant_id);
-            opencv_onnx::NodeProto* constant_node = constant_ptr.dynamicCast<ONNXNodeWrapper>()->node;
-            opencv_onnx::TensorProto constant_proto = constant_node->attribute(0).t();
-            mat_constant = getMatFromTensor(constant_proto);
-        }
-
-        std::vector<int64_t> retvals{mat_constant.begin<int>(), mat_constant.end<int>()};
-        return retvals;
-    }
-
     virtual bool match(const Ptr<ImportGraphWrapper>& net, int nodeId,
-                       std::vector<int>& matchedNodesIds,
-                       std::vector<int>& targetNodesIds) CV_OVERRIDE {
-        if (Subgraph::match(net, nodeId, matchedNodesIds, targetNodesIds)) {
+                       std::vector<int>& matchedNodesIds) CV_OVERRIDE {
+        if (Subgraph::match(net, nodeId, matchedNodesIds)) {
             int64_t value_ConstantOfShape;
-            if (!extractValue(net, matchedNodesIds[0], value_ConstantOfShape)) {
+            if (!extractValue(net, matchedNodesIds[init], value_ConstantOfShape)) {
                 return false;
             }
-            std::vector<int64_t> input_ConstantOfShape = extractConstant(net, matchedNodesIds[0], 0);
+            std::vector<int> input_ConstantOfShape = extractConstant(net, matchedNodesIds[init], 0);
             if (input_ConstantOfShape.size() != static_cast<size_t>(1)) {
                 return false;
             }
-
-            auto B_Mul = extractConstant(net, matchedNodesIds[1], 1);
+            std::vector<int> B_Mul = extractConstant(net, matchedNodesIds[mul], 1);
             if (B_Mul.size() != static_cast<size_t>(1)) {
                 return false;
             }
 
-            auto A_Equal = extractConstant(net, matchedNodesIds[2], 0);
+            std::vector<int> A_Equal = extractConstant(net, matchedNodesIds[condition], 0);
             if (A_Equal.size() != static_cast<size_t>(input_ConstantOfShape[0])) {
                 return false;
             }
 
-            auto Y_Where = extractConstant(net, matchedNodesIds[3], 2);
+            std::vector<int> Y_Where = extractConstant(net, matchedNodesIds[where], 2);
             if (Y_Where.size() != A_Equal.size()) {
                 return false;
             }
@@ -969,6 +1416,9 @@ public:
 
 protected:
     std::vector<int64_t> shape;
+
+private:
+    int init, mul, condition, where;
 };
 
 class MishSubgraph : public Subgraph
@@ -979,7 +1429,7 @@ public:
         int input = addNodeToMatch("");
         int softplus = addNodeToMatch("Softplus", input);
         int tanh = addNodeToMatch("Tanh", softplus);
-        addNodeToMatch("Mul", input, tanh);
+        addNodeToMatch("Mul", tanh, input);
         setFusedNode("Mish", input);
     }
 };
@@ -994,20 +1444,6 @@ public:
         int exp = addNodeToMatch("Exp", input);
         int addVal = addNodeToMatch("");
         int add = addNodeToMatch("Add", addVal, exp);
-        addNodeToMatch("Log", add);
-        setFusedNode("Softplus", input);
-    }
-};
-
-class SoftplusSubgraph2: public Subgraph
-{
-public:
-    SoftplusSubgraph2()
-    {
-        int input = addNodeToMatch("");
-        int exp = addNodeToMatch("Exp", input);
-        int addVal = addNodeToMatch("");
-        int add = addNodeToMatch("Add", exp, addVal);
         addNodeToMatch("Log", add);
         setFusedNode("Softplus", input);
     }
@@ -1110,7 +1546,11 @@ public:
     ResizeSubgraph1() : ExtractScalesSubgraph()
     {
         int shape = addNodeToMatch("Shape", input);
-        int slice = addNodeToMatch("Slice", shape, addNodeToMatch("Constant"), addNodeToMatch("Constant"), addNodeToMatch("Constant"));
+        int slice = addNodeToMatch("Slice", {shape,
+                                             addNodeToMatch(""),
+                                             addNodeToMatch(""),
+                                             addNodeToMatch(""),
+                                             addNodeToMatch("")});
 
         int castConcat = addNodeToMatch("Cast", concatId);
         int concat = addNodeToMatch("Concat", slice, castConcat);
@@ -1135,6 +1575,37 @@ public:
         setFusedNode("Upsample", input, scaleWNode, scaleHNode);
     }
 };
+
+class ResizeSubgraph3 : public Subgraph
+{
+public:
+    ResizeSubgraph3() : Subgraph()
+    {
+        int shapeSrc = addNodeToMatch("");
+        int input = addNodeToMatch("");
+
+        int shape_h = addNodeToMatch("Shape", shapeSrc);
+        int shape_w = addNodeToMatch("Shape", shapeSrc);
+        int gather_h = addNodeToMatch("Gather", shape_h, addNodeToMatch("Constant"));
+        int gather_w = addNodeToMatch("Gather", shape_w, addNodeToMatch("Constant"));
+        int unsqueeze_h = addNodeToMatch("Unsqueeze", gather_h);
+        int unsqueeze_w = addNodeToMatch("Unsqueeze", gather_w);
+        int concat1 = addNodeToMatch("Concat", unsqueeze_h, unsqueeze_w);
+        int cast = addNodeToMatch("Cast", concat1);
+
+        int shape2 = addNodeToMatch("Shape", input);
+        int slice = addNodeToMatch("Slice", {shape2,
+                                             addNodeToMatch(""),
+                                             addNodeToMatch(""),
+                                             addNodeToMatch(""),
+                                             addNodeToMatch("")});
+        int concat2 = addNodeToMatch("Concat", slice, cast);
+        addNodeToMatch("Resize", input, addNodeToMatch("Constant"), addNodeToMatch("Constant"), concat2);
+
+        setFusedNode("Upsample", input, shapeSrc);
+    }
+};
+
 
 class BatchNormalizationSubgraphBase : public Subgraph
 {
@@ -1199,6 +1670,9 @@ public:
 void simplifySubgraphs(opencv_onnx::GraphProto& net)
 {
     std::vector<Ptr<Subgraph> > subgraphs;
+    subgraphs.push_back(makePtr<BiasedMatmulSubgraph>());
+    subgraphs.push_back(makePtr<AdjustSliceAllOptionalInputsSubgraph>(3));
+    subgraphs.push_back(makePtr<AdjustSliceAllOptionalInputsSubgraph>(4));
     subgraphs.push_back(makePtr<GeluSubGraph>());
     subgraphs.push_back(makePtr<GeluApproximationSubGraph>());
     subgraphs.push_back(makePtr<LayerNormSubGraph>());
@@ -1207,6 +1681,7 @@ void simplifySubgraphs(opencv_onnx::GraphProto& net)
     subgraphs.push_back(makePtr<UpsampleSubgraph>());
     subgraphs.push_back(makePtr<ResizeSubgraph1>());
     subgraphs.push_back(makePtr<ResizeSubgraph2>());
+    subgraphs.push_back(makePtr<ResizeSubgraph3>());
     subgraphs.push_back(makePtr<SoftMaxSubgraph>());
     subgraphs.push_back(makePtr<SoftMaxSubgraph2>());
     subgraphs.push_back(makePtr<LogSoftMaxSubgraph>());
@@ -1220,22 +1695,79 @@ void simplifySubgraphs(opencv_onnx::GraphProto& net)
     subgraphs.push_back(makePtr<BatchNormalizationSubgraph2>());
     subgraphs.push_back(makePtr<ExpandSubgraph>());
     subgraphs.push_back(makePtr<SoftplusSubgraph>());
-    subgraphs.push_back(makePtr<SoftplusSubgraph2>());
     subgraphs.push_back(makePtr<MishSubgraph>());
     subgraphs.push_back(makePtr<NormalizeSubgraph4>());
     subgraphs.push_back(makePtr<NormalizeSubgraph5>());
+    if (getParam_DNN_BACKEND_DEFAULT() == DNN_BACKEND_OPENCV) {
+        subgraphs.push_back(makePtr<AttentionSubGraph>());
+        subgraphs.push_back(makePtr<AttentionSingleHeadSubGraph>());
+    }
 
     simplifySubgraphs(Ptr<ImportGraphWrapper>(new ONNXGraphWrapper(net)), subgraphs);
 }
 
-Mat getMatFromTensor(const opencv_onnx::TensorProto& tensor_proto)
+
+
+static char* getTensorRAWData(const opencv_onnx::TensorProto& tensor_proto,
+                              std::vector<int64_t>& tensor_data, const std::string& base_path = "")
+{
+    if (tensor_proto.has_data_location() && tensor_proto.data_location() == opencv_onnx::TensorProto::EXTERNAL) {
+    #if OPENCV_HAVE_FILESYSTEM_SUPPORT
+        CV_Assert(tensor_proto.has_data_location() && tensor_proto.data_location() == opencv_onnx::TensorProto::EXTERNAL);
+        auto it_begin = tensor_proto.external_data().begin();
+        auto it_end = tensor_proto.external_data().end();
+        // file path
+        auto it = std::find_if(it_begin, it_end,[](const auto& entry) { return entry.key() == "location"; });
+        CV_CheckTrue(it != it_end, "External tensor data location is not specified");
+
+
+        std::string location_path = it->value();
+        std::string full_path = base_path.empty() ? location_path : utils::fs::join(base_path, location_path);
+
+        std::ifstream file(full_path, std::ios::binary | std::ios::ate);
+        CV_CheckTrue(file.is_open(), "Failed to open external tensor data file");
+
+        size_t size = file.tellg();
+        file.seekg(0, std::ios::beg);
+        tensor_data.resize(divUp((size_t)size, sizeof(int64_t)));
+
+        file.read((char*)tensor_data.data(), size);
+        return (char*)tensor_data.data();
+    #else
+        CV_Error(Error::StsNotImplemented, "External tensor data is not supported without filesystem support");
+    #endif
+    }
+    else if (!tensor_proto.raw_data().empty()) {
+        char* ptr = (char*)tensor_proto.raw_data().c_str();
+        if (!isAligned<sizeof(int64_t)>(ptr))
+        {
+            size_t size = tensor_proto.raw_data().size();
+            tensor_data.resize(divUp(size, sizeof(int64_t)));
+            memcpy(tensor_data.data(), ptr, size);
+            ptr = (char*)tensor_data.data();
+        }
+        return ptr;
+    }
+    else
+    {
+        return nullptr;
+    }
+}
+
+Mat getMatFromTensor(const opencv_onnx::TensorProto& tensor_proto, bool uint8ToInt8, const std::string base_path)
 {
     if (tensor_proto.raw_data().empty() && tensor_proto.float_data().empty() &&
         tensor_proto.double_data().empty() && tensor_proto.int64_data().empty() &&
-        tensor_proto.int32_data().empty())
+        tensor_proto.int32_data().empty() &&
+        (!tensor_proto.has_data_location() || tensor_proto.data_location() != opencv_onnx::TensorProto::EXTERNAL)
+    )
         return Mat();
 
-    opencv_onnx::TensorProto_DataType datatype = tensor_proto.data_type();
+    // read binary data, should be just empty in case it is set in <DTYPE>_data field
+    std::vector<int64_t> external_tensor_data;
+    char* rawdata = getTensorRAWData(tensor_proto, external_tensor_data, base_path);
+
+    int datatype = tensor_proto.data_type();
     Mat blob;
     std::vector<int> sizes;
     for (int i = 0; i < tensor_proto.dims_size(); i++) {
@@ -1243,15 +1775,13 @@ Mat getMatFromTensor(const opencv_onnx::TensorProto& tensor_proto)
     }
     if (sizes.empty())
         sizes.assign(1, 1);
-    if (datatype == opencv_onnx::TensorProto_DataType_FLOAT) {
 
+    if (datatype == opencv_onnx::TensorProto_DataType_FLOAT) {
         if (!tensor_proto.float_data().empty()) {
-            const ::google::protobuf::RepeatedField<float> field = tensor_proto.float_data();
-            Mat(sizes, CV_32FC1, (void*)field.data()).copyTo(blob);
+            Mat(sizes, CV_32FC1, (void*)tensor_proto.float_data().data()).copyTo(blob);
         }
         else {
-            char* val = const_cast<char*>(tensor_proto.raw_data().c_str());
-            Mat(sizes, CV_32FC1, val).copyTo(blob);
+            Mat(sizes, CV_32FC1, rawdata).copyTo(blob);
         }
     }
     else if (datatype == opencv_onnx::TensorProto_DataType_FLOAT16)
@@ -1263,126 +1793,155 @@ Mat getMatFromTensor(const opencv_onnx::TensorProto& tensor_proto)
         // Link: https://github.com/onnx/onnx/issues/4460#issuecomment-1224373746
         if (!tensor_proto.int32_data().empty())
         {
-            int offset = 0;
-#ifdef WORDS_BIGENDIAN
-            offset = 1;
-#endif
-            const ::google::protobuf::RepeatedField<int32_t> field = tensor_proto.int32_data();
-
-            AutoBuffer<float16_t, 16> aligned_val;
             size_t sz = tensor_proto.int32_data().size();
-            aligned_val.allocate(sz);
-            float16_t* bufPtr = aligned_val.data();
-
-            float16_t *fp16Ptr = (float16_t *)field.data();
-            for (int i = 0; i < sz; i++)
+            std::vector<int16_t> halfvec(sz);
+            const int32_t* intdata = (const int32_t*)tensor_proto.int32_data().data();
+            for (size_t i = 0; i < sz; i++)
             {
-                bufPtr[i] = fp16Ptr[i*2 + offset];
+                union
+                {
+                    int16_t h;
+                    int32_t i;
+                } u;
+                u.i = intdata[i];
+                halfvec[i] = u.h;
             }
-            Mat(sizes, CV_16FC1, bufPtr).convertTo(blob, CV_32FC1);
+            Mat(sizes, CV_16FC1, halfvec.data()).convertTo(blob, CV_32FC1);
         }
         else
         {
-            char* val = const_cast<char*>(tensor_proto.raw_data().c_str());
-#if CV_STRONG_ALIGNMENT
-            // Aligned pointer is required.
-            AutoBuffer<float16_t, 16> aligned_val;
-            if (!isAligned<sizeof(float16_t)>(val))
+            Mat(sizes, CV_16FC1, rawdata).convertTo(blob, CV_32FC1);
+        }
+    }
+    else if (datatype == opencv_onnx::TensorProto_DataType_BFLOAT16)
+    {
+        if (!tensor_proto.raw_data().empty())
+        {
+            blob.create((int)sizes.size(), sizes.data(), CV_16BFC1);
+            size_t bytes = (size_t)blob.total() * blob.elemSize();
+            memcpy(blob.data, rawdata, bytes);
+        }
+        else if (!tensor_proto.int32_data().empty())
+        {
+            const auto& v = tensor_proto.int32_data();
+            blob.create((int)sizes.size(), sizes.data(), CV_16BFC1);
+            uint16_t* dst = reinterpret_cast<uint16_t*>(blob.data);
+            for (size_t i = 0; i < v.size(); ++i)
             {
-                size_t sz = tensor_proto.raw_data().size();
-                aligned_val.allocate(divUp(sz, sizeof(float16_t)));
-                memcpy(aligned_val.data(), val, sz);
-                val = (char*)aligned_val.data();
+                dst[i] = static_cast<uint16_t>(v[i] & 0xFFFF);
             }
-#endif
-            Mat(sizes, CV_16FC1, val).convertTo(blob, CV_32FC1);
+        }
+        else
+        {
+            CV_Error(Error::StsNotImplemented, "BFLOAT16 tensor has no raw_data");
         }
     }
     else if (datatype == opencv_onnx::TensorProto_DataType_DOUBLE)
     {
-        const ::google::protobuf::RepeatedField<double> field = tensor_proto.double_data();
-        char* val = nullptr;
-        if (!field.empty())
-            val = (char *)field.data();
+        if (!tensor_proto.double_data().empty())
+            Mat(sizes, CV_64FC1, (void*)tensor_proto.double_data().data()).convertTo(blob, CV_32FC1);
         else
-            val = const_cast<char*>(tensor_proto.raw_data().c_str()); // sometime, the double will be stored at raw_data.
-
-#if CV_STRONG_ALIGNMENT
-        // Aligned pointer is required.
-        AutoBuffer<double, 16> aligned_val;
-        if (!isAligned<sizeof(double)>(val))
-        {
-            size_t sz = tensor_proto.raw_data().size();
-            aligned_val.allocate(divUp(sz, sizeof(double)));
-            memcpy(aligned_val.data(), val, sz);
-            val = (char*)aligned_val.data();
-        }
-#endif
-        Mat(sizes, CV_64FC1, val).convertTo(blob, CV_32FC1);
+            Mat(sizes, CV_64FC1, rawdata).copyTo(blob);
     }
     else if (datatype == opencv_onnx::TensorProto_DataType_INT32)
     {
         if (!tensor_proto.int32_data().empty())
-        {
-            const ::google::protobuf::RepeatedField<int32_t> field = tensor_proto.int32_data();
-            Mat(sizes, CV_32SC1, (void*)field.data()).copyTo(blob);
-        }
+            Mat(sizes, CV_32SC1, (void*)tensor_proto.int32_data().data()).copyTo(blob);
         else
-        {
-            char* val = const_cast<char*>(tensor_proto.raw_data().c_str());
-            Mat(sizes, CV_32SC1, val).copyTo(blob);
-        }
+            Mat(sizes, CV_32SC1, rawdata).copyTo(blob);
     }
     else if (datatype == opencv_onnx::TensorProto_DataType_INT64)
     {
-        blob.create(sizes, CV_32SC1);
-        int32_t* dst = reinterpret_cast<int32_t*>(blob.data);
-
-        if (!tensor_proto.int64_data().empty()) {
-            ::google::protobuf::RepeatedField< ::google::protobuf::int64> src = tensor_proto.int64_data();
-            convertInt64ToInt32(src, dst, blob.total());
-        }
+        if (!tensor_proto.int64_data().empty())
+            Mat(sizes, CV_64SC1, (void*)tensor_proto.int64_data().data()).copyTo(blob);
         else
-        {
-            const char* val = tensor_proto.raw_data().c_str();
-#if CV_STRONG_ALIGNMENT
-            // Aligned pointer is required: https://github.com/opencv/opencv/issues/16373
-            // this doesn't work: typedef int64_t CV_DECL_ALIGNED(1) unaligned_int64_t;
-            AutoBuffer<int64_t, 16> aligned_val;
-            if (!isAligned<sizeof(int64_t)>(val))
-            {
-                size_t sz = tensor_proto.raw_data().size();
-                aligned_val.allocate(divUp(sz, sizeof(int64_t)));
-                memcpy(aligned_val.data(), val, sz);
-                val = (const char*)aligned_val.data();
-            }
-#endif
-            const int64_t* src = reinterpret_cast<const int64_t*>(val);
-            convertInt64ToInt32(src, dst, blob.total());
-        }
+            Mat(sizes, CV_64SC1, rawdata).copyTo(blob);
     }
-    else if (datatype == opencv_onnx::TensorProto_DataType_INT8 ||
-             datatype == opencv_onnx::TensorProto_DataType_UINT8)
+    else if (datatype == opencv_onnx::TensorProto_DataType_INT8)
+    {
+        if (!tensor_proto.int32_data().empty())
+            Mat(sizes, CV_32SC1, (void*)tensor_proto.int32_data().data()).convertTo(blob, CV_8S);
+        else
+            Mat(sizes, CV_8S, rawdata).copyTo(blob);
+    }
+    else if (datatype == opencv_onnx::TensorProto_DataType_UINT8)
     {
         // TODO : Add support for uint8 weights and acitvations. For now, converting uint8 tensors to int8.
-        int offset = datatype == opencv_onnx::TensorProto_DataType_INT8 ? 0 : -128;
-        int depth = datatype == opencv_onnx::TensorProto_DataType_INT8 ? CV_8S : CV_8U;
 
         if (!tensor_proto.int32_data().empty())
         {
-            const ::google::protobuf::RepeatedField<int32_t> field = tensor_proto.int32_data();
-            Mat(sizes, CV_32SC1, (void*)field.data()).convertTo(blob, CV_8S, 1.0, offset);
+            int32_t* intdata = (int32_t*)tensor_proto.int32_data().data();
+            if (uint8ToInt8)
+                Mat(sizes, CV_32SC1, intdata).convertTo(blob, CV_8S, 1, -128); // handle as ONNX quantized weight
+            else
+                Mat(sizes, CV_32SC1, intdata).convertTo(blob, CV_8U);
         }
         else
         {
-            char* val = const_cast<char*>(tensor_proto.raw_data().c_str());
-            Mat(sizes, depth, val).convertTo(blob, CV_8S, 1.0, offset);
+            if (uint8ToInt8)
+                Mat(sizes, CV_8U, rawdata).convertTo(blob, CV_8S, 1, -128);  // handle as ONNX quantized weight
+            else
+                Mat(sizes, CV_8U, rawdata).copyTo(blob);
         }
+    }
+    else if (datatype == opencv_onnx::TensorProto_DataType_UINT16)
+    {
+        if (!tensor_proto.int32_data().empty())
+            Mat(sizes, CV_32SC1, (void*)tensor_proto.int32_data().data()).convertTo(blob, CV_16UC1);
+        else
+            Mat(sizes, CV_16UC1, rawdata).copyTo(blob);
+    }
+    else if (datatype == opencv_onnx::TensorProto_DataType_UINT32)
+    {
+        if (!tensor_proto.int32_data().empty())
+            Mat(sizes, CV_32SC1, (void*)tensor_proto.int32_data().data()).convertTo(blob, CV_32UC1);
+        else
+            Mat(sizes, CV_32UC1, rawdata).copyTo(blob);
+    }
+    else if (datatype == opencv_onnx::TensorProto_DataType_UINT64)
+    {
+        if (!tensor_proto.int64_data().empty())
+            Mat(sizes, CV_64SC1, (void*)tensor_proto.int64_data().data()).convertTo(blob, CV_64UC1);
+        else
+            Mat(sizes, CV_64UC1, rawdata).copyTo(blob);
+    }
+    else if (datatype == opencv_onnx::TensorProto_DataType_BOOL)
+    {
+        Mat(sizes, CV_Bool, rawdata).copyTo(blob);
+    }
+    else if (datatype == opencv_onnx::TensorProto_DataType_INT16)
+    {
+        if (!tensor_proto.int32_data().empty())
+            Mat(sizes, CV_32SC1, (void*)tensor_proto.int32_data().data()).convertTo(blob, CV_16SC1);
+        else
+            Mat(sizes, CV_16SC1, rawdata).copyTo(blob);
+    }
+    else if (datatype == opencv_onnx::TensorProto_DataType_UINT16)
+    {
+        if (!tensor_proto.int32_data().empty())
+            Mat(sizes, CV_32SC1, (void*)tensor_proto.int32_data().data()).convertTo(blob, CV_16UC1);
+        else
+            Mat(sizes, CV_16UC1, rawdata).copyTo(blob);
+    }
+    else if (datatype == opencv_onnx::TensorProto_DataType_UINT32)
+    {
+        if (!tensor_proto.int32_data().empty())
+            Mat(sizes, CV_32SC1, (void*)tensor_proto.int32_data().data()).convertTo(blob, CV_32UC1);
+        else
+            Mat(sizes, CV_32UC1, rawdata).copyTo(blob);
+    }
+    else if (datatype == opencv_onnx::TensorProto_DataType_UINT64)
+    {
+        if (!tensor_proto.int64_data().empty())
+            Mat(sizes, CV_64SC1, (void*)tensor_proto.int64_data().data()).convertTo(blob, CV_64UC1);
+        else
+            Mat(sizes, CV_64UC1, rawdata).copyTo(blob);
     }
     else
     {
-        std::string errorMsg = "Unsupported data type: " +
-                            opencv_onnx::TensorProto_DataType_Name(datatype);
+        // @TODO: refactor the error handling
+        std::string errorMsg = "Unsupported data type: "; /* +
+                            opencv_onnx::TensorProto_DataType_Name(datatype);*/
 
         if (!DNN_DIAGNOSTICS_RUN)
         {
@@ -1391,8 +1950,9 @@ Mat getMatFromTensor(const opencv_onnx::TensorProto& tensor_proto)
         CV_LOG_ERROR(NULL, errorMsg);
         return blob;
     }
-    if (tensor_proto.dims_size() == 0)
-        blob.dims = 1;  // To force 1-dimensional cv::Mat for scalars.
+    if (tensor_proto.dims_size() == 0) {
+        blob.size.dims = blob.dims = 1;  // To force 1-dimensional cv::Mat for scalars.
+    }
     return blob;
 }
 

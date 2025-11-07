@@ -49,13 +49,17 @@
 #include <opencv2/core/utils/trace.hpp>
 #endif
 
+#ifdef _MSC_VER
+#  define _SILENCE_CXX17_C_HEADER_DEPRECATION_WARNING
+#  define _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING
+#endif
+
 #if defined __linux__ || defined __APPLE__ || defined __HAIKU__
 #include <unistd.h>  // -D_FORTIFY_SOURCE=2 workaround: https://github.com/opencv/opencv/issues/15020
 #endif
 
-
+#include "opencv2/core/cvdef.h"
 #include "opencv2/videoio.hpp"
-#include "opencv2/videoio/legacy/constants_c.h"
 
 #include "opencv2/core/utility.hpp"
 #ifdef __OPENCV_BUILD
@@ -74,8 +78,6 @@
 #include "opencv2/imgcodecs.hpp"
 
 #include "opencv2/imgproc.hpp"
-#include "opencv2/imgproc/imgproc_c.h"
-#include "opencv2/videoio/videoio_c.h"
 
 #include <stdlib.h>
 #include <stdio.h>

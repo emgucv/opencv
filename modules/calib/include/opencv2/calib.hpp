@@ -7,7 +7,7 @@
 
 #include "opencv2/core.hpp"
 #include "opencv2/core/types.hpp"
-#include "opencv2/features2d.hpp"
+#include "opencv2/features.hpp"
 #include "opencv2/core/affine.hpp"
 
 /**
@@ -343,6 +343,91 @@ R & t \\
 0 & 1
 \end{bmatrix} P_{h_0}.\f]
 
+<B> Homogeneous Transformations, Object frame / Camera frame </B><br>
+Change of basis or computing the 3D coordinates from one frame to another frame can be achieved easily using
+the following notation:
+\f[
+\mathbf{X}_c = \hspace{0.2em}
+{}^{c}\mathbf{T}_o \hspace{0.2em} \mathbf{X}_o
+\f]
+\f[
+\begin{bmatrix}
+X_c \\
+Y_c \\
+Z_c \\
+1
+\end{bmatrix} =
+\begin{bmatrix}
+{}^{c}\mathbf{R}_o & {}^{c}\mathbf{t}_o \\
+0_{1 \times 3} & 1
+\end{bmatrix}
+\begin{bmatrix}
+X_o \\
+Y_o \\
+Z_o \\
+1
+\end{bmatrix}
+\f]
+For a 3D points (\f$ \mathbf{X}_o \f$) expressed in the object frame, the homogeneous transformation matrix
+\f$ {}^{c}\mathbf{T}_o \f$ allows computing the corresponding coordinate (\f$ \mathbf{X}_c \f$) in the camera frame.
+This transformation matrix is composed of a 3x3 rotation matrix \f$ {}^{c}\mathbf{R}_o \f$ and a 3x1 translation vector
+\f$ {}^{c}\mathbf{t}_o \f$.
+The 3x1 translation vector \f$ {}^{c}\mathbf{t}_o \f$ is the position of the object frame in the camera frame and the
+3x3 rotation matrix \f$ {}^{c}\mathbf{R}_o \f$ the orientation of the object frame in the camera frame.
+With this simple notation, it is easy to chain the transformations. For instance, to compute the 3D coordinates of a point
+expressed in the object frame in the world frame can be done with:
+\f[
+\mathbf{X}_w = \hspace{0.2em}
+{}^{w}\mathbf{T}_c \hspace{0.2em} {}^{c}\mathbf{T}_o \hspace{0.2em}
+\mathbf{X}_o =
+{}^{w}\mathbf{T}_o \hspace{0.2em} \mathbf{X}_o
+\f]
+Similarly, computing the inverse transformation can be done with:
+\f[
+\mathbf{X}_o = \hspace{0.2em}
+{}^{o}\mathbf{T}_c \hspace{0.2em} \mathbf{X}_c =
+\left( {}^{c}\mathbf{T}_o \right)^{-1} \hspace{0.2em} \mathbf{X}_c
+\f]
+The inverse of an homogeneous transformation matrix is then:
+\f[
+{}^{o}\mathbf{T}_c = \left( {}^{c}\mathbf{T}_o \right)^{-1} =
+\begin{bmatrix}
+{}^{c}\mathbf{R}^{\top}_o & - \hspace{0.2em} {}^{c}\mathbf{R}^{\top}_o \hspace{0.2em} {}^{c}\mathbf{t}_o \\
+0_{1 \times 3} & 1
+\end{bmatrix}
+\f]
+One can note that the inverse of a 3x3 rotation matrix is directly its matrix transpose.
+![Perspective projection, from object to camera frame](pics/pinhole_homogeneous_transformation.png)
+This figure summarizes the whole process. The object pose returned for instance by the @ref solvePnP function
+or pose from fiducial marker detection is this \f$ {}^{c}\mathbf{T}_o \f$ transformation.
+The camera intrinsic matrix \f$ \mathbf{K} \f$ allows projecting the 3D point expressed in the camera frame onto the image plane
+assuming a perspective projection model (pinhole camera model). Image coordinates extracted from classical image processing functions
+assume a (u,v) top-left coordinates frame.
+\note
+- for an online video course on this topic, see for instance:
+  - ["3.3.1. Homogeneous Transformation Matrices", Modern Robotics, Kevin M. Lynch and Frank C. Park](https://modernrobotics.northwestern.edu/nu-gm-book-resource/3-3-1-homogeneous-transformation-matrices/)
+- the 3x3 rotation matrix is composed of 9 values but describes a 3 dof transformation
+- some additional properties of the 3x3 rotation matrix are:
+  - \f$ \mathrm{det} \left( \mathbf{R} \right) = 1 \f$
+  - \f$ \mathbf{R} \mathbf{R}^{\top} = \mathbf{R}^{\top} \mathbf{R} = \mathrm{I}_{3 \times 3} \f$
+  - interpolating rotation can be done using the [Slerp (spherical linear interpolation)](https://en.wikipedia.org/wiki/Slerp) method
+- quick conversions between the different rotation formalisms can be done using this [online tool](https://www.andre-gaschler.com/rotationconverter/)
+<B> Intrinsic parameters from camera lens specifications </B><br>
+When dealing with industrial cameras, the camera intrinsic matrix or more precisely \f$ \left(f_x, f_y \right) \f$
+can be deduced, approximated from the camera specifications:
+\f[
+f_x = \frac{f_{\text{mm}}}{\text{pixel_size_in_mm}} = \frac{f_{\text{mm}}}{\text{sensor_size_in_mm} / \text{nb_pixels}}
+\f]
+In a same way, the physical focal length can be deduced from the angular field of view:
+\f[
+f_{\text{mm}} = \frac{\text{sensor_size_in_mm}}{2 \times \tan{\frac{\text{fov}}{2}}}
+\f]
+This latter conversion can be useful when using a rendering software to mimic a physical camera device.
+
+@note
+    -    See also #calibrationMatrixValues
+
+<B> Additional references, notes </B><br>
 @note
     -   Many functions in this module take a camera intrinsic matrix as an input parameter. Although all
         functions assume the same structure of this parameter, they may name it differently. The
@@ -372,11 +457,11 @@ R & t \\
     where R is the rotation matrix corresponding to the rotation vector om: R = rodrigues(om); call x, y
     and z the 3 coordinates of Xc:
 
-    \f[x = Xc_1 \\ y = Xc_2 \\ z = Xc_3\f]
+    \f[\begin{array}{l} x = Xc_1 \\ y = Xc_2 \\ z = Xc_3 \end{array} \f]
 
     The pinhole projection coordinates of P is [a; b] where
 
-    \f[a = x / z \ and \ b = y / z \\ r^2 = a^2 + b^2 \\ \theta = atan(r)\f]
+    \f[\begin{array}{l} a = x / z \ and \ b = y / z \\ r^2 = a^2 + b^2 \\ \theta = atan(r) \end{array} \f]
 
     Fisheye distortion:
 
@@ -384,17 +469,15 @@ R & t \\
 
     The distorted point coordinates are [x'; y'] where
 
-    \f[x' = (\theta_d / r) a \\ y' = (\theta_d / r) b \f]
+    \f[\begin{array}{l} x' = (\theta_d / r) a \\ y' = (\theta_d / r) b \end{array} \f]
 
     Finally, conversion into pixel coordinates: The final pixel coordinates vector [u; v] where:
 
-    \f[u = f_x (x' + \alpha y') + c_x \\
-    v = f_y y' + c_y\f]
+    \f[\begin{array}{l} u = f_x (x' + \alpha y') + c_x \\
+    v = f_y y' + c_y \end{array} \f]
 
     Summary:
     Generic camera model @cite Kannala2006 with perspective projection and without distortion correction
-
-    @defgroup calib3d_c C API
 
   @}
  */
@@ -411,7 +494,8 @@ enum { CALIB_CB_ADAPTIVE_THRESH = 1,
        CALIB_CB_EXHAUSTIVE      = 16,
        CALIB_CB_ACCURACY        = 32,
        CALIB_CB_LARGER          = 64,
-       CALIB_CB_MARKER          = 128
+       CALIB_CB_MARKER          = 128,
+       CALIB_CB_PLAIN           = 256
      };
 
 enum { CALIB_CB_SYMMETRIC_GRID  = 1,
@@ -420,6 +504,11 @@ enum { CALIB_CB_SYMMETRIC_GRID  = 1,
      };
 
 #define CALIB_NINTRINSIC 18 //!< Maximal size of camera internal parameters (initrinsics) vector
+
+enum CameraModel {
+    CALIB_MODEL_PINHOLE = 0, //!< Pinhole camera model
+    CALIB_MODEL_FISHEYE = 1, //!< Fisheye camera model
+};
 
 enum { CALIB_USE_INTRINSIC_GUESS = 0x00001, //!< Use user provided intrinsics as initial point for optimization.
        CALIB_FIX_ASPECT_RATIO    = 0x00002, //!< Use with CALIB_USE_INTRINSIC_GUESS. The ratio fx/fy stays the same as in the input cameraMatrix.
@@ -445,11 +534,12 @@ enum { CALIB_USE_INTRINSIC_GUESS = 0x00001, //!< Use user provided intrinsics as
        // for stereo rectification
        CALIB_ZERO_DISPARITY      = 0x00400, //!< Deprecated synonim of @ref STEREO_ZERO_DISPARITY. See @ref stereoRectify.
        CALIB_USE_LU              = (1 << 17), //!< use LU instead of SVD decomposition for solving. much faster but potentially less precise
-       CALIB_USE_EXTRINSIC_GUESS = (1 << 22), //!< For stereo calibration only. Use user provided extrinsics (R, T) as initial point for optimization
+       CALIB_USE_EXTRINSIC_GUESS = (1 << 22), //!< For stereo and multi-view calibration. Use user provided extrinsics (R, T) as initial point for optimization
        // fisheye only flags
        CALIB_RECOMPUTE_EXTRINSIC = (1 << 23), //!< For fisheye model only. Recompute board position on each calibration iteration
        CALIB_CHECK_COND          = (1 << 24), //!< For fisheye model only. Check SVD decomposition quality for each frame during extrinsics estimation
-       CALIB_FIX_SKEW            = (1 << 25)  //!< For fisheye model only. Skew coefficient (alpha) is set to zero and stay zero.
+       CALIB_FIX_SKEW            = (1 << 25), //!< For fisheye model only. Skew coefficient (alpha) is set to zero and stay zero.
+       CALIB_STEREO_REGISTRATION = (1 << 26)  //!< For multiview calibration only. Use stereo correspondence approach for initial extrinsics guess. Limitation: all cameras should have the same type.
      };
 
 enum HandEyeCalibrationMethod
@@ -502,6 +592,10 @@ square-like shape) to filter out false quads extracted at the contour retrieval 
 -   @ref CALIB_CB_FAST_CHECK Run a fast check on the image that looks for chessboard corners,
 and shortcut the call if none is found. This can drastically speed up the call in the
 degenerate condition when no chessboard is observed.
+-   @ref CALIB_CB_PLAIN All other flags are ignored. The input image is taken as is.
+No image processing is done to improve to find the checkerboard. This has the effect of speeding up the
+execution of the function but could lead to not recognizing the checkerboard if the image
+is not previously binarized in the appropriate manner.
 
 The function attempts to determine whether the input image is a view of the chessboard pattern and
 locate the internal chessboard corners. The function returns a non-zero value if all of the corners
@@ -535,7 +629,8 @@ the board to make the detection more robust in various environments. Otherwise, 
 border and the background is dark, the outer black squares cannot be segmented properly and so the
 square grouping and ordering algorithm fails.
 
-Use gen_pattern.py (@ref tutorial_camera_calibration_pattern) to create checkerboard.
+Use the `generate_pattern.py` Python script (@ref tutorial_camera_calibration_pattern)
+to create the desired checkerboard pattern.
  */
 CV_EXPORTS_W bool findChessboardCorners( InputArray image, Size patternSize, OutputArray corners,
                                          int flags = CALIB_CB_ADAPTIVE_THRESH + CALIB_CB_NORMALIZE_IMAGE );
@@ -593,8 +688,9 @@ which are located on the outside of the board. The following figure illustrates
 a sample checkerboard optimized for the detection. However, any other checkerboard
 can be used as well.
 
-Use gen_pattern.py (@ref tutorial_camera_calibration_pattern) to create checkerboard.
-![Checkerboard](pics/checkerboard_radon.png)
+Use the `generate_pattern.py` Python script (@ref tutorial_camera_calibration_pattern)
+to create the corresponding checkerboard pattern:
+\image html pics/checkerboard_radon.png width=60%
  */
 CV_EXPORTS_AS(findChessboardCornersSBWithMeta)
 bool findChessboardCornersSB(InputArray image,Size patternSize, OutputArray corners,
@@ -678,7 +774,7 @@ struct CV_EXPORTS_W_SIMPLE CirclesGridFinderParameters
     {
       SYMMETRIC_GRID, ASYMMETRIC_GRID
     };
-    GridType gridType;
+    CV_PROP_RW GridType gridType;
 
     CV_PROP_RW float squareSize; //!< Distance between two adjacent points. Used by CALIB_CB_CLUSTERING.
     CV_PROP_RW float maxRectifiedDistance; //!< Max deviation from prediction. Used by CALIB_CB_CLUSTERING.
@@ -842,6 +938,10 @@ The algorithm performs the following steps:
     \f$c_y\f$ very far from the image center, and/or large differences between \f$f_x\f$ and
     \f$f_y\f$ (ratios of 10:1 or more)), then you are probably using patternSize=cvSize(rows,cols)
     instead of using patternSize=cvSize(cols,rows) in @ref findChessboardCorners.
+
+@note
+    The function may throw exceptions, if unsupported combination of parameters is provided or
+    the system is underconstrained.
 
 @sa
    calibrateCameraRO, findChessboardCorners, solvePnP, initCameraMatrix2D, stereoCalibrate,
@@ -1127,45 +1227,173 @@ CV_EXPORTS_W double stereoCalibrate( InputArrayOfArrays objectPoints,
                                      OutputArray perViewErrors, int flags = CALIB_FIX_INTRINSIC,
                                      TermCriteria criteria = TermCriteria(TermCriteria::COUNT+TermCriteria::EPS, 30, 1e-6) );
 
-/** @brief Estimates intrinsics and extrinsics (camera pose) for multi-camera system a.k.a multiview calibraton.
+/** @brief Calibrates a camera pair set up. This function finds the extrinsic parameters between the two cameras.
+
+@param objectPoints1 Vector of vectors of the calibration pattern points for camera 1.
+A similar structure as objectPoints in @ref calibrateCamera and for each pattern view,
+both cameras do not need to see the same object points. objectPoints1.size(), imagePoints1.size()
+nees to be equal,as well as objectPoints1[i].size(), imagePoints1[i].size() need to be equal for each i.
+@param objectPoints2 Vector of vectors of the calibration pattern points for camera 2.
+A similar structure as objectPoints1. objectPoints2.size(), and imagePoints2.size() nees to be equal,
+as well as objectPoints2[i].size(), imagePoints2[i].size() need to be equal for each i.
+However, objectPoints1[i].size() and objectPoints2[i].size() are not required to be equal.
+@param imagePoints1 Vector of vectors of the projections of the calibration pattern points,
+observed by the first camera. The same structure as in @ref calibrateCamera.
+@param imagePoints2 Vector of vectors of the projections of the calibration pattern points,
+observed by the second camera. The same structure as in @ref calibrateCamera.
+@param cameraMatrix1 Input/output camera intrinsic matrix for the first camera, the same as in
+@ref calibrateCamera. Furthermore, for the stereo case, additional flags may be used, see below.
+@param distCoeffs1 Input/output vector of distortion coefficients, the same as in
+@ref calibrateCamera.
+@param cameraModel1 Flag reflecting the type of model for camera 1 (pinhole / fisheye):
+- @ref CALIB_MODEL_PINHOLE pinhole camera model
+- @ref CALIB_MODEL_FISHEYE fisheye camera model
+@param cameraMatrix2 Input/output second camera intrinsic matrix for the second camera.
+See description for cameraMatrix1.
+@param distCoeffs2 Input/output lens distortion coefficients for the second camera. See
+description for distCoeffs1.
+@param cameraModel2 Flag reflecting the type of model for camera 2 (pinhole / fisheye).
+See description for cameraModel1.
+@param R Output rotation matrix. Together with the translation vector T, this matrix brings
+points given in the first camera's coordinate system to points in the second camera's
+coordinate system. In more technical terms, the tuple of R and T performs a change of basis
+from the first camera's coordinate system to the second camera's coordinate system. Due to its
+duality, this tuple is equivalent to the position of the first camera with respect to the
+second camera coordinate system.
+@param T Output translation vector, see description above.
+@param E Output essential matrix.
+@param F Output fundamental matrix.
+@param rvecs Output vector of rotation vectors ( @ref Rodrigues ) estimated for each pattern view in the
+coordinate system of the first camera of the stereo pair (e.g. std::vector<cv::Mat>). More in detail, each
+i-th rotation vector together with the corresponding i-th translation vector (see the next output parameter
+description) brings the calibration pattern from the object coordinate space (in which object points are
+specified) to the camera coordinate space of the first camera of the stereo pair. In more technical terms,
+the tuple of the i-th rotation and translation vector performs a change of basis from object coordinate space
+to the camera coordinate space of the first camera of the stereo pair.
+@param tvecs Output vector of translation vectors estimated for each pattern view, see parameter description
+of previous output parameter ( rvecs ).
+@param perViewErrors Output vector of the RMS re-projection error estimated for each pattern view.
+@param flags Different flags that may be zero or a combination of the following values:
+-   @ref CALIB_USE_EXTRINSIC_GUESS R and T contain valid initial values that are optimized further.
+@param criteria Termination criteria for the iterative optimization algorithm.
+
+The function estimates the transformation between two cameras similar to stereo pair calibration.
+The principle follows closely to @ref stereoCalibrate. To understand the problem of estimating the
+relative pose between a camera pair, please refer to the description there. The difference for
+this function is that, camera intrinsics are not optimized and two cameras are not required
+to have overlapping fields of view as long as they are observing the same calibration target
+and the absolute positions of each object point are known.
+![](pics/register_pair.png)
+The above illustration shows an example where such a case may become relevant.
+Additionally, it supports a camera pair with the mixed model (pinhole / fisheye).
+Similarly to #calibrateCamera, the function minimizes the total re-projection error for all the
+points in all the available views from both cameras.
+@return the final value of the re-projection error.
+
+@sa calibrateCamera, stereoCalibrate
+ */
+CV_EXPORTS_AS(registerCamerasExtended) double registerCameras( InputArrayOfArrays objectPoints1,
+                                     InputArrayOfArrays objectPoints2,
+                                     InputArrayOfArrays imagePoints1, InputArrayOfArrays imagePoints2,
+                                     InputArray cameraMatrix1, InputArray distCoeffs1,
+                                     CameraModel cameraModel1,
+                                     InputArray cameraMatrix2, InputArray distCoeffs2,
+                                     CameraModel cameraModel2,
+                                     InputOutputArray R, InputOutputArray T, OutputArray E, OutputArray F,
+                                     OutputArrayOfArrays rvecs, OutputArrayOfArrays tvecs,
+                                     OutputArray perViewErrors,
+                                     int flags = 0,
+                                     TermCriteria criteria = TermCriteria(TermCriteria::COUNT+TermCriteria::EPS, 100, 1e-6) );
+
+/// @overload
+CV_EXPORTS_W double registerCameras( InputArrayOfArrays objectPoints1,
+                                     InputArrayOfArrays objectPoints2,
+                                     InputArrayOfArrays imagePoints1, InputArrayOfArrays imagePoints2,
+                                     InputArray cameraMatrix1, InputArray distCoeffs1,
+                                     CameraModel cameraModel1,
+                                     InputArray cameraMatrix2, InputArray distCoeffs2,
+                                     CameraModel cameraModel2,
+                                     InputOutputArray R, InputOutputArray T, OutputArray E, OutputArray F,
+                                     OutputArray perViewErrors,
+                                     int flags = 0,
+                                     TermCriteria criteria = TermCriteria(TermCriteria::COUNT+TermCriteria::EPS, 100, 1e-6) );
+
+/** @brief Estimates intrinsics and extrinsics (camera pose) for multi-camera system a.k.a multiview calibration.
 
 @param[in] objPoints Calibration pattern object points. Expected shape: NUM_FRAMES x NUM_POINTS x 3. Supported data type: CV_32F.
 @param[in] imagePoints Detected pattern points on camera images. Expected shape: NUM_CAMERAS x NUM_FRAMES x NUM_POINTS x 2.
-@param[in] imageSize   Images resolution.
-@param[in] detectionMask Pattern detection mask. Each value defines if i-camera observes calibration pattern in j moment of time.
+This function supports partial observation of the calibration pattern.
+To enable this, set the unobserved image points to be invalid points (eg. (-1., -1.)).
+@param[in] imageSize Images resolution array for each camera.
+@param[in] detectionMask Pattern detection mask. Each value defines if i-camera observes the calibration pattern in j-th frame.
 Expected size: NUM_CAMERAS x NUM_FRAMES. Expected type: CV_8U.
-@param[in] isFisheye indicates whether i-th camera is fisheye. In case if the input data contains
-mix of pinhole and fisheye cameras Rational distortion model is used. See @ref CALIB_RATIONAL_MODEL
-for details. Expected type: CV_8U.
-@param[in] useIntrinsicsGuess Use user specified intrinsic parameters (internal camera matrix and distortion).
-If true intrinsics are not estimated during calibration.
+@param[in] models indicates camera models for each camera: cv::CALIB_MODEL_PINHOLE or cv::CALIB_MODEL_PINHOLE.
+Current implementation does not support mix of different camera models. Expected type: CV_8U.
 @param[in] flagsForIntrinsics Flags used for each camera intrinsics calibration.
-Use per-camera call and `useIntrinsicsGuess` flag to get custom intrinsics calibration for each camera.
+Use per-camera call and the `useIntrinsicsGuess` flag to get custom intrinsics calibration for each camera.
+@param[in] flags Common multiview calibration flags. cv::CALIB_USE_INTRINSIC_GUESS and cv::CALIB_USE_EXTRINSIC_GUESS are supported.
 See @ref CALIB_USE_INTRINSIC_GUESS and other `CALIB_` constants. Expected shape: NUM_CAMERAS x 1. Supported data type: CV_32S.
-@param[out] Rs Rotation vectors relative to camera 0, where Rs[0] = 0. Output size: NUM_CAMERAS x 3 x 1. See @ref Rodrigues.
+@param[out] Rs Rotation vectors relative to camera 0, where Rs[0] = 0. Output size: NUM_CAMERAS x 3 x 3.
 @param[out] Ts Estimated translation vectors relative to camera 0, where Ts[0] = 0. Output size: NUM_CAMERAS x 3 x 1.
-@param[out] rvecs0 Estimated rotation vectors for camera 0. Output size: NUM_FRAMES x 3 x 1 (may contain null Mat, if frame is not valid). See @ref Rodrigues.
-@param[out] tvecs0 Translation vectors for camera 0. Output size: NUM_FRAMES x 3 x 1. (may contain null Mat, if frame is not valid).
+@param[out] rvecs0 Estimated rotation vectors for camera 0. Output size: NUM_FRAMES x 3 x 1 (may contain null Mat, if the frame is not valid). See @ref Rodrigues.
+@param[out] tvecs0 Translation vectors for camera 0. Output size: NUM_FRAMES x 3 x 1. (may contain null Mat, if the frame is not valid).
 @param[out] Ks Estimated floating-point camera intrinsic matrix. Output size: NUM_CAMERAS x 3 x 3.
 @param[out] distortions Distortion coefficients. Output size: NUM_CAMERAS x NUM_PARAMS.
 @param[out] perFrameErrors RMSE value for each visible frame, (-1 for non-visible). Output size: NUM_CAMERAS x NUM_FRAMES.
 @param[out] initializationPairs Pairs with camera indices that were used for initial pairwise stereo calibration.
+@param[in] criteria Termination criteria for the iterative optimization algorithm.
+
 Output size: (NUM_CAMERAS-1) x 2.
+
+@ref tutorial_multiview_camera_calibration provides a detailed tutorial of using this function. Please refer to it for more information.
+
+Multiview calibration usually requires several cameras to observe the same calibration pattern simultaneously.
+The fundamental assumption is that relative camera poses are fixed,
+and then for each frame, only the absolute camera pose for a single camera is needed to fix the camera pose for the multiple cameras
+
+![multiview calibration](pics/multiview_calib.png)
+The above illustration shows an example setting for multiview camera calibration.
+
+For each frame, suppose the absolute camera pose for camera \f$i\f$ is \f$R_i, t_i\f$,
+and the relative camera pose between camera \f$i\f$ and camera \f$j\f$ is \f$R_{ij}, t_{ij}\f$.
+Suppose \f$R_1, t_1\f$, and \f$R_{1i}\f$ for any \f$i\not=1\f$ are known, then its pose can be calculated by
+\f[ R_i = R_{1i} R_1\f]
+\f[ t_i = R_{1i} t_1 + t_{1i}\f]
+
+Since the relative pose between two cameras can be calculated by
+\f[ R_{ij} = R_j R_i^\top \f]
+\f[ t_{ij} = -R_{ij} t_i + R_j \f]
+
+This implies that any other relative pose of the form \f$R_{ij}, i\not=1\f$ is redundant.
+Given this, the total number of poses to determine is (NUM_CAMERAS-1) and NUM_FRAMES.
+This serves as the foundation of this function.
 
 Similarly to #calibrateCamera, the function minimizes the total re-projection error for all the
 points in all the available views from all cameras.
 
 @return Overall RMS re-projection error over detectionMask.
 
-@sa findChessboardCorners, findCirclesGrid, calibrateCamera, fisheye::calibrate
+@sa findChessboardCorners, findCirclesGrid, calibrateCamera, fisheye::calibrate, registerCameras
 */
 
-CV_EXPORTS_W double calibrateMultiview (InputArrayOfArrays objPoints, const std::vector<std::vector<Mat>> &imagePoints,
-        const std::vector<Size> &imageSize, InputArray detectionMask,
-        OutputArrayOfArrays Rs, OutputArrayOfArrays Ts, CV_IN_OUT std::vector<Mat> &Ks, CV_IN_OUT std::vector<Mat> &distortions,
-        OutputArrayOfArrays rvecs0, OutputArrayOfArrays tvecs0, InputArray isFisheye,
-        OutputArray perFrameErrors, OutputArray initializationPairs,
-        bool useIntrinsicsGuess=false, InputArray flagsForIntrinsics=noArray());
+CV_EXPORTS_AS(calibrateMultiviewExtended) double calibrateMultiview (
+        InputArrayOfArrays objPoints, const std::vector<std::vector<Mat>> &imagePoints,
+        const std::vector<cv::Size>& imageSize, InputArray detectionMask, InputArray models,
+        InputOutputArrayOfArrays Ks, InputOutputArrayOfArrays distortions,
+        InputOutputArrayOfArrays Rs, InputOutputArrayOfArrays Ts,
+        OutputArray initializationPairs, OutputArrayOfArrays rvecs0,
+        OutputArrayOfArrays tvecs0, OutputArray perFrameErrors,
+        InputArray flagsForIntrinsics=noArray(), int flags = 0,
+        TermCriteria criteria = TermCriteria(TermCriteria::COUNT + TermCriteria::EPS, 100, DBL_EPSILON));
+
+/// @overload
+CV_EXPORTS_W double calibrateMultiview (
+        InputArrayOfArrays objPoints, const std::vector<std::vector<Mat>> &imagePoints,
+        const std::vector<cv::Size>& imageSize, InputArray detectionMask, InputArray models,
+        InputOutputArrayOfArrays Ks, InputOutputArrayOfArrays distortions,
+        InputOutputArrayOfArrays Rs, InputOutputArrayOfArrays Ts,
+        InputArray flagsForIntrinsics=noArray(), int flags = 0,
+        TermCriteria criteria = TermCriteria(TermCriteria::COUNT + TermCriteria::EPS, 100, DBL_EPSILON));
 
 
 /** @brief Computes Hand-Eye calibration: \f$_{}^{g}\textrm{T}_c\f$
@@ -1496,7 +1724,7 @@ objectPoints[i].size() for each i.
 @param image_size Size of the image used only to initialize the camera intrinsic matrix.
 @param K Output 3x3 floating-point camera intrinsic matrix
 \f$\cameramatrix{A}\f$ . If
-@ref CALIB_USE_INTRINSIC_GUESS is specified, some or all of fx, fy, cx, cy must be
+@ref cv::CALIB_USE_INTRINSIC_GUESS is specified, some or all of fx, fy, cx, cy must be
 initialized before calling the function.
 @param D Output vector of distortion coefficients \f$\distcoeffsfisheye\f$.
 @param rvecs Output vector of rotation vectors (see Rodrigues ) estimated for each pattern view.
@@ -1506,19 +1734,19 @@ space (in which object points are specified) to the world coordinate space, that
 position of the calibration pattern in the k-th pattern view (k=0.. *M* -1).
 @param tvecs Output vector of translation vectors estimated for each pattern view.
 @param flags Different flags that may be zero or a combination of the following values:
--   @ref CALIB_USE_INTRINSIC_GUESS  cameraMatrix contains valid initial values of
+-   @ref cv::CALIB_USE_INTRINSIC_GUESS  cameraMatrix contains valid initial values of
 fx, fy, cx, cy that are optimized further. Otherwise, (cx, cy) is initially set to the image
 center ( imageSize is used), and focal distances are computed in a least-squares fashion.
--   @ref CALIB_RECOMPUTE_EXTRINSIC  Extrinsic will be recomputed after each iteration
+-   @ref cv::CALIB_RECOMPUTE_EXTRINSIC  Extrinsic will be recomputed after each iteration
 of intrinsic optimization.
--   @ref CALIB_CHECK_COND  The functions will check validity of condition number.
--   @ref CALIB_FIX_SKEW  Skew coefficient (alpha) is set to zero and stay zero.
--   @ref CALIB_FIX_K1,..., @ref CALIB_FIX_K4 Selected distortion coefficients
+-   @ref cv::CALIB_CHECK_COND  The functions will check validity of condition number.
+-   @ref cv::CALIB_FIX_SKEW  Skew coefficient (alpha) is set to zero and stay zero.
+-   @ref cv::CALIB_FIX_K1,..., @ref cv::CALIB_FIX_K4 Selected distortion coefficients
 are set to zeros and stay zero.
--   @ref CALIB_FIX_PRINCIPAL_POINT  The principal point is not changed during the global
-optimization. It stays at the center or at a different location specified when @ref CALIB_USE_INTRINSIC_GUESS is set too.
--   @ref CALIB_FIX_FOCAL_LENGTH The focal length is not changed during the global
-optimization. It is the \f$max(width,height)/\pi\f$ or the provided \f$f_x\f$, \f$f_y\f$ when @ref CALIB_USE_INTRINSIC_GUESS is set too.
+-   @ref cv::CALIB_FIX_PRINCIPAL_POINT  The principal point is not changed during the global
+optimization. It stays at the center or at a different location specified when @ref cv::CALIB_USE_INTRINSIC_GUESS is set too.
+-   @ref cv::CALIB_FIX_FOCAL_LENGTH The focal length is not changed during the global
+optimization. It is the \f$max(width,height)/\pi\f$ or the provided \f$f_x\f$, \f$f_y\f$ when @ref cv::CALIB_USE_INTRINSIC_GUESS is set too.
 @param criteria Termination criteria for the iterative optimization algorithm.
  */
 CV_EXPORTS_W double calibrate(InputArrayOfArrays objectPoints, InputArrayOfArrays imagePoints, const Size& image_size,
@@ -1534,7 +1762,7 @@ observed by the first camera.
 observed by the second camera.
 @param K1 Input/output first camera intrinsic matrix:
 \f$\vecthreethree{f_x^{(j)}}{0}{c_x^{(j)}}{0}{f_y^{(j)}}{c_y^{(j)}}{0}{0}{1}\f$ , \f$j = 0,\, 1\f$ . If
-any of @ref CALIB_USE_INTRINSIC_GUESS , @ref CALIB_FIX_INTRINSIC are specified,
+any of @ref cv::CALIB_USE_INTRINSIC_GUESS , @ref cv::CALIB_FIX_INTRINSIC are specified,
 some or all of the matrix components must be initialized.
 @param D1 Input/output vector of distortion coefficients \f$\distcoeffsfisheye\f$ of 4 elements.
 @param K2 Input/output second camera intrinsic matrix. The parameter is similar to K1 .
@@ -1553,16 +1781,16 @@ to camera coordinate space of the first camera of the stereo pair.
 @param tvecs Output vector of translation vectors estimated for each pattern view, see parameter description
 of previous output parameter ( rvecs ).
 @param flags Different flags that may be zero or a combination of the following values:
--   @ref CALIB_FIX_INTRINSIC  Fix K1, K2? and D1, D2? so that only R, T matrices
+-   @ref cv::CALIB_FIX_INTRINSIC  Fix K1, K2? and D1, D2? so that only R, T matrices
 are estimated.
--   @ref CALIB_USE_INTRINSIC_GUESS  K1, K2 contains valid initial values of
+-   @ref cv::CALIB_USE_INTRINSIC_GUESS  K1, K2 contains valid initial values of
 fx, fy, cx, cy that are optimized further. Otherwise, (cx, cy) is initially set to the image
 center (imageSize is used), and focal distances are computed in a least-squares fashion.
--   @ref CALIB_RECOMPUTE_EXTRINSIC  Extrinsic will be recomputed after each iteration
+-   @ref cv::CALIB_RECOMPUTE_EXTRINSIC  Extrinsic will be recomputed after each iteration
 of intrinsic optimization.
--   @ref CALIB_CHECK_COND  The functions will check validity of condition number.
--   @ref CALIB_FIX_SKEW  Skew coefficient (alpha) is set to zero and stay zero.
--   @ref CALIB_FIX_K1,..., @ref CALIB_FIX_K4 Selected distortion coefficients are set to zeros and stay
+-   @ref cv::CALIB_CHECK_COND  The functions will check validity of condition number.
+-   @ref cv::CALIB_FIX_SKEW  Skew coefficient (alpha) is set to zero and stay zero.
+-   @ref cv::CALIB_FIX_K1,..., @ref cv::CALIB_FIX_K4 Selected distortion coefficients are set to zeros and stay
 zero.
 @param criteria Termination criteria for the iterative optimization algorithm.
  */

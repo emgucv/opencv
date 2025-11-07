@@ -2,6 +2,7 @@
 
 from __future__ import print_function
 import hdr_parser, sys, re
+import json
 from string import Template
 from pprint import pprint
 from collections import namedtuple
@@ -132,6 +133,9 @@ static PyGetSetDef pyopencv_${name}_getseters[] =
 
 static PyMethodDef pyopencv_${name}_methods[] =
 {
+#ifdef PYOPENCV_EXTRA_METHODS_${name}
+    PYOPENCV_EXTRA_METHODS_${name}
+#endif
 ${methods_inits}
     {NULL,          NULL}
 };
@@ -489,6 +493,10 @@ class ArgInfo(object):
         return self.name
 
     @property
+    def nd_mat(self):
+        return '/ND' in self._modifiers
+
+    @property
     def inputarg(self):
         return '/O' not in self._modifiers
 
@@ -499,6 +507,10 @@ class ArgInfo(object):
     @property
     def outputarg(self):
         return '/O' in self._modifiers or '/IO' in self._modifiers
+
+    @property
+    def pathlike(self):
+        return '/PATH' in self._modifiers
 
     @property
     def returnarg(self):
@@ -523,6 +535,8 @@ class ArgInfo(object):
     def crepr(self):
         arg  = 0x01 if self.outputarg else 0x0
         arg += 0x02 if self.arithm_op_src_arg else 0x0
+        arg += 0x04 if self.pathlike else 0x0
+        arg += 0x08 if self.nd_mat else 0x0
         return "ArgInfo(\"%s\", %d)" % (self.name, arg)
 
 
@@ -844,7 +858,22 @@ class FuncInfo(object):
 
         all_code_variants = []
 
+        # See https://github.com/opencv/opencv/issues/25928
+        # Conversion to UMat is expensive more than conversion to Mat.
+        # To reduce this cost, conversion to Mat is prefer than to UMat.
+        variants = []
+        variants_umat = []
         for v in self.variants:
+            hasUMat = False
+            for a in v.args:
+                hasUMat = hasUMat or "UMat" in a.tp
+            if hasUMat :
+                variants_umat.append(v)
+            else:
+                variants.append(v)
+        variants.extend(variants_umat)
+
+        for v in variants:
             code_decl = ""
             code_ret = ""
             code_cvt_list = []
@@ -1084,6 +1113,18 @@ class Namespace(object):
 
 
 class PythonWrapperGenerator(object):
+    class Config:
+        def __init__(self, headers, preprocessor_definitions = None):
+            self.headers = headers
+            if preprocessor_definitions is None:
+                preprocessor_definitions = {}
+            elif not isinstance(preprocessor_definitions, dict):
+                raise TypeError(
+                    "preprocessor_definitions should rather dictionary or None. "
+                    "Got: {}".format(type(preprocessor_definitions).__name__)
+                )
+            self.preprocessor_definitions = preprocessor_definitions
+
     def __init__(self):
         self.clear()
 
@@ -1302,13 +1343,16 @@ class PythonWrapperGenerator(object):
             f.write(buf.getvalue())
 
     def save_json(self, path, name, value):
-        import json
         with open(path + "/" + name, "wt") as f:
             json.dump(value, f)
 
-    def gen(self, srcfiles, output_path):
+    def gen(self, srcfiles, output_path, preprocessor_definitions = None):
         self.clear()
-        self.parser = hdr_parser.CppHeaderParser(generate_umat_decls=True, generate_gpumat_decls=True)
+        self.parser = hdr_parser.CppHeaderParser(
+            generate_umat_decls=True,
+            generate_gpumat_decls=True,
+            preprocessor_definitions=preprocessor_definitions
+        )
 
         # step 1: scan the headers and build more descriptive maps of classes, consts, functions
         for hdr in srcfiles:
@@ -1479,12 +1523,36 @@ class PythonWrapperGenerator(object):
         self.save_json(output_path, "pyopencv_signatures.json", self.py_signatures)
 
 if __name__ == "__main__":
-    srcfiles = hdr_parser.opencv_hdr_list
-    dstdir = "/Users/vp/tmp"
-    if len(sys.argv) > 1:
-        dstdir = sys.argv[1]
-    if len(sys.argv) > 2:
-        with open(sys.argv[2], 'r') as f:
-            srcfiles = [l.strip() for l in f.readlines()]
+    import argparse
+    import tempfile
+
+    arg_parser = argparse.ArgumentParser(
+        description="OpenCV Python bindings generator"
+    )
+    arg_parser.add_argument(
+        "-c", "--config",
+        dest="config_json_path",
+        required=False,
+        help="Generator configuration file in .json format"
+        "Refer to PythonWrapperGenerator.Config for available "
+        "configuration keys"
+    )
+    arg_parser.add_argument(
+        "-o", "--output_dir",
+        dest="output_dir",
+        default=tempfile.gettempdir(),
+        help="Generated bindings output directory"
+    )
+    args = arg_parser.parse_args()
+    if args.config_json_path is not None:
+        with open(args.config_json_path, "r") as fh:
+            config_json = json.load(fh)
+        config = PythonWrapperGenerator.Config(**config_json)
+    else:
+        config = PythonWrapperGenerator.Config(
+            headers=hdr_parser.opencv_hdr_list
+        )
+
     generator = PythonWrapperGenerator()
-    generator.gen(srcfiles, dstdir)
+
+    generator.gen(config.headers, args.output_dir, config.preprocessor_definitions)

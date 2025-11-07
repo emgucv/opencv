@@ -219,7 +219,7 @@ void cv::setWindowProperty(const String& name, int prop_id, double prop_value)
     //change between fullscreen or not.
     case cv::WND_PROP_FULLSCREEN:
 
-        if (prop_value != cv::WINDOW_NORMAL && prop_value != cv::WINDOW_FULLSCREEN)  // bad argument
+        if ((int)prop_value != cv::WINDOW_NORMAL && (int)prop_value != cv::WINDOW_FULLSCREEN)  // bad argument
             break;
 
         #if defined (HAVE_QT)
@@ -230,8 +230,6 @@ void cv::setWindowProperty(const String& name, int prop_id, double prop_value)
             cvSetModeWindow_GTK(name.c_str(),prop_value);
         #elif defined (HAVE_COCOA)
             cvSetModeWindow_COCOA(name.c_str(),prop_value);
-        #elif defined (WINRT)
-            cvSetModeWindow_WinRT(name.c_str(), prop_value);
         #endif
 
     break;
@@ -314,8 +312,6 @@ double cv::getWindowProperty(const String& name, int prop_id)
             return cvGetModeWindow_GTK(name.c_str());
         #elif defined (HAVE_COCOA)
             return cvGetModeWindow_COCOA(name.c_str());
-        #elif defined (WINRT)
-            return cvGetModeWindow_WinRT(name.c_str());
         #else
             return -1;
         #endif
@@ -435,6 +431,8 @@ cv::Rect cv::getWindowImageRect(const String& winname)
         return cvGetWindowRect_GTK(winname.c_str());
     #elif defined (HAVE_COCOA)
         return cvGetWindowRect_COCOA(winname.c_str());
+    #elif defined (HAVE_WAYLAND)
+        return cvGetWindowRect_WAYLAND(winname.c_str());
     #else
         return Rect(-1, -1, -1, -1);
     #endif
@@ -644,16 +642,7 @@ int cv::waitKeyEx(int delay)
 int cv::waitKey(int delay)
 {
     CV_TRACE_FUNCTION();
-    int code = waitKeyEx(delay);
-#ifndef WINRT
-    static int use_legacy = -1;
-    if (use_legacy < 0)
-    {
-        use_legacy = getenv("OPENCV_LEGACY_WAITKEY") != NULL ? 1 : 0;
-    }
-    if (use_legacy > 0)
-        return code;
-#endif
+    const int code = waitKeyEx(delay);
     return (code != -1) ? (code & 0xff) : -1;
 }
 
@@ -994,18 +983,14 @@ void cv::imshow( const String& winname, InputArray _img )
 
 #ifndef HAVE_OPENGL
     {
-        Mat img = _img.getMat();
-        CvMat c_img = cvMat(img);
-        showImageImpl(winname.c_str(), &c_img);
+        showImageImpl(winname.c_str(), _img);
     }
 #else
     const double useGl = getWindowProperty(winname, WND_PROP_OPENGL);
 
     if (useGl <= 0)
     {
-        Mat img = _img.getMat();
-        CvMat c_img = cvMat(img);
-        showImageImpl(winname.c_str(), &c_img);
+        showImageImpl(winname.c_str(), _img);
     }
     else
     {
@@ -1082,23 +1067,50 @@ void cv::imshow(const String& winname, const ogl::Texture2D& _tex)
 #endif
 }
 
+const std::string cv::currentUIFramework()
+{
+    CV_TRACE_FUNCTION();
+
+    // plugin and backend-compatible implementations
+    auto backend = getCurrentUIBackend();
+    if (backend)
+    {
+        return backend->getName();
+    }
+
+    // builtin backends
+#if defined(HAVE_WIN32UI)
+    CV_Assert(false); // backend-compatible
+#elif defined (HAVE_GTK)
+    CV_Assert(false); // backend-compatible
+#elif defined (HAVE_QT)
+    return std::string("QT");
+#elif defined (HAVE_COCOA)
+    return std::string("COCOA");
+#elif defined (HAVE_WAYLAND)
+    return std::string("WAYLAND");
+#endif
+
+    return std::string();
+}
+
 //========================= OpenGL fallback =========================
 
 #ifndef HAVE_OPENGL
 
 void setOpenGLDrawCallbackImpl(const char*, CvOpenGlDrawCallback, void*)
 {
-    CV_Error(CV_OpenGlNotSupported, "The library is compiled without OpenGL support");
+    CV_Error(cv::Error::OpenGlNotSupported, "The library is compiled without OpenGL support");
 }
 
 void setOpenGLContextImpl(const char*)
 {
-    CV_Error(CV_OpenGlNotSupported, "The library is compiled without OpenGL support");
+    CV_Error(cv::Error::OpenGlNotSupported, "The library is compiled without OpenGL support");
 }
 
 void updateWindowImpl(const char*)
 {
-    CV_Error(CV_OpenGlNotSupported, "The library is compiled without OpenGL support");
+    CV_Error(cv::Error::OpenGlNotSupported, "The library is compiled without OpenGL support");
 }
 
 #endif // !HAVE_OPENGL
@@ -1112,52 +1124,52 @@ static const char* NO_QT_ERR_MSG = "The library is compiled without QT support";
 
 cv::QtFont cv::fontQt(const String&, int, Scalar, int,  int, int)
 {
-    CV_Error(CV_StsNotImplemented, NO_QT_ERR_MSG);
+    CV_Error(cv::Error::StsNotImplemented, NO_QT_ERR_MSG);
 }
 
 void cv::addText( const Mat&, const String&, Point, const QtFont&)
 {
-    CV_Error(CV_StsNotImplemented, NO_QT_ERR_MSG);
+    CV_Error(cv::Error::StsNotImplemented, NO_QT_ERR_MSG);
 }
 
 void cv::addText(const Mat&, const String&, Point, const String&, int, Scalar, int, int, int)
 {
-    CV_Error(CV_StsNotImplemented, NO_QT_ERR_MSG);
+    CV_Error(cv::Error::StsNotImplemented, NO_QT_ERR_MSG);
 }
 
 void cv::displayStatusBar(const String&,  const String&, int)
 {
-    CV_Error(CV_StsNotImplemented, NO_QT_ERR_MSG);
+    CV_Error(cv::Error::StsNotImplemented, NO_QT_ERR_MSG);
 }
 
 void cv::displayOverlay(const String&,  const String&, int )
 {
-    CV_Error(CV_StsNotImplemented, NO_QT_ERR_MSG);
+    CV_Error(cv::Error::StsNotImplemented, NO_QT_ERR_MSG);
 }
 
 int cv::startLoop(int (*)(int argc, char *argv[]), int , char**)
 {
-    CV_Error(CV_StsNotImplemented, NO_QT_ERR_MSG);
+    CV_Error(cv::Error::StsNotImplemented, NO_QT_ERR_MSG);
 }
 
 void cv::stopLoop()
 {
-    CV_Error(CV_StsNotImplemented, NO_QT_ERR_MSG);
+    CV_Error(cv::Error::StsNotImplemented, NO_QT_ERR_MSG);
 }
 
 void cv::saveWindowParameters(const String&)
 {
-    CV_Error(CV_StsNotImplemented, NO_QT_ERR_MSG);
+    CV_Error(cv::Error::StsNotImplemented, NO_QT_ERR_MSG);
 }
 
 void cv::loadWindowParameters(const String&)
 {
-    CV_Error(CV_StsNotImplemented, NO_QT_ERR_MSG);
+    CV_Error(cv::Error::StsNotImplemented, NO_QT_ERR_MSG);
 }
 
 int cv::createButton(const String&, ButtonCallback, void*, int , bool )
 {
-    CV_Error(CV_StsNotImplemented, NO_QT_ERR_MSG);
+    CV_Error(cv::Error::StsNotImplemented, NO_QT_ERR_MSG);
 }
 
 #endif // !HAVE_QT
@@ -1166,7 +1178,7 @@ int cv::createButton(const String&, ButtonCallback, void*, int , bool )
 //========================= NO GUI fallback =========================
 
 #if !defined (HAVE_WIN32UI) && !defined (HAVE_GTK) && !defined (HAVE_COCOA) && !defined (HAVE_QT) \
-    && !defined (HAVE_WAYLAND) && !defined (WINRT) && !defined (WINRT_8_0)
+    && !defined (HAVE_WAYLAND)
 
 // No windowing system present at compile time ;-(
 //
@@ -1198,7 +1210,7 @@ void destroyAllWindowsImpl( void )
     CV_NO_GUI_ERROR( "destroyAllWindowsImpl" );
 }
 
-void showImageImpl( const char*, const CvArr* )
+void showImageImpl( const char*, InputArray)
 {
     CV_NO_GUI_ERROR( "showImageImpl" );
 }

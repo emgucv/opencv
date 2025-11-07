@@ -26,10 +26,6 @@ set(highgui_srcs
 #   Jose Luis Blanco, 2008
 # ----------------------------------------------------------------------------
 
-if(DEFINED WINRT AND NOT DEFINED ENABLE_WINRT_MODE_NATIVE)
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /ZW")
-endif()
-
 if(APPLE)
   ocv_include_directories(${ZLIB_INCLUDE_DIRS})
   list(APPEND HIGHGUI_LIBRARIES ${ZLIB_LIBRARIES})
@@ -44,10 +40,17 @@ file(GLOB highgui_ext_hdrs
      "${CMAKE_CURRENT_LIST_DIR}/include/opencv2/${name}/*.hpp"
      "${CMAKE_CURRENT_LIST_DIR}/include/opencv2/${name}/*.h")
 
-# Removing WinRT API headers by default
-list(REMOVE_ITEM highgui_ext_hdrs "${CMAKE_CURRENT_LIST_DIR}/include/opencv2/${name}/highgui_winrt.hpp")
-
 set(OPENCV_HIGHGUI_BUILTIN_BACKEND "")
+
+if(WITH_FRAMEBUFFER AND HAVE_FRAMEBUFFER)
+  set(OPENCV_HIGHGUI_BUILTIN_BACKEND "FB")
+  add_definitions(-DHAVE_FRAMEBUFFER)
+  list(APPEND highgui_srcs ${CMAKE_CURRENT_LIST_DIR}/src/window_framebuffer.cpp)
+  list(APPEND highgui_hdrs ${CMAKE_CURRENT_LIST_DIR}/src/window_framebuffer.hpp)
+  if(HAVE_FRAMEBUFFER_XVFB)
+    add_definitions(-DHAVE_FRAMEBUFFER_XVFB)
+  endif()
+endif()
 
 if(WITH_WAYLAND AND HAVE_WAYLAND)
   set(OPENCV_HIGHGUI_BUILTIN_BACKEND "Wayland")
@@ -73,6 +76,7 @@ if(WITH_WAYLAND AND HAVE_WAYLAND)
     endif()
   endif()
 
+  ocv_module_include_directories(${WAYLAND_CLIENT_INCLUDE_DIRS} ${XKBCOMMON_INCLUDE_DIRS})
 elseif(HAVE_QT)
   set(OPENCV_HIGHGUI_BUILTIN_BACKEND "QT${QT_VERSION_MAJOR}")
   add_definitions(-DHAVE_QT)
@@ -114,7 +118,7 @@ elseif(HAVE_QT)
     endif()
 
     foreach(dt_dep ${qt_deps})
-      add_definitions(${Qt${QT_VERSION_MAJOR}${dt_dep}_DEFINITIONS})
+      link_libraries(${Qt${QT_VERSION_MAJOR}${dt_dep}})
       include_directories(${Qt${QT_VERSION_MAJOR}${dt_dep}_INCLUDE_DIRS})
       list(APPEND HIGHGUI_LIBRARIES ${Qt${QT_VERSION_MAJOR}${dt_dep}_LIBRARIES})
     endforeach()
@@ -137,41 +141,6 @@ elseif(HAVE_QT)
     if(${_have_flag})
       set_source_files_properties(${_RCC_OUTFILES} PROPERTIES COMPILE_FLAGS -Wno-missing-declarations)
     endif()
-  endif()
-elseif(WINRT)
-  set(OPENCV_HIGHGUI_BUILTIN_BACKEND "WINRT")
-  if(NOT WINRT_8_0)
-    # Dependencies used by the implementation referenced
-    # below are not available on WinRT 8.0.
-    # Enabling it for WiRT 8.1+ only.
-
-    # WinRT 8.1+ detected. Adding WinRT API header.
-    message(STATUS "  ${name}: WinRT detected. Adding WinRT API header")
-    list(APPEND highgui_ext_hdrs "${CMAKE_CURRENT_LIST_DIR}/include/opencv2/${name}/highgui_winrt.hpp")
-
-
-    list(APPEND highgui_srcs
-      ${CMAKE_CURRENT_LIST_DIR}/src/window_winrt.cpp
-      ${CMAKE_CURRENT_LIST_DIR}/src/window_winrt_bridge.cpp)
-    list(APPEND highgui_hdrs
-      ${CMAKE_CURRENT_LIST_DIR}/src/window_winrt_bridge.hpp)
-  endif()
-
-  # libraries below are neither available nor required
-  # on ARM devices and/or Windows Phone
-  if(HIGHGUI_LIBRARIES AND (WINRT_PHONE OR (OpenCV_ARCH STREQUAL "ARM")))
-    list(REMOVE_ITEM HIGHGUI_LIBRARIES "comctl32" "gdi32" "ole32" "setupapi")
-    if(WINRT_PHONE)
-      message(STATUS "  ${name}: Windows Phone detected")
-    elseif(OpenCV_ARCH STREQUAL "ARM")
-      message(STATUS "  ${name}: ARM detected")
-      if(WINRT_STORE)
-        list(REMOVE_ITEM HIGHGUI_LIBRARIES "ws2_32")
-        message(STATUS "  ${name}:   Removing 'ws2_32.lib'")
-      endif()
-    endif()
-    message(STATUS "  ${name}:   Removing 'comctl32.lib, gdi32.lib, ole32.lib, setupapi.lib'")
-    message(STATUS "  ${name}:   Leaving '${HIGHGUI_LIBRARIES}'")
   endif()
 elseif(HAVE_COCOA)
   set(OPENCV_HIGHGUI_BUILTIN_BACKEND "COCOA")
@@ -208,6 +177,9 @@ if(TARGET ocv.3rdparty.gtk3 OR TARGET ocv.3rdparty.gtk2)
   )
     if(__gtk_dependency STREQUAL "ocv.3rdparty.gtk3")
       set(OPENCV_HIGHGUI_BUILTIN_BACKEND "GTK3")
+      if(OPENGL_LIBRARIES)
+        list(APPEND HIGHGUI_LIBRARIES "${OPENGL_LIBRARIES}")
+      endif()
     elseif(__gtk_dependency STREQUAL "ocv.3rdparty.gtk2")
       set(OPENCV_HIGHGUI_BUILTIN_BACKEND "GTK2")
     else()
@@ -215,9 +187,6 @@ if(TARGET ocv.3rdparty.gtk3 OR TARGET ocv.3rdparty.gtk2)
     endif()
     list(APPEND highgui_srcs ${CMAKE_CURRENT_LIST_DIR}/src/window_gtk.cpp)
     list(APPEND tgts ${__gtk_dependency})
-    if(TARGET ocv.3rdparty.gthread)
-      list(APPEND tgts ocv.3rdparty.gthread)
-    endif()
     if(TARGET ocv.3rdparty.gtkglext
         AND __gtk_dependency STREQUAL "ocv.3rdparty.gtk2"
         AND NOT OPENCV_GTK_DISABLE_GTKGLEXT
@@ -232,27 +201,18 @@ if(TARGET ocv.3rdparty.gtk3 OR TARGET ocv.3rdparty.gtk2)
     endif()
   elseif("gtk" IN_LIST HIGHGUI_PLUGIN_LIST)
     ocv_create_builtin_highgui_plugin(opencv_highgui_gtk ${__gtk_dependency} "window_gtk.cpp")
-    if(TARGET ocv.3rdparty.gthread)
-      ocv_target_link_libraries(opencv_highgui_gtk ocv.3rdparty.gthread)
-    endif()
     if(TARGET ocv.3rdparty.gtkglext)
       ocv_target_link_libraries(opencv_highgui_gtk ocv.3rdparty.gtkglext)
     endif()
   else()
     if(TARGET ocv.3rdparty.gtk3 AND ("gtk3" IN_LIST HIGHGUI_PLUGIN_LIST OR HIGHGUI_PLUGIN_LIST STREQUAL "all"))
       ocv_create_builtin_highgui_plugin(opencv_highgui_gtk3 ocv.3rdparty.gtk3 "window_gtk.cpp")
-      if(TARGET ocv.3rdparty.gthread)
-        ocv_target_link_libraries(opencv_highgui_gtk3 ocv.3rdparty.gthread)
-      endif()
       if(TARGET ocv.3rdparty.gtkglext)
         ocv_target_link_libraries(opencv_highgui_gtk3 ocv.3rdparty.gtkglext)
       endif()
     endif()
     if(TARGET ocv.3rdparty.gtk2 AND ("gtk2" IN_LIST HIGHGUI_PLUGIN_LIST OR HIGHGUI_PLUGIN_LIST STREQUAL "all"))
       ocv_create_builtin_highgui_plugin(opencv_highgui_gtk2 ocv.3rdparty.gtk2 "window_gtk.cpp")
-      if(TARGET ocv.3rdparty.gthread)
-        ocv_target_link_libraries(opencv_highgui_gtk2 ocv.3rdparty.gthread)
-      endif()
       if(TARGET ocv.3rdparty.gtkglext)
         ocv_target_link_libraries(opencv_highgui_gtk2 ocv.3rdparty.gtkglext)
       endif()

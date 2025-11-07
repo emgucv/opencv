@@ -3,7 +3,6 @@ Helper module to download extra data from Internet
 '''
 from __future__ import print_function
 import os
-import cv2
 import sys
 import yaml
 import argparse
@@ -15,7 +14,7 @@ import requests
 import shutil
 from pathlib import Path
 from datetime import datetime
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 import xml.etree.ElementTree as ET
 
 __all__ = ["downloadFile"]
@@ -42,6 +41,9 @@ def getHashsumFromFile(filepath):
     return hashsum
 
 def checkHashsum(expected_sha, filepath, silent=True):
+    if not os.path.exists(filepath):
+        print(f"{filepath} does not exist. Skipping hashsum matching")
+        return False
     print('  expected SHA1: {}'.format(expected_sha))
     actual_sha = getHashsumFromFile(filepath)
     print('  actual SHA1:{}'.format(actual_sha))
@@ -159,6 +161,8 @@ class Loader(object):
                 if self.archive_member is None:
                     pathDict = dict((os.path.split(elem)[1], os.path.split(elem)[0]) for elem in f.getnames())
                     self.archive_member = pathDict[requested_file]
+                    if self.archive_member == "":
+                        self.archive_member = requested_file
                 assert self.archive_member in f.getnames()
                 self.save(filepath, f.extractfile(self.archive_member))
         except Exception as e:
@@ -184,9 +188,11 @@ class URLLoader(Loader):
         self.url = url
 
     def download(self, filepath):
-        r = urlopen(self.url, timeout=60)
-        self.printRequest(r)
-        self.save(filepath, r)
+        headers = {'User-Agent': 'Wget/1.20.3'}
+        req = Request(self.url, headers=headers)
+        with urlopen(req, timeout=60) as r:
+            self.printRequest(r)
+            self.save(filepath, r)
         return os.path.getsize(filepath)
 
     def printRequest(self, r):
@@ -322,21 +328,37 @@ def parseMetalinkFile(metalink_filepath, save_dir):
         models.append(produceDownloadInstance(name, fname, hash_sum, url, save_dir))
     return models
 
-def parseYAMLFile(yaml_filepath, save_dir):
+def parseYAMLFile(yaml_filepath, save_dir, model_name):
     models = []
     with open(yaml_filepath, 'r') as stream:
         data_loaded = yaml.safe_load(stream)
         for name, params in data_loaded.items():
-            load_info = params.get("load_info", None)
-            if load_info:
-                fname = os.path.basename(params.get("model"))
-                hash_sum = load_info.get("sha1")
-                url = load_info.get("url")
-                download_sha = load_info.get("download_sha")
-                download_name = load_info.get("download_name")
-                archive_member = load_info.get("member")
-                models.append(produceDownloadInstance(name, fname, hash_sum, url, save_dir,
-                    download_name=download_name, download_sha=download_sha, archive_member=archive_member))
+            if model_name != "" and name != model_name:
+                continue
+            for key in params.keys():
+                if key.endswith("load_info"):
+                    prefix = key[:-len('load_info')]
+                    load_info = params.get(prefix+"load_info", None)
+                    if load_info:
+                        print(prefix)
+                        if prefix == "config_":
+                            fname = os.path.basename(params.get("config"))
+                            hash_sum = load_info.get("sha1")
+                            url = load_info.get("url")
+                            download_sha = load_info.get("download_sha")
+                            download_name = load_info.get("download_name")
+                            archive_member = load_info.get("member")
+                            models.append(produceDownloadInstance(name, fname, hash_sum, url, save_dir,
+                                download_name=download_name, download_sha=download_sha, archive_member=archive_member))
+                        else:
+                            fname = os.path.basename(params.get(prefix+"model"))
+                            hash_sum = load_info.get(prefix+"sha1")
+                            url = load_info.get(prefix+"url")
+                            download_sha = load_info.get(prefix+"download_sha")
+                            download_name = load_info.get(prefix+"download_name")
+                            archive_member = load_info.get(prefix+"member")
+                            models.append(produceDownloadInstance(name, fname, hash_sum, url, save_dir,
+                                download_name=download_name, download_sha=download_sha, archive_member=archive_member))
 
     return models
 
@@ -352,7 +374,7 @@ if __name__ == '__main__':
     save_dir = args.save_dir
     selected_model_name = args.model_name
     models.extend(parseMetalinkFile('face_detector/weights.meta4', save_dir))
-    models.extend(parseYAMLFile('models.yml', save_dir))
+    models.extend(parseYAMLFile('models.yml', save_dir, selected_model_name))
     for m in models:
         print(m)
         if selected_model_name and not m.name.startswith(selected_model_name):

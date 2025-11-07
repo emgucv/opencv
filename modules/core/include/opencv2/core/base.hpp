@@ -60,72 +60,6 @@
 namespace cv
 {
 
-//! @addtogroup core_utils
-//! @{
-
-namespace Error {
-//! error codes
-enum Code {
-    StsOk=                       0,  //!< everything is ok
-    StsBackTrace=               -1,  //!< pseudo error for back trace
-    StsError=                   -2,  //!< unknown /unspecified error
-    StsInternal=                -3,  //!< internal error (bad state)
-    StsNoMem=                   -4,  //!< insufficient memory
-    StsBadArg=                  -5,  //!< function arg/param is bad
-    StsBadFunc=                 -6,  //!< unsupported function
-    StsNoConv=                  -7,  //!< iteration didn't converge
-    StsAutoTrace=               -8,  //!< tracing
-    HeaderIsNull=               -9,  //!< image header is NULL
-    BadImageSize=              -10,  //!< image size is invalid
-    BadOffset=                 -11,  //!< offset is invalid
-    BadDataPtr=                -12,  //!<
-    BadStep=                   -13,  //!< image step is wrong, this may happen for a non-continuous matrix.
-    BadModelOrChSeq=           -14,  //!<
-    BadNumChannels=            -15,  //!< bad number of channels, for example, some functions accept only single channel matrices.
-    BadNumChannel1U=           -16,  //!<
-    BadDepth=                  -17,  //!< input image depth is not supported by the function
-    BadAlphaChannel=           -18,  //!<
-    BadOrder=                  -19,  //!< number of dimensions is out of range
-    BadOrigin=                 -20,  //!< incorrect input origin
-    BadAlign=                  -21,  //!< incorrect input align
-    BadCallBack=               -22,  //!<
-    BadTileSize=               -23,  //!<
-    BadCOI=                    -24,  //!< input COI is not supported
-    BadROISize=                -25,  //!< incorrect input roi
-    MaskIsTiled=               -26,  //!<
-    StsNullPtr=                -27,  //!< null pointer
-    StsVecLengthErr=           -28,  //!< incorrect vector length
-    StsFilterStructContentErr= -29,  //!< incorrect filter structure content
-    StsKernelStructContentErr= -30,  //!< incorrect transform kernel content
-    StsFilterOffsetErr=        -31,  //!< incorrect filter offset value
-    StsBadSize=                -201, //!< the input/output structure size is incorrect
-    StsDivByZero=              -202, //!< division by zero
-    StsInplaceNotSupported=    -203, //!< in-place operation is not supported
-    StsObjectNotFound=         -204, //!< request can't be completed
-    StsUnmatchedFormats=       -205, //!< formats of input/output arrays differ
-    StsBadFlag=                -206, //!< flag is wrong or not supported
-    StsBadPoint=               -207, //!< bad CvPoint
-    StsBadMask=                -208, //!< bad format of mask (neither 8uC1 nor 8sC1)
-    StsUnmatchedSizes=         -209, //!< sizes of input/output structures do not match
-    StsUnsupportedFormat=      -210, //!< the data format/type is not supported by the function
-    StsOutOfRange=             -211, //!< some of parameters are out of range
-    StsParseError=             -212, //!< invalid syntax/structure of the parsed file
-    StsNotImplemented=         -213, //!< the requested function/feature is not implemented
-    StsBadMemBlock=            -214, //!< an allocated block has been corrupted
-    StsAssert=                 -215, //!< assertion failed
-    GpuNotSupported=           -216, //!< no CUDA support
-    GpuApiCallError=           -217, //!< GPU API call error
-    OpenGlNotSupported=        -218, //!< no OpenGL support
-    OpenGlApiCallError=        -219, //!< OpenGL API call error
-    OpenCLApiCallError=        -220, //!< OpenCL API call error
-    OpenCLDoubleNotSupported=  -221,
-    OpenCLInitError=           -222, //!< OpenCL initialization error
-    OpenCLNoAMDBlasFft=        -223
-};
-} //Error
-
-//! @} core_utils
-
 //! @addtogroup core_array
 //! @{
 
@@ -263,117 +197,89 @@ enum DftFlags {
     DCT_ROWS           = DFT_ROWS
 };
 
-//! Various border types, image boundaries are denoted with `|`
-//! @see borderInterpolate, copyMakeBorder
+/*! Various border types, image boundaries are denoted with the `|` character in the table below, when describing each method.
+
+The following examples show the result of the @ref copyMakeBorder call according to different methods.
+Input image is `6x4` (width x height) size and the @ref copyMakeBorder function is used with a border size of 2 pixels
+in each direction, giving a resulting image of `10x8` resolution.
+
+@code
+Input image:
+[[ 0  1  2  3  4  5]
+ [ 6  7  8  9 10 11]
+ [12 13 14 15 16 17]
+ [18 19 20 21 22 23]]
+
+Border type: BORDER_CONSTANT (a constant value of 255 is used)
+[[255 255 255 255 255 255 255 255 255 255]
+ [255 255 255 255 255 255 255 255 255 255]
+ [255 255   0   1   2   3   4   5 255 255]
+ [255 255   6   7   8   9  10  11 255 255]
+ [255 255  12  13  14  15  16  17 255 255]
+ [255 255  18  19  20  21  22  23 255 255]
+ [255 255 255 255 255 255 255 255 255 255]
+ [255 255 255 255 255 255 255 255 255 255]]
+
+Border type: BORDER_REPLICATE
+[[ 0  0  0  1  2  3  4  5  5  5]
+ [ 0  0  0  1  2  3  4  5  5  5]
+ [ 0  0  0  1  2  3  4  5  5  5]
+ [ 6  6  6  7  8  9 10 11 11 11]
+ [12 12 12 13 14 15 16 17 17 17]
+ [18 18 18 19 20 21 22 23 23 23]
+ [18 18 18 19 20 21 22 23 23 23]
+ [18 18 18 19 20 21 22 23 23 23]]
+
+Border type: BORDER_REFLECT
+[[ 7  6  6  7  8  9 10 11 11 10]
+ [ 1  0  0  1  2  3  4  5  5  4]
+ [ 1  0  0  1  2  3  4  5  5  4]
+ [ 7  6  6  7  8  9 10 11 11 10]
+ [13 12 12 13 14 15 16 17 17 16]
+ [19 18 18 19 20 21 22 23 23 22]
+ [19 18 18 19 20 21 22 23 23 22]
+ [13 12 12 13 14 15 16 17 17 16]]
+
+Border type: BORDER_WRAP
+[[16 17 12 13 14 15 16 17 12 13]
+ [22 23 18 19 20 21 22 23 18 19]
+ [ 4  5  0  1  2  3  4  5  0  1]
+ [10 11  6  7  8  9 10 11  6  7]
+ [16 17 12 13 14 15 16 17 12 13]
+ [22 23 18 19 20 21 22 23 18 19]
+ [ 4  5  0  1  2  3  4  5  0  1]
+ [10 11  6  7  8  9 10 11  6  7]]
+
+Border type: BORDER_REFLECT_101
+[[14 13 12 13 14 15 16 17 16 15]
+ [ 8  7  6  7  8  9 10 11 10  9]
+ [ 2  1  0  1  2  3  4  5  4  3]
+ [ 8  7  6  7  8  9 10 11 10  9]
+ [14 13 12 13 14 15 16 17 16 15]
+ [20 19 18 19 20 21 22 23 22 21]
+ [14 13 12 13 14 15 16 17 16 15]
+ [ 8  7  6  7  8  9 10 11 10  9]]
+@endcode
+
+@see borderInterpolate, copyMakeBorder
+ */
 enum BorderTypes {
     BORDER_CONSTANT    = 0, //!< `iiiiii|abcdefgh|iiiiiii`  with some specified `i`
     BORDER_REPLICATE   = 1, //!< `aaaaaa|abcdefgh|hhhhhhh`
     BORDER_REFLECT     = 2, //!< `fedcba|abcdefgh|hgfedcb`
     BORDER_WRAP        = 3, //!< `cdefgh|abcdefgh|abcdefg`
     BORDER_REFLECT_101 = 4, //!< `gfedcb|abcdefgh|gfedcba`
-    BORDER_TRANSPARENT = 5, //!< `uvwxyz|abcdefgh|ijklmno`
+    BORDER_TRANSPARENT = 5, //!< `uvwxyz|abcdefgh|ijklmno` - Treats outliers as transparent.
 
     BORDER_REFLECT101  = BORDER_REFLECT_101, //!< same as BORDER_REFLECT_101
     BORDER_DEFAULT     = BORDER_REFLECT_101, //!< same as BORDER_REFLECT_101
-    BORDER_ISOLATED    = 16 //!< do not look outside of ROI
+    BORDER_ISOLATED    = 16 //!< Interpolation restricted within the ROI boundaries.
 };
 
 //! @} core_array
 
 //! @addtogroup core_utils
 //! @{
-
-/*! @brief Signals an error and raises the exception.
-
-By default the function prints information about the error to stderr,
-then it either stops if setBreakOnError() had been called before or raises the exception.
-It is possible to alternate error processing by using redirectError().
-@param _code - error code (Error::Code)
-@param _err - error description
-@param _func - function name. Available only when the compiler supports getting it
-@param _file - source file name where the error has occurred
-@param _line - line number in the source file where the error has occurred
-@see CV_Error, CV_Error_, CV_Assert, CV_DbgAssert
- */
-CV_EXPORTS CV_NORETURN void error(int _code, const String& _err, const char* _func, const char* _file, int _line);
-
-#ifdef CV_STATIC_ANALYSIS
-
-// In practice, some macro are not processed correctly (noreturn is not detected).
-// We need to use simplified definition for them.
-#define CV_Error(code, msg) do { (void)(code); (void)(msg); abort(); } while (0)
-#define CV_Error_(code, args) do { (void)(code); (void)(cv::format args); abort(); } while (0)
-#define CV_Assert( expr ) do { if (!(expr)) abort(); } while (0)
-
-#else // CV_STATIC_ANALYSIS
-
-/** @brief Call the error handler.
-
-Currently, the error handler prints the error code and the error message to the standard
-error stream `stderr`. In the Debug configuration, it then provokes memory access violation, so that
-the execution stack and all the parameters can be analyzed by the debugger. In the Release
-configuration, the exception is thrown.
-
-@param code one of Error::Code
-@param msg error message
-*/
-#define CV_Error( code, msg ) cv::error( code, msg, CV_Func, __FILE__, __LINE__ )
-
-/**  @brief Call the error handler.
-
-This macro can be used to construct an error message on-fly to include some dynamic information,
-for example:
-@code
-    // note the extra parentheses around the formatted text message
-    CV_Error_(Error::StsOutOfRange,
-    ("the value at (%d, %d)=%g is out of range", badPt.x, badPt.y, badValue));
-@endcode
-@param code one of Error::Code
-@param args printf-like formatted error message in parentheses
-*/
-#define CV_Error_( code, args ) cv::error( code, cv::format args, CV_Func, __FILE__, __LINE__ )
-
-/** @brief Checks a condition at runtime and throws exception if it fails
-
-The macros CV_Assert (and CV_DbgAssert(expr)) evaluate the specified expression. If it is 0, the macros
-raise an error (see cv::error). The macro CV_Assert checks the condition in both Debug and Release
-configurations while CV_DbgAssert is only retained in the Debug configuration.
-*/
-#define CV_Assert( expr ) do { if(!!(expr)) ; else cv::error( cv::Error::StsAssert, #expr, CV_Func, __FILE__, __LINE__ ); } while(0)
-
-#endif // CV_STATIC_ANALYSIS
-
-//! @cond IGNORED
-#if !defined(__OPENCV_BUILD)  // TODO: backward compatibility only
-#ifndef CV_ErrorNoReturn
-#define CV_ErrorNoReturn CV_Error
-#endif
-#ifndef CV_ErrorNoReturn_
-#define CV_ErrorNoReturn_ CV_Error_
-#endif
-#endif
-
-#define CV_Assert_1 CV_Assert
-#define CV_Assert_2( expr, ... ) CV_Assert_1(expr); __CV_EXPAND(CV_Assert_1( __VA_ARGS__ ))
-#define CV_Assert_3( expr, ... ) CV_Assert_1(expr); __CV_EXPAND(CV_Assert_2( __VA_ARGS__ ))
-#define CV_Assert_4( expr, ... ) CV_Assert_1(expr); __CV_EXPAND(CV_Assert_3( __VA_ARGS__ ))
-#define CV_Assert_5( expr, ... ) CV_Assert_1(expr); __CV_EXPAND(CV_Assert_4( __VA_ARGS__ ))
-#define CV_Assert_6( expr, ... ) CV_Assert_1(expr); __CV_EXPAND(CV_Assert_5( __VA_ARGS__ ))
-#define CV_Assert_7( expr, ... ) CV_Assert_1(expr); __CV_EXPAND(CV_Assert_6( __VA_ARGS__ ))
-#define CV_Assert_8( expr, ... ) CV_Assert_1(expr); __CV_EXPAND(CV_Assert_7( __VA_ARGS__ ))
-#define CV_Assert_9( expr, ... ) CV_Assert_1(expr); __CV_EXPAND(CV_Assert_8( __VA_ARGS__ ))
-#define CV_Assert_10( expr, ... ) CV_Assert_1(expr); __CV_EXPAND(CV_Assert_9( __VA_ARGS__ ))
-
-#define CV_Assert_N(...) do { __CV_EXPAND(__CV_CAT(CV_Assert_, __CV_VA_NUM_ARGS(__VA_ARGS__)) (__VA_ARGS__)); } while(0)
-
-//! @endcond
-
-#if defined _DEBUG || defined CV_STATIC_ANALYSIS
-#  define CV_DbgAssert(expr) CV_Assert(expr)
-#else
-/** replaced with CV_Assert(expr) in Debug configuration */
-#  define CV_DbgAssert(expr)
-#endif
 
 /*
  * Hamming distance functor - counts the bit differences between two strings - useful for the Brief descriptor
@@ -394,27 +300,35 @@ typedef Hamming HammingLUT;
 
 /////////////////////////////////// inline norms ////////////////////////////////////
 
-template<typename _Tp> inline _Tp cv_abs(_Tp x) { return std::abs(x); }
+template<typename _Tp> inline _Tp cv_abs(_Tp x) { return (_Tp)std::abs(x); }
+template<typename _Tp> inline _Tp cv_absdiff(_Tp x, _Tp y) { return (_Tp)std::abs(x - y); }
 inline int cv_abs(uchar x) { return x; }
 inline int cv_abs(schar x) { return std::abs(x); }
 inline int cv_abs(ushort x) { return x; }
 inline int cv_abs(short x) { return std::abs(x); }
+inline unsigned cv_abs(int x) { return (unsigned)std::abs(x); }
+inline unsigned cv_abs(unsigned x) { return x; }
+inline uint64 cv_abs(uint64 x) { return x; }
+inline uint64 cv_abs(int64 x) { return (uint64)std::abs(x); }
+inline float cv_abs(hfloat x) { return std::abs((float)x); }
+inline float cv_abs(bfloat x) { return std::abs((float)x); }
+inline int cv_absdiff(uchar x, uchar y) { return (int)std::abs((int)x - (int)y); }
+inline int cv_absdiff(schar x, schar y) { return (int)std::abs((int)x - (int)y); }
+inline int cv_absdiff(ushort x, ushort y) { return (int)std::abs((int)x - (int)y); }
+inline int cv_absdiff(short x, short y) { return (int)std::abs((int)x - (int)y); }
+inline unsigned cv_absdiff(int x, int y) { return (unsigned)(std::max(x, y) - std::min(x, y)); }
+inline unsigned cv_absdiff(unsigned x, unsigned y) { return std::max(x, y) - std::min(x, y); }
+inline uint64 cv_absdiff(uint64 x, uint64 y) { return std::max(x, y) - std::min(x, y); }
+inline float cv_absdiff(hfloat x, hfloat y) { return std::abs((float)x - (float)y); }
+inline float cv_absdiff(bfloat x, bfloat y) { return std::abs((float)x - (float)y); }
 
 template<typename _Tp, typename _AccTp> static inline
 _AccTp normL2Sqr(const _Tp* a, int n)
 {
     _AccTp s = 0;
-    int i=0;
-#if CV_ENABLE_UNROLLED
-    for( ; i <= n - 4; i += 4 )
+    for( int i = 0; i < n; i++ )
     {
-        _AccTp v0 = a[i], v1 = a[i+1], v2 = a[i+2], v3 = a[i+3];
-        s += v0*v0 + v1*v1 + v2*v2 + v3*v3;
-    }
-#endif
-    for( ; i < n; i++ )
-    {
-        _AccTp v = a[i];
+        _AccTp v = (_AccTp)a[i];
         s += v*v;
     }
     return s;
@@ -424,15 +338,7 @@ template<typename _Tp, typename _AccTp> static inline
 _AccTp normL1(const _Tp* a, int n)
 {
     _AccTp s = 0;
-    int i = 0;
-#if CV_ENABLE_UNROLLED
-    for(; i <= n - 4; i += 4 )
-    {
-        s += (_AccTp)cv_abs(a[i]) + (_AccTp)cv_abs(a[i+1]) +
-            (_AccTp)cv_abs(a[i+2]) + (_AccTp)cv_abs(a[i+3]);
-    }
-#endif
-    for( ; i < n; i++ )
+    for( int i = 0; i < n; i++ )
         s += cv_abs(a[i]);
     return s;
 }
@@ -450,28 +356,9 @@ template<typename _Tp, typename _AccTp> static inline
 _AccTp normL2Sqr(const _Tp* a, const _Tp* b, int n)
 {
     _AccTp s = 0;
-    int i= 0;
-#if CV_ENABLE_UNROLLED
-    for(; i <= n - 4; i += 4 )
-    {
-        _AccTp v0 = _AccTp(a[i] - b[i]), v1 = _AccTp(a[i+1] - b[i+1]), v2 = _AccTp(a[i+2] - b[i+2]), v3 = _AccTp(a[i+3] - b[i+3]);
-        s += v0*v0 + v1*v1 + v2*v2 + v3*v3;
-    }
-#endif
-    for( ; i < n; i++ )
-    {
-        _AccTp v = _AccTp(a[i] - b[i]);
-        s += v*v;
-    }
-    return s;
-}
-
-static inline float normL2Sqr(const float* a, const float* b, int n)
-{
-    float s = 0.f;
     for( int i = 0; i < n; i++ )
     {
-        float v = a[i] - b[i];
+        _AccTp v = (_AccTp)a[i] - (_AccTp)b[i];
         s += v*v;
     }
     return s;
@@ -481,39 +368,8 @@ template<typename _Tp, typename _AccTp> static inline
 _AccTp normL1(const _Tp* a, const _Tp* b, int n)
 {
     _AccTp s = 0;
-    int i= 0;
-#if CV_ENABLE_UNROLLED
-    for(; i <= n - 4; i += 4 )
-    {
-        _AccTp v0 = _AccTp(a[i] - b[i]), v1 = _AccTp(a[i+1] - b[i+1]), v2 = _AccTp(a[i+2] - b[i+2]), v3 = _AccTp(a[i+3] - b[i+3]);
-        s += std::abs(v0) + std::abs(v1) + std::abs(v2) + std::abs(v3);
-    }
-#endif
-    for( ; i < n; i++ )
-    {
-        _AccTp v = _AccTp(a[i] - b[i]);
-        s += std::abs(v);
-    }
-    return s;
-}
-
-inline float normL1(const float* a, const float* b, int n)
-{
-    float s = 0.f;
     for( int i = 0; i < n; i++ )
-    {
-        s += std::abs(a[i] - b[i]);
-    }
-    return s;
-}
-
-inline int normL1(const uchar* a, const uchar* b, int n)
-{
-    int s = 0;
-    for( int i = 0; i < n; i++ )
-    {
-        s += std::abs(a[i] - b[i]);
-    }
+        s += (_AccTp)cv_absdiff(a[i], b[i]);
     return s;
 }
 
@@ -522,10 +378,7 @@ _AccTp normInf(const _Tp* a, const _Tp* b, int n)
 {
     _AccTp s = 0;
     for( int i = 0; i < n; i++ )
-    {
-        _AccTp v0 = a[i] - b[i];
-        s = std::max(s, std::abs(v0));
-    }
+        s = std::max(s, (_AccTp)cv_absdiff(a[i], b[i]));
     return s;
 }
 
@@ -566,65 +419,10 @@ CV_EXPORTS bool Cholesky(float* A, size_t astep, int m, float* b, size_t bstep, 
 /** proxy for hal::Cholesky */
 CV_EXPORTS bool Cholesky(double* A, size_t astep, int m, double* b, size_t bstep, int n);
 
-////////////////// forward declarations for important OpenCV types //////////////////
+//! @} core_utils
+
 
 //! @cond IGNORED
-
-template<typename _Tp, int cn> class Vec;
-template<typename _Tp, int m, int n> class Matx;
-
-template<typename _Tp> class Complex;
-template<typename _Tp> class Point_;
-template<typename _Tp> class Point3_;
-template<typename _Tp> class Size_;
-template<typename _Tp> class Rect_;
-template<typename _Tp> class Scalar_;
-
-class CV_EXPORTS RotatedRect;
-class CV_EXPORTS Range;
-class CV_EXPORTS TermCriteria;
-class CV_EXPORTS KeyPoint;
-class CV_EXPORTS DMatch;
-class CV_EXPORTS RNG;
-
-class CV_EXPORTS Mat;
-class CV_EXPORTS MatExpr;
-
-class CV_EXPORTS UMat;
-
-class CV_EXPORTS SparseMat;
-typedef Mat MatND;
-
-template<typename _Tp> class Mat_;
-template<typename _Tp> class SparseMat_;
-
-class CV_EXPORTS MatConstIterator;
-class CV_EXPORTS SparseMatIterator;
-class CV_EXPORTS SparseMatConstIterator;
-template<typename _Tp> class MatIterator_;
-template<typename _Tp> class MatConstIterator_;
-template<typename _Tp> class SparseMatIterator_;
-template<typename _Tp> class SparseMatConstIterator_;
-
-namespace ogl
-{
-    class CV_EXPORTS Buffer;
-    class CV_EXPORTS Texture2D;
-    class CV_EXPORTS Arrays;
-}
-
-namespace cuda
-{
-    class CV_EXPORTS GpuMat;
-    class CV_EXPORTS HostMem;
-    class CV_EXPORTS Stream;
-    class CV_EXPORTS Event;
-}
-
-namespace cudev
-{
-    template <typename _Tp> class GpuMat_;
-}
 
 namespace ipp
 {
@@ -650,15 +448,12 @@ static inline void setUseIPP_NE(bool flag) { setUseIPP_NotExact(flag); }
 
 //! @endcond
 
-//! @} core_utils
-
-
-
-
 } // cv
 
+#include "opencv2/core/fwddecl.hpp"
 #include "opencv2/core/neon_utils.hpp"
 #include "opencv2/core/vsx_utils.hpp"
+#include "opencv2/core/exception.hpp"
 #include "opencv2/core/check.hpp"
 
 #endif //OPENCV_CORE_BASE_HPP

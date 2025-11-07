@@ -72,8 +72,10 @@
 #  define CV_AVX 1
 #endif
 #ifdef CV_CPU_COMPILE_FP16
-#  if defined(__arm__) || defined(__aarch64__) || defined(_M_ARM) || defined(_M_ARM64)
+#  if defined(__arm__) || defined(__aarch64__) || defined(_M_ARM) || defined(_M_ARM64) || defined(_M_ARM64EC)
 #    include <arm_neon.h>
+#  elif defined(__riscv_vector)
+#    include <riscv_vector.h>
 #  else
 #    include <immintrin.h>
 #  endif
@@ -137,22 +139,32 @@
 #  define CV_FMA3 1
 #endif
 
-#if defined _WIN32 && (defined(_M_ARM) || defined(_M_ARM64)) && (defined(CV_CPU_COMPILE_NEON) || !defined(_MSC_VER))
+#if defined _WIN32 && (defined(_M_ARM) || defined(_M_ARM64) || defined(_M_ARM64EC)) && (defined(CV_CPU_COMPILE_NEON) || !defined(_MSC_VER))
 # include <Intrin.h>
 # include <arm_neon.h>
 # define CV_NEON 1
-#elif defined(__ARM_NEON__) || (defined (__ARM_NEON) && defined(__aarch64__))
+#elif defined(__ARM_NEON)
 #  include <arm_neon.h>
 #  define CV_NEON 1
 #endif
 
-#if defined(__riscv) && defined(__riscv_vector) && defined(__riscv_vector_071)
-# include<riscv-vector.h>
-# define CV_RVV071 1
-#endif
-
-#if defined(__ARM_NEON__) || defined(__aarch64__)
-#  include <arm_neon.h>
+/* RVV-related macro states with different compiler
+// +--------------------+----------+----------+
+// | Macro              | Upstream | XuanTie  |
+// +--------------------+----------+----------+
+// | CV_CPU_COMPILE_RVV | defined  | defined  |
+// | CV_RVV             | 1        | 0        |
+// | CV_RVV071          | 0        | 1        |
+// | CV_TRY_RVV         | 1        | 1        |
+// +--------------------+----------+----------+
+*/
+#ifdef CV_CPU_COMPILE_RVV
+#  ifdef __riscv_vector_071
+#    define CV_RVV071 1
+#  else
+#    define CV_RVV 1
+#  endif
+#include <riscv_vector.h>
 #endif
 
 #ifdef CV_CPU_COMPILE_VSX
@@ -185,11 +197,6 @@
 #ifdef __EMSCRIPTEN__
 #  define CV_WASM_SIMD 1
 #  include <wasm_simd128.h>
-#endif
-
-#if defined CV_CPU_COMPILE_RVV
-#  define CV_RVV 1
-#  include <riscv_vector.h>
 #endif
 
 #endif // CV_ENABLE_INTRINSICS && !CV_DISABLE_OPTIMIZATION && !__CUDACC__
@@ -225,11 +232,11 @@ struct VZeroUpperGuard {
 #  define CV_MMX 1
 #  define CV_SSE 1
 #  define CV_SSE2 1
-#elif defined _WIN32 && (defined(_M_ARM) || defined(_M_ARM64)) && (defined(CV_CPU_COMPILE_NEON) || !defined(_MSC_VER))
+#elif defined _WIN32 && (defined(_M_ARM) || defined(_M_ARM64) || defined(_M_ARM64EC)) && (defined(CV_CPU_COMPILE_NEON) || !defined(_MSC_VER))
 # include <Intrin.h>
 # include <arm_neon.h>
 # define CV_NEON 1
-#elif defined(__ARM_NEON__) || (defined (__ARM_NEON) && defined(__aarch64__))
+#elif defined(__ARM_NEON)
 #  include <arm_neon.h>
 #  define CV_NEON 1
 #elif defined(__VSX__) && defined(__PPC64__) && defined(__LITTLE_ENDIAN__)
@@ -242,6 +249,11 @@ struct VZeroUpperGuard {
 
 #ifdef __F16C__
 #  include <immintrin.h>
+#  define CV_FP16 1
+#endif
+
+#if defined(__riscv_zvfhmin) && __riscv_zvfhmin || (defined(__riscv_zvfh) && __riscv_zvfh)
+#  include <riscv_vector.h>
 #  define CV_FP16 1
 #endif
 

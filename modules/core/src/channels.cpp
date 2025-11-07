@@ -83,7 +83,9 @@ static MixChannelsFunc getMixchFunc(int depth)
     {
         mixChannels8u, mixChannels8u, mixChannels16u,
         mixChannels16u, mixChannels32s, mixChannels32s,
-        mixChannels64s, 0
+        mixChannels64s, mixChannels16u, mixChannels16u,
+        mixChannels8u, mixChannels64s, mixChannels64s,
+        mixChannels32s, 0
     };
 
     return mixchTab[depth];
@@ -146,6 +148,7 @@ void cv::mixChannels( const Mat* src, size_t nsrcs, Mat* dst, size_t ndsts, cons
     NAryMatIterator it(arrays, ptrs, (int)(nsrcs + ndsts));
     int total = (int)it.size, blocksize = std::min(total, (int)((BLOCK_SIZE + esz1-1)/esz1));
     MixChannelsFunc func = getMixchFunc(depth);
+    CV_Assert(func);
 
     for( i = 0; i < it.nplanes; i++, ++it )
     {

@@ -155,7 +155,7 @@ void magnitude( InputArray src1, InputArray src2, OutputArray dst )
                ocl_math_op(src1, src2, dst, OCL_OP_MAG))
 
     Mat X = src1.getMat(), Y = src2.getMat();
-    dst.create(X.dims, X.size, X.type());
+    dst.create(X.size, X.type());
     Mat Mag = dst.getMat();
 
     const Mat* arrays[] = {&X, &Y, &Mag, 0};
@@ -191,7 +191,7 @@ void phase( InputArray src1, InputArray src2, OutputArray dst, bool angleInDegre
                ocl_math_op(src1, src2, dst, angleInDegrees ? OCL_OP_PHASE_DEGREES : OCL_OP_PHASE_RADIANS))
 
     Mat X = src1.getMat(), Y = src2.getMat();
-    dst.create( X.dims, X.size, type );
+    dst.create( X.size, type );
     Mat Angle = dst.getMat();
 
     const Mat* arrays[] = {&X, &Y, &Angle, 0};
@@ -233,16 +233,26 @@ static bool ocl_cartToPolar( InputArray _src1, InputArray _src2,
             rowsPerWI = d.isIntel() ? 4 : 1;
     bool doubleSupport = d.doubleFPConfig() > 0;
 
+    const bool _src1IsDstMag = (_src1.getObj() == _dst1.getObj());
+    const bool _src1IsDstAngle = (_src1.getObj() == _dst2.getObj());
+    const bool _src2IsDstMag = (_src2.getObj() == _dst1.getObj());
+    const bool _src2IsDstAngle = (_src2.getObj() == _dst2.getObj());
+
     if ( !(_src1.dims() <= 2 && _src2.dims() <= 2 &&
            (depth == CV_32F || depth == CV_64F) && type == _src2.type()) ||
          (depth == CV_64F && !doubleSupport) )
         return false;
 
     ocl::Kernel k("KF", ocl::core::arithm_oclsrc,
-                  format("-D BINARY_OP -D dstT=%s -D DEPTH_dst=%d -D rowsPerWI=%d -D OP_CTP_%s%s",
+                  format("-D BINARY_OP -D dstT=%s -D DEPTH_dst=%d -D rowsPerWI=%d -D OP_CTP_%s%s%s%s%s%s",
                          ocl::typeToStr(CV_MAKE_TYPE(depth, 1)), depth,
                          rowsPerWI, angleInDegrees ? "AD" : "AR",
-                         doubleSupport ? " -D DOUBLE_SUPPORT" : ""));
+                         doubleSupport ? " -D DOUBLE_SUPPORT" : "",
+                         _src1IsDstMag   ? " -D SRC1_IS_DST_MAG" : "",
+                         _src1IsDstAngle ? " -D SRC1_IS_DST_ANGLE" : "",
+                         _src2IsDstMag   ? " -D SRC2_IS_DST_MAG" : "",
+                         _src2IsDstAngle ? " -D SRC2_IS_DST_ANGLE" : ""
+                         ));
     if (k.empty())
         return false;
 
@@ -254,8 +264,8 @@ static bool ocl_cartToPolar( InputArray _src1, InputArray _src2,
     _dst2.create(size, type);
     UMat dst1 = _dst1.getUMat(), dst2 = _dst2.getUMat();
 
-    k.args(ocl::KernelArg::ReadOnlyNoSize(src1),
-           ocl::KernelArg::ReadOnlyNoSize(src2),
+    k.args(_src1IsDstMag || _src1IsDstAngle ? ocl::KernelArg::ReadWriteNoSize(src1) : ocl::KernelArg::ReadOnlyNoSize(src1),
+           _src2IsDstMag || _src2IsDstAngle ? ocl::KernelArg::ReadWriteNoSize(src2) : ocl::KernelArg::ReadOnlyNoSize(src2),
            ocl::KernelArg::WriteOnly(dst1, cn),
            ocl::KernelArg::WriteOnlyNoSize(dst2));
 
@@ -270,8 +280,7 @@ void cartToPolar( InputArray src1, InputArray src2,
 {
     CV_INSTRUMENT_REGION();
 
-    CV_Assert(src1.getObj() != dst1.getObj() && src1.getObj() != dst2.getObj() &&
-              src2.getObj() != dst1.getObj() && src2.getObj() != dst2.getObj());
+    CV_Assert(dst1.getObj() != dst2.getObj());
 
     CV_OCL_RUN(dst1.isUMat() && dst2.isUMat(),
             ocl_cartToPolar(src1, src2, dst1, dst2, angleInDegrees))
@@ -279,8 +288,8 @@ void cartToPolar( InputArray src1, InputArray src2,
     Mat X = src1.getMat(), Y = src2.getMat();
     int type = X.type(), depth = X.depth(), cn = X.channels();
     CV_Assert( X.size == Y.size && type == Y.type() && (depth == CV_32F || depth == CV_64F));
-    dst1.create( X.dims, X.size, type );
-    dst2.create( X.dims, X.size, type );
+    dst1.create( X.size, type );
+    dst2.create( X.size, type );
     Mat Mag = dst1.getMat(), Angle = dst2.getMat();
 
     const Mat* arrays[] = {&X, &Y, &Mag, &Angle, 0};
@@ -298,15 +307,13 @@ void cartToPolar( InputArray src1, InputArray src2,
             {
                 const float *x = (const float*)ptrs[0], *y = (const float*)ptrs[1];
                 float *mag = (float*)ptrs[2], *angle = (float*)ptrs[3];
-                hal::magnitude32f( x, y, mag, len );
-                hal::fastAtan32f( y, x, angle, len, angleInDegrees );
+                hal::cartToPolar32f( x, y, mag, angle, len, angleInDegrees );
             }
             else
             {
                 const double *x = (const double*)ptrs[0], *y = (const double*)ptrs[1];
-                double *angle = (double*)ptrs[3];
-                hal::magnitude64f(x, y, (double*)ptrs[2], len);
-                hal::fastAtan64f(y, x, angle, len, angleInDegrees);
+                double *mag = (double*)ptrs[2], *angle = (double*)ptrs[3];
+                hal::cartToPolar64f(x, y, mag, angle, len, angleInDegrees);
             }
             ptrs[0] += len*esz1;
             ptrs[1] += len*esz1;
@@ -321,149 +328,6 @@ void cartToPolar( InputArray src1, InputArray src2,
 *                                  Polar -> Cartezian                                    *
 \****************************************************************************************/
 
-static void SinCos_32f( const float *angle, float *sinval, float* cosval,
-                        int len, int angle_in_degrees )
-{
-    const int N = 64;
-
-    static const double sin_table[] =
-    {
-     0.00000000000000000000,     0.09801714032956060400,
-     0.19509032201612825000,     0.29028467725446233000,
-     0.38268343236508978000,     0.47139673682599764000,
-     0.55557023301960218000,     0.63439328416364549000,
-     0.70710678118654746000,     0.77301045336273699000,
-     0.83146961230254524000,     0.88192126434835494000,
-     0.92387953251128674000,     0.95694033573220894000,
-     0.98078528040323043000,     0.99518472667219682000,
-     1.00000000000000000000,     0.99518472667219693000,
-     0.98078528040323043000,     0.95694033573220894000,
-     0.92387953251128674000,     0.88192126434835505000,
-     0.83146961230254546000,     0.77301045336273710000,
-     0.70710678118654757000,     0.63439328416364549000,
-     0.55557023301960218000,     0.47139673682599786000,
-     0.38268343236508989000,     0.29028467725446239000,
-     0.19509032201612861000,     0.09801714032956082600,
-     0.00000000000000012246,    -0.09801714032956059000,
-    -0.19509032201612836000,    -0.29028467725446211000,
-    -0.38268343236508967000,    -0.47139673682599764000,
-    -0.55557023301960196000,    -0.63439328416364527000,
-    -0.70710678118654746000,    -0.77301045336273666000,
-    -0.83146961230254524000,    -0.88192126434835494000,
-    -0.92387953251128652000,    -0.95694033573220882000,
-    -0.98078528040323032000,    -0.99518472667219693000,
-    -1.00000000000000000000,    -0.99518472667219693000,
-    -0.98078528040323043000,    -0.95694033573220894000,
-    -0.92387953251128663000,    -0.88192126434835505000,
-    -0.83146961230254546000,    -0.77301045336273688000,
-    -0.70710678118654768000,    -0.63439328416364593000,
-    -0.55557023301960218000,    -0.47139673682599792000,
-    -0.38268343236509039000,    -0.29028467725446250000,
-    -0.19509032201612872000,    -0.09801714032956050600,
-    };
-
-    static const double k2 = (2*CV_PI)/N;
-
-    static const double sin_a0 = -0.166630293345647*k2*k2*k2;
-    static const double sin_a2 = k2;
-
-    static const double cos_a0 = -0.499818138450326*k2*k2;
-    /*static const double cos_a2 =  1;*/
-
-    double k1;
-    int i = 0;
-
-    if( !angle_in_degrees )
-        k1 = N/(2*CV_PI);
-    else
-        k1 = N/360.;
-
-#if CV_AVX2
-    if (USE_AVX2)
-    {
-        __m128d v_k1 = _mm_set1_pd(k1);
-        __m128d v_1 = _mm_set1_pd(1);
-        __m128i v_N1 = _mm_set1_epi32(N - 1);
-        __m128i v_N4 = _mm_set1_epi32(N >> 2);
-        __m128d v_sin_a0 = _mm_set1_pd(sin_a0);
-        __m128d v_sin_a2 = _mm_set1_pd(sin_a2);
-        __m128d v_cos_a0 = _mm_set1_pd(cos_a0);
-
-        for ( ; i <= len - 4; i += 4)
-        {
-            __m128 v_angle = _mm_loadu_ps(angle + i);
-
-            // 0-1
-            __m128d v_t = _mm_mul_pd(_mm_cvtps_pd(v_angle), v_k1);
-            __m128i v_it = _mm_cvtpd_epi32(v_t);
-            v_t = _mm_sub_pd(v_t, _mm_cvtepi32_pd(v_it));
-
-            __m128i v_sin_idx = _mm_and_si128(v_it, v_N1);
-            __m128i v_cos_idx = _mm_and_si128(_mm_sub_epi32(v_N4, v_sin_idx), v_N1);
-
-            __m128d v_t2 = _mm_mul_pd(v_t, v_t);
-            __m128d v_sin_b = _mm_mul_pd(_mm_add_pd(_mm_mul_pd(v_sin_a0, v_t2), v_sin_a2), v_t);
-            __m128d v_cos_b = _mm_add_pd(_mm_mul_pd(v_cos_a0, v_t2), v_1);
-
-            __m128d v_sin_a = _mm_i32gather_pd(sin_table, v_sin_idx, 8);
-            __m128d v_cos_a = _mm_i32gather_pd(sin_table, v_cos_idx, 8);
-
-            __m128d v_sin_val_0 = _mm_add_pd(_mm_mul_pd(v_sin_a, v_cos_b),
-                                             _mm_mul_pd(v_cos_a, v_sin_b));
-            __m128d v_cos_val_0 = _mm_sub_pd(_mm_mul_pd(v_cos_a, v_cos_b),
-                                             _mm_mul_pd(v_sin_a, v_sin_b));
-
-            // 2-3
-            v_t = _mm_mul_pd(_mm_cvtps_pd(_mm_castsi128_ps(_mm_srli_si128(_mm_castps_si128(v_angle), 8))), v_k1);
-            v_it = _mm_cvtpd_epi32(v_t);
-            v_t = _mm_sub_pd(v_t, _mm_cvtepi32_pd(v_it));
-
-            v_sin_idx = _mm_and_si128(v_it, v_N1);
-            v_cos_idx = _mm_and_si128(_mm_sub_epi32(v_N4, v_sin_idx), v_N1);
-
-            v_t2 = _mm_mul_pd(v_t, v_t);
-            v_sin_b = _mm_mul_pd(_mm_add_pd(_mm_mul_pd(v_sin_a0, v_t2), v_sin_a2), v_t);
-            v_cos_b = _mm_add_pd(_mm_mul_pd(v_cos_a0, v_t2), v_1);
-
-            v_sin_a = _mm_i32gather_pd(sin_table, v_sin_idx, 8);
-            v_cos_a = _mm_i32gather_pd(sin_table, v_cos_idx, 8);
-
-            __m128d v_sin_val_1 = _mm_add_pd(_mm_mul_pd(v_sin_a, v_cos_b),
-                                             _mm_mul_pd(v_cos_a, v_sin_b));
-            __m128d v_cos_val_1 = _mm_sub_pd(_mm_mul_pd(v_cos_a, v_cos_b),
-                                             _mm_mul_pd(v_sin_a, v_sin_b));
-
-            _mm_storeu_ps(sinval + i, _mm_movelh_ps(_mm_cvtpd_ps(v_sin_val_0),
-                                                    _mm_cvtpd_ps(v_sin_val_1)));
-            _mm_storeu_ps(cosval + i, _mm_movelh_ps(_mm_cvtpd_ps(v_cos_val_0),
-                                                    _mm_cvtpd_ps(v_cos_val_1)));
-        }
-    }
-#endif
-
-    for( ; i < len; i++ )
-    {
-        double t = angle[i]*k1;
-        int it = cvRound(t);
-        t -= it;
-        int sin_idx = it & (N - 1);
-        int cos_idx = (N/4 - sin_idx) & (N - 1);
-
-        double sin_b = (sin_a0*t*t + sin_a2)*t;
-        double cos_b = cos_a0*t*t + 1;
-
-        double sin_a = sin_table[sin_idx];
-        double cos_a = sin_table[cos_idx];
-
-        double sin_val = sin_a*cos_b + cos_a*sin_b;
-        double cos_val = cos_a*cos_b - sin_a*sin_b;
-
-        sinval[i] = (float)sin_val;
-        cosval[i] = (float)cos_val;
-    }
-}
-
-
 #ifdef HAVE_OPENCL
 
 static bool ocl_polarToCart( InputArray _mag, InputArray _angle,
@@ -474,15 +338,24 @@ static bool ocl_polarToCart( InputArray _mag, InputArray _angle,
             rowsPerWI = d.isIntel() ? 4 : 1;
     bool doubleSupport = d.doubleFPConfig() > 0;
 
+    const bool _src1IsDstX = (_mag.getObj() == _dst1.getObj());
+    const bool _src1IsDstY = (_mag.getObj() == _dst2.getObj());
+    const bool _src2IsDstX = (_angle.getObj() == _dst1.getObj());
+    const bool _src2IsDstY = (_angle.getObj() == _dst2.getObj());
+
     if ( !doubleSupport && depth == CV_64F )
         return false;
 
     ocl::Kernel k("KF", ocl::core::arithm_oclsrc,
-                  format("-D dstT=%s -D DEPTH_dst=%d -D rowsPerWI=%d -D BINARY_OP -D OP_PTC_%s%s",
+                  format("-D dstT=%s -D DEPTH_dst=%d -D rowsPerWI=%d -D BINARY_OP -D OP_PTC_%s%s%s%s%s%s",
                          ocl::typeToStr(CV_MAKE_TYPE(depth, 1)), depth,
                          rowsPerWI,
                          angleInDegrees ? "AD" : "AR",
-                         doubleSupport ? " -D DOUBLE_SUPPORT" : ""));
+                         doubleSupport ? " -D DOUBLE_SUPPORT" : "",
+                         _src1IsDstX   ? " -D SRC1_IS_DST_X" : "",
+                         _src1IsDstY ? " -D SRC1_IS_DST_Y" : "",
+                         _src2IsDstX   ? " -D SRC2_IS_DST_X" : "",
+                         _src2IsDstY ? " -D SRC2_IS_DST_Y" : ""));
     if (k.empty())
         return false;
 
@@ -494,8 +367,10 @@ static bool ocl_polarToCart( InputArray _mag, InputArray _angle,
     _dst2.create(size, type);
     UMat dst1 = _dst1.getUMat(), dst2 = _dst2.getUMat();
 
-    k.args(ocl::KernelArg::ReadOnlyNoSize(mag), ocl::KernelArg::ReadOnlyNoSize(angle),
-           ocl::KernelArg::WriteOnly(dst1, cn), ocl::KernelArg::WriteOnlyNoSize(dst2));
+    k.args(_src1IsDstX || _src1IsDstY ? ocl::KernelArg::ReadWriteNoSize(mag) : ocl::KernelArg::ReadOnlyNoSize(mag),
+           _src2IsDstX || _src2IsDstY  ? ocl::KernelArg::ReadWriteNoSize(angle) : ocl::KernelArg::ReadOnlyNoSize(angle),
+           ocl::KernelArg::WriteOnly(dst1, cn),
+           ocl::KernelArg::WriteOnlyNoSize(dst2));
 
     size_t globalsize[2] = { (size_t)dst1.cols * cn, ((size_t)dst1.rows + rowsPerWI - 1) / rowsPerWI };
     return k.run(2, globalsize, NULL, false);
@@ -503,72 +378,12 @@ static bool ocl_polarToCart( InputArray _mag, InputArray _angle,
 
 #endif
 
-#ifdef HAVE_IPP
-static bool ipp_polarToCart(Mat &mag, Mat &angle, Mat &x, Mat &y)
-{
-    CV_INSTRUMENT_REGION_IPP();
-
-    int depth = angle.depth();
-    if(depth != CV_32F && depth != CV_64F)
-        return false;
-
-    if(angle.dims <= 2)
-    {
-        int len = (int)(angle.cols*angle.channels());
-
-        if(depth == CV_32F)
-        {
-            for (int h = 0; h < angle.rows; h++)
-            {
-                if(CV_INSTRUMENT_FUN_IPP(ippsPolarToCart_32f, (const float*)mag.ptr(h), (const float*)angle.ptr(h), (float*)x.ptr(h), (float*)y.ptr(h), len) < 0)
-                    return false;
-            }
-        }
-        else
-        {
-            for (int h = 0; h < angle.rows; h++)
-            {
-                if(CV_INSTRUMENT_FUN_IPP(ippsPolarToCart_64f, (const double*)mag.ptr(h), (const double*)angle.ptr(h), (double*)x.ptr(h), (double*)y.ptr(h), len) < 0)
-                    return false;
-            }
-        }
-        return true;
-    }
-    else
-    {
-        const Mat      *arrays[] = {&mag, &angle, &x, &y, NULL};
-        uchar          *ptrs[4]  = {NULL};
-        NAryMatIterator it(arrays, ptrs);
-        int len = (int)(it.size*angle.channels());
-
-        if(depth == CV_32F)
-        {
-            for (size_t i = 0; i < it.nplanes; i++, ++it)
-            {
-                if(CV_INSTRUMENT_FUN_IPP(ippsPolarToCart_32f, (const float*)ptrs[0], (const float*)ptrs[1], (float*)ptrs[2], (float*)ptrs[3], len) < 0)
-                    return false;
-            }
-        }
-        else
-        {
-            for (size_t i = 0; i < it.nplanes; i++, ++it)
-            {
-                if(CV_INSTRUMENT_FUN_IPP(ippsPolarToCart_64f, (const double*)ptrs[0], (const double*)ptrs[1], (double*)ptrs[2], (double*)ptrs[3], len) < 0)
-                    return false;
-            }
-        }
-        return true;
-    }
-}
-#endif
-
 void polarToCart( InputArray src1, InputArray src2,
                   OutputArray dst1, OutputArray dst2, bool angleInDegrees )
 {
     CV_INSTRUMENT_REGION();
 
-    CV_Assert(src1.getObj() != dst1.getObj() && src1.getObj() != dst2.getObj() &&
-              src2.getObj() != dst1.getObj() && src2.getObj() != dst2.getObj());
+    CV_Assert(dst1.getObj() != dst2.getObj());
 
     int type = src2.type(), depth = CV_MAT_DEPTH(type), cn = CV_MAT_CN(type);
     CV_Assert((depth == CV_32F || depth == CV_64F) && (src1.empty() || src1.type() == type));
@@ -578,80 +393,32 @@ void polarToCart( InputArray src1, InputArray src2,
 
     Mat Mag = src1.getMat(), Angle = src2.getMat();
     CV_Assert( Mag.empty() || Angle.size == Mag.size);
-    dst1.create( Angle.dims, Angle.size, type );
-    dst2.create( Angle.dims, Angle.size, type );
+    dst1.create( Angle.size, type );
+    dst2.create( Angle.size, type );
     Mat X = dst1.getMat(), Y = dst2.getMat();
-
-    CV_IPP_RUN(!angleInDegrees, ipp_polarToCart(Mag, Angle, X, Y));
 
     const Mat* arrays[] = {&Mag, &Angle, &X, &Y, 0};
     uchar* ptrs[4] = {};
     NAryMatIterator it(arrays, ptrs);
-    cv::AutoBuffer<float> _buf;
-    float* buf[2] = {0, 0};
-    int j, k, total = (int)(it.size*cn), blockSize = std::min(total, ((BLOCK_SIZE+cn-1)/cn)*cn);
+    int j, total = (int)(it.size*cn), blockSize = std::min(total, ((BLOCK_SIZE+cn-1)/cn)*cn);
     size_t esz1 = Angle.elemSize1();
-
-    if( depth == CV_64F )
-    {
-        _buf.allocate(blockSize*2);
-        buf[0] = _buf.data();
-        buf[1] = buf[0] + blockSize;
-    }
 
     for( size_t i = 0; i < it.nplanes; i++, ++it )
     {
         for( j = 0; j < total; j += blockSize )
         {
             int len = std::min(total - j, blockSize);
-            if( depth == CV_32F )
+            if ( depth == CV_32F )
             {
                 const float *mag = (const float*)ptrs[0], *angle = (const float*)ptrs[1];
                 float *x = (float*)ptrs[2], *y = (float*)ptrs[3];
-
-                SinCos_32f( angle, y, x, len, angleInDegrees );
-                if( mag )
-                {
-                    k = 0;
-
-#if (CV_SIMD || CV_SIMD_SCALABLE)
-                    int cWidth = VTraits<v_float32>::vlanes();
-                    for( ; k <= len - cWidth; k += cWidth )
-                    {
-                        v_float32 v_m = vx_load(mag + k);
-                        v_store(x + k, v_mul(vx_load(x + k), v_m));
-                        v_store(y + k, v_mul(vx_load(y + k), v_m));
-                    }
-                    vx_cleanup();
-#endif
-
-                    for( ; k < len; k++ )
-                    {
-                        float m = mag[k];
-                        x[k] *= m; y[k] *= m;
-                    }
-                }
+                hal::polarToCart32f( mag, angle, x, y, len, angleInDegrees );
             }
             else
             {
                 const double *mag = (const double*)ptrs[0], *angle = (const double*)ptrs[1];
                 double *x = (double*)ptrs[2], *y = (double*)ptrs[3];
-
-                for( k = 0; k < len; k++ )
-                    buf[0][k] = (float)angle[k];
-
-                SinCos_32f( buf[0], buf[1], buf[0], len, angleInDegrees );
-                if( mag )
-                    for( k = 0; k < len; k++ )
-                    {
-                        double m = mag[k];
-                        x[k] = buf[0][k]*m; y[k] = buf[1][k]*m;
-                    }
-                else
-                {
-                    std::memcpy(x, buf[0], sizeof(float) * len);
-                    std::memcpy(y, buf[1], sizeof(float) * len);
-                }
+                hal::polarToCart64f( mag, angle, x, y, len, angleInDegrees );
             }
 
             if( ptrs[0] )
@@ -678,7 +445,7 @@ void exp( InputArray _src, OutputArray _dst )
                ocl_math_op(_src, noArray(), _dst, OCL_OP_EXP))
 
     Mat src = _src.getMat();
-    _dst.create( src.dims, src.size, type );
+    _dst.create( src.size, type );
     Mat dst = _dst.getMat();
 
     const Mat* arrays[] = {&src, &dst, 0};
@@ -711,7 +478,7 @@ void log( InputArray _src, OutputArray _dst )
                 ocl_math_op(_src, noArray(), _dst, OCL_OP_LOG))
 
     Mat src = _src.getMat();
-    _dst.create( src.dims, src.size, type );
+    _dst.create( src.size, type );
     Mat dst = _dst.getMat();
 
     const Mat* arrays[] = {&src, &dst, 0};
@@ -744,7 +511,7 @@ struct iPow_SIMD
 #if (CV_SIMD || CV_SIMD_SCALABLE)
 
 template <>
-struct iPow_SIMD<uchar, int>
+struct iPow_SIMD<uchar, unsigned>
 {
     int operator() ( const uchar * src, uchar * dst, int len, int power )
     {
@@ -824,7 +591,7 @@ struct iPow_SIMD<schar, int>
 };
 
 template <>
-struct iPow_SIMD<ushort, int>
+struct iPow_SIMD<ushort, unsigned>
 {
     int operator() ( const ushort * src, ushort * dst, int len, int power)
     {
@@ -1137,7 +904,7 @@ static void iPow64f(const double* src, double* dst, int len, int power)
 
 typedef void (*IPowFunc)( const uchar* src, uchar* dst, int len, int power );
 
-static IPowFunc ipowTab[] =
+static IPowFunc ipowTab[CV_DEPTH_MAX] =
 {
     (IPowFunc)iPow8u, (IPowFunc)iPow8s, (IPowFunc)iPow16u, (IPowFunc)iPow16s,
     (IPowFunc)iPow32s, (IPowFunc)iPow32f, (IPowFunc)iPow64f, 0
@@ -1156,16 +923,6 @@ static bool ocl_pow(InputArray _src, double power, OutputArray _dst,
     _dst.createSameSize(_src, type);
     if (is_ipower)
     {
-        if (ipower == 0)
-        {
-            _dst.setTo(Scalar::all(1));
-            return true;
-        }
-        if (ipower == 1)
-        {
-            _src.copyTo(_dst);
-            return true;
-        }
         if( ipower < 0 )
         {
             if( depth == CV_32F || depth == CV_64F )
@@ -1181,9 +938,40 @@ static bool ocl_pow(InputArray _src, double power, OutputArray _dst,
     bool issqrt = std::abs(power - 0.5) < DBL_EPSILON;
     const char * const op = issqrt ? "OP_SQRT" : is_ipower ? "OP_POWN" : "OP_POW";
 
+    // Note: channels are unrolled
+
+    std::string extra_opts ="";
+    if (is_ipower)
+    {
+        int wdepth = CV_32F;
+        if (depth == CV_64F)
+            wdepth = CV_64F;
+        else if (depth == CV_16F)
+            wdepth = CV_16F;
+
+        char cvt[2][50];
+        extra_opts = format(
+            " -D srcT1=%s -DsrcT1_C1=%s"
+            " -D srcT2=int -D workST=int"
+            " -D workT=%s -D wdepth=%d -D convertToWT1=%s"
+            " -D convertToDT=%s"
+            " -D workT1=%s",
+            ocl::typeToStr(CV_MAKE_TYPE(depth, 1)),
+            ocl::typeToStr(CV_MAKE_TYPE(depth, 1)),
+            ocl::typeToStr(CV_MAKE_TYPE(wdepth, 1)),
+            wdepth,
+            ocl::convertTypeStr(depth, wdepth, 1, cvt[0], sizeof(cvt[0])),
+            ocl::convertTypeStr(wdepth, depth, 1, cvt[1], sizeof(cvt[1])),
+            ocl::typeToStr(wdepth)
+        );
+    }
+
     ocl::Kernel k("KF", ocl::core::arithm_oclsrc,
-                  format("-D dstT=%s -D DEPTH_dst=%d -D rowsPerWI=%d -D %s -D UNARY_OP%s",
-                         ocl::typeToStr(depth), depth, rowsPerWI, op,
+                  format("-D cn=%d -D dstT=%s -D dstT_C1=%s -D DEPTH_dst=%d -D rowsPerWI=%d -D %s%s%s%s",
+                         1,
+                         ocl::typeToStr(depth), ocl::typeToStr(depth), depth, rowsPerWI, op,
+                         " -D UNARY_OP=1",
+                         extra_opts.empty() ? "" : extra_opts.c_str(),
                          doubleSupport ? " -D DOUBLE_SUPPORT" : ""));
     if (k.empty())
         return false;
@@ -1224,11 +1012,7 @@ void pow( InputArray _src, double power, OutputArray _dst )
     bool useOpenCL = _dst.isUMat() && _src.dims() <= 2;
 #endif
 
-    if( is_ipower
-#ifdef HAVE_OPENCL
-            && !(useOpenCL && ocl::Device::getDefault().isIntel() && depth != CV_64F)
-#endif
-      )
+    if (is_ipower)
     {
         switch( ipower )
         {
@@ -1244,13 +1028,11 @@ void pow( InputArray _src, double power, OutputArray _dst )
             return;
         }
     }
-    else
-        CV_Assert( depth == CV_32F || depth == CV_64F );
 
     CV_OCL_RUN(useOpenCL, ocl_pow(_src, power, _dst, is_ipower, ipower))
 
     Mat src = _src.getMat();
-    _dst.create( src.dims, src.size, type );
+    _dst.create( src.size, type );
     Mat dst = _dst.getMat();
 
     const Mat* arrays[] = {&src, &dst, 0};
@@ -1566,7 +1348,7 @@ bool checkRange(InputArray _src, bool quiet, Point* pt, double minVal, double ma
         {
             cv::String value_str;
             value_str << src(cv::Range(badPt.y, badPt.y + 1), cv::Range(badPt.x, badPt.x + 1));
-            CV_Error_( CV_StsOutOfRange,
+            CV_Error_( cv::Error::StsOutOfRange,
             ("the value at (%d, %d)=%s is out of range [%f, %f)", badPt.x, badPt.y, value_str.c_str(), minVal, maxVal));
         }
         return false;
@@ -1575,33 +1357,6 @@ bool checkRange(InputArray _src, bool quiet, Point* pt, double minVal, double ma
 }
 
 } // namespace cv
-
-
-#ifndef OPENCV_EXCLUDE_C_API
-
-CV_IMPL void cvExp( const CvArr* srcarr, CvArr* dstarr )
-{
-    cv::Mat src = cv::cvarrToMat(srcarr), dst = cv::cvarrToMat(dstarr);
-    CV_Assert( src.type() == dst.type() && src.size == dst.size );
-    cv::exp( src, dst );
-}
-
-CV_IMPL void cvPow( const CvArr* srcarr, CvArr* dstarr, double power )
-{
-    cv::Mat src = cv::cvarrToMat(srcarr), dst = cv::cvarrToMat(dstarr);
-    CV_Assert( src.type() == dst.type() && src.size == dst.size );
-    cv::pow( src, power, dst );
-}
-
-CV_IMPL int cvCheckArr( const CvArr* arr, int flags,
-                        double minVal, double maxVal )
-{
-    if( (flags & CV_CHECK_RANGE) == 0 )
-        minVal = -DBL_MAX, maxVal = DBL_MAX;
-    return cv::checkRange(cv::cvarrToMat(arr), (flags & CV_CHECK_QUIET) != 0, 0, minVal, maxVal );
-}
-
-#endif  // OPENCV_EXCLUDE_C_API
 
 /*
   Finds real roots of cubic, quadratic or linear equation.
@@ -1672,7 +1427,7 @@ int cv::solveCubic( InputArray _coeffs, OutputArray _roots )
     {
         if( a1 == 0 )
         {
-            if( a2 == 0 )
+            if( a2 == 0 ) // constant
                 n = a3 == 0 ? -1 : 0;
             else
             {
@@ -1706,15 +1461,23 @@ int cv::solveCubic( InputArray _coeffs, OutputArray _roots )
     }
     else
     {
+        // cubic equation
         a0 = 1./a0;
         a1 *= a0;
         a2 *= a0;
         a3 *= a0;
 
         double Q = (a1 * a1 - 3 * a2) * (1./9);
-        double R = (2 * a1 * a1 * a1 - 9 * a1 * a2 + 27 * a3) * (1./54);
+        double R = (a1 * (2 * a1 * a1 - 9 * a2) + 27 * a3) * (1./54);
         double Qcubed = Q * Q * Q;
-        double d = Qcubed - R * R;
+        /*
+          Here we expand expression `Qcubed - R * R` for `d` variable
+          to reduce common terms `a1^6 / 729` and `-a1^4 * a2 / 81`
+          and thus decrease rounding error (in case of quite big coefficients).
+
+          And then we additionally group terms to further reduce rounding error.
+        */
+        double d = (a1 * a1 * (a2 * a2 - 4 * a1 * a3) + 2 * a2 * (9 * a1 * a3 - 2 * a2 * a2) - 27 * a3 * a3) * (1./108);
 
         if( d > 0 )
         {
@@ -1895,21 +1658,6 @@ double cv::solvePoly( InputArray _coeffs0, OutputArray _roots0, int maxIters )
     Mat(roots0.size(), CV_64FC2, roots).convertTo(roots0, roots0.type());
     return maxDiff;
 }
-
-
-#ifndef OPENCV_EXCLUDE_C_API
-
-void cvSolvePoly(const CvMat* a, CvMat *r, int maxiter, int)
-{
-    cv::Mat _a = cv::cvarrToMat(a);
-    cv::Mat _r = cv::cvarrToMat(r);
-    cv::Mat _r0 = _r;
-    cv::solvePoly(_a, _r, maxiter);
-    CV_Assert( _r.data == _r0.data ); // check that the array of roots was not reallocated
-}
-
-#endif  // OPENCV_EXCLUDE_C_API
-
 
 // Common constants for dispatched code
 namespace cv { namespace details {

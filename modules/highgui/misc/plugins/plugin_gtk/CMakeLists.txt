@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.13)
 project(opencv_highgui_gtk)
 
 get_filename_component(OpenCV_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../../.." ABSOLUTE)
@@ -49,10 +49,4 @@ elseif(DEFINED GTK_VERSION)
   message(STATUS "GTK+: ver ${GTK_VERSION}")
 else()
   message(STATUS "GTK+: YES")
-endif()
-
-if(HAVE_GTHREAD)
-  message(STATUS "GThread : YES (ver ${GTHREAD_VERSION})")
-else()
-  message(STATUS "GThread : NO")
 endif()

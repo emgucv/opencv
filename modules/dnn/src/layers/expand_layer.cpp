@@ -3,6 +3,8 @@
 // of this distribution and at http://opencv.org/license.html.
 
 #include "../precomp.hpp"
+#include "../op_inf_engine.hpp"
+#include "../ie_ngraph.hpp"
 #include <opencv2/dnn/shape_utils.hpp>
 
 namespace cv { namespace dnn {
@@ -14,21 +16,33 @@ public:
         setParamsFrom(params);
 
         // shape as param
-        CV_CheckTrue(params.has("shape"), "DNN/Expand: shape is required in Expand layer initialization");
-        DictValue param_shape = params.get("shape");
-        int ndims_shape = param_shape.size();
-        CV_CheckGT(ndims_shape, 0, "DNN/Expand: ndims of shape must be > 0");
-        target_shape.resize(ndims_shape);
-        for (int i = 0; i < ndims_shape; i++) {
-            target_shape[i] = param_shape.get<int>(i);
+        if (params.has("shape")) {
+            DictValue param_shape = params.get("shape");
+            int ndims_shape = param_shape.size();
+            CV_CheckGT(ndims_shape, 0, "DNN/Expand: ndims of shape must be > 0");
+            target_shape.resize(ndims_shape);
+            for (int i = 0; i < ndims_shape; i++) {
+                target_shape[i] = param_shape.get<int>(i);
+            }
+        } else if (params.blobs.size() == 1) {
+            Mat expand_shape = params.blobs[0];
+            CV_Assert(expand_shape.total() > 0);
+            target_shape.resize(expand_shape.total());
+            for (int i = 0; i < expand_shape.total(); i++) {
+                target_shape[i] = expand_shape.at<int64_t>(i);
+            }
+        } else {
+            CV_Error(Error::StsBadArg, "DNN/Expand: shape is required in Expand layer initialization");
         }
 
         // FIXME: remove when 0d/1d mat is available
         const_input_1d = params.get("const_input_1d", false);
     }
 
-    virtual bool supportBackend(int backendId) CV_OVERRIDE {
-        return backendId == DNN_BACKEND_OPENCV;
+    virtual bool supportBackend(int backendId) CV_OVERRIDE
+    {
+        return backendId == DNN_BACKEND_OPENCV ||
+               backendId == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH;
     }
 
     virtual bool getMemoryShapes(const std::vector<MatShape> &inputs,
@@ -41,7 +55,7 @@ public:
 
         MatShape input_shape = inputs[0]; // 1d tensor is represented as 2d mat, e.g. [3] -> [3, 1]
         if (const_input_1d) {
-            input_shape = {inputs[0][0]};
+            input_shape = shape(inputs[0][0]);
         }
 
         auto& moreDimension = input_shape.size() > target_shape.size() ? input_shape : target_shape;
@@ -74,6 +88,17 @@ public:
         return false;
     }
 
+    void getTypes(const std::vector<MatType>& inputs,
+        const int requiredOutputs,
+        const int requiredInternals,
+        std::vector<MatType>& outputs,
+        std::vector<MatType>& internals) const CV_OVERRIDE
+    {
+        CV_Assert(inputs.size());
+        outputs.assign(requiredOutputs, inputs[0]);
+    }
+
+
     virtual void finalize(InputArrayOfArrays inputs_arr, OutputArrayOfArrays outputs_arr) CV_OVERRIDE {
         std::vector<Mat> inputs;
         inputs_arr.getMatVector(inputs);
@@ -81,7 +106,7 @@ public:
         const auto &input = inputs[0];
         auto input_shape = shape(input);
         if (const_input_1d) {
-            input_shape = {input_shape[0]};
+            input_shape = shape(input_shape[0]);
         }
 
         auto& moreDimension = input_shape.size() > target_shape.size() ? input_shape : target_shape;
@@ -90,7 +115,7 @@ public:
         MatShape final_target_shape(moreDimension.size(), 1);
         for (int i = 0; i < moreDimension.size(); i++) {
             int d = moreDimension[i];
-            int j = i - (moreDimension.size() - lessDimension.size());
+            int j = i - (int)(moreDimension.size() - lessDimension.size());
             if (j >= 0) {
                 final_target_shape[i] = std::max(lessDimension[j], d);
             } else {
@@ -104,12 +129,6 @@ public:
     void forward(InputArrayOfArrays inputs_arr, OutputArrayOfArrays outputs_arr, OutputArrayOfArrays internals_arr) CV_OVERRIDE {
         CV_TRACE_FUNCTION();
         CV_TRACE_ARG_VALUE(name, "name", name.c_str());
-
-        if (inputs_arr.depth() == CV_16S)
-        {
-            forward_fallback(inputs_arr, outputs_arr, internals_arr);
-            return;
-        }
 
         std::vector<Mat> inputs, outputs;
         inputs_arr.getMatVector(inputs);
@@ -136,6 +155,25 @@ public:
             cv::broadcast(inputs[0], target_shape, outputs[0]);
         }
     }
+
+#ifdef HAVE_DNN_NGRAPH
+    virtual Ptr<BackendNode> initNgraph(const std::vector<Ptr<BackendWrapper> >& inputs,
+                                        const std::vector<Ptr<BackendNode> >& nodes) CV_OVERRIDE
+    {
+        auto input_shape = nodes[0].dynamicCast<InfEngineNgraphNode>()->node.get_shape();
+        CV_CheckGE(target_shape.size(), input_shape.size(), "");
+
+        std::vector<int32_t> output_shape(target_shape.begin(), target_shape.end());
+        for (int i = 1; i < input_shape.size() + 1; ++i)
+            output_shape[output_shape.size() - i] = std::max(
+                (int32_t)input_shape[input_shape.size() - i],
+                output_shape[output_shape.size() - i]);
+
+        auto shape_node = std::make_shared<ov::op::v0::Constant>(ov::element::i32, ov::Shape{output_shape.size()}, output_shape.data());
+        auto expand = std::make_shared<ov::op::v3::Broadcast>(nodes[0].dynamicCast<InfEngineNgraphNode>()->node, shape_node);
+        return Ptr<BackendNode>(new InfEngineNgraphNode(expand));
+    }
+#endif  // HAVE_DNN_NGRAPH
 
 private:
     MatShape target_shape;

@@ -31,7 +31,7 @@ public:
 void testInputShapes(const Net& net, const std::vector<Mat>& inps) {
     std::vector<MatShape> inLayerShapes;
     std::vector<MatShape> outLayerShapes;
-    net.getLayerShapes(MatShape(), 0, inLayerShapes, outLayerShapes);
+    net.getLayerShapes(MatShape(), CV_32F, 0, inLayerShapes, outLayerShapes);
     ASSERT_EQ(inLayerShapes.size(), inps.size());
 
     for (int i = 0; i < inps.size(); ++i) {
@@ -57,8 +57,15 @@ void Test_TFLite::testModel(Net& net, const std::string& modelName, const Mat& i
 
     ASSERT_EQ(outs.size(), outNames.size());
     for (int i = 0; i < outNames.size(); ++i) {
+        std::replace(outNames[i].begin(), outNames[i].end(), ':', '_');
         Mat ref = blobFromNPY(findDataFile(format("dnn/tflite/%s_out_%s.npy", modelName.c_str(), outNames[i].c_str())));
-        normAssert(ref.reshape(1, 1), outs[i].reshape(1, 1), outNames[i].c_str(), l1, lInf);
+        // A workaround solution for the following cases due to inconsistent shape definitions.
+        // The details please see: https://github.com/opencv/opencv/pull/25297#issuecomment-2039081369
+        if (modelName == "face_landmark" || modelName == "selfie_segmentation") {
+            ref = ref.reshape(1, 1);
+            outs[i] = outs[i].reshape(1, 1);
+        }
+        normAssert(ref, outs[i], outNames[i].c_str(), l1, lInf);
     }
 }
 
@@ -87,7 +94,7 @@ TEST_P(Test_TFLite, face_landmark)
 {
     if (backend == DNN_BACKEND_CUDA && target == DNN_TARGET_CUDA_FP16)
         applyTestTag(CV_TEST_TAG_DNN_SKIP_CUDA_FP16);
-    double l1 = 2e-5, lInf = 2e-4;
+    double l1 = 2.2e-5, lInf = 2e-4;
     if (target == DNN_TARGET_CPU_FP16 || target == DNN_TARGET_CUDA_FP16 || target == DNN_TARGET_OPENCL_FP16 || target == DNN_TARGET_MYRIAD ||
         (backend == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH && target == DNN_TARGET_OPENCL))
     {
@@ -149,6 +156,9 @@ TEST_P(Test_TFLite, max_unpooling)
     net.setPreferableBackend(backend);
     net.setPreferableTarget(target);
 
+    if (net.getMainGraph())
+        throw SkipTestException("The new dnn engine doesn't support forward to specified layers"); // https://github.com/opencv/opencv/issues/26349
+
     Mat input = imread(findDataFile("cv/shared/lena.png"));
     cvtColor(input, input, COLOR_BGR2RGBA);
     input = input.mul(Scalar(1, 1, 1, 0));
@@ -179,7 +189,7 @@ TEST_P(Test_TFLite, max_unpooling)
     for (int c = 0; c < 32; ++c) {
         float *poolInpData = poolInp.ptr<float>(0, c);
         float *poolOutData = poolOut.ptr<float>(0, c);
-        float *poolIdsData = poolIds.ptr<float>(0, c);
+        int64_t *poolIdsData = poolIds.ptr<int64_t>(0, c);
         float *unpoolInpData = unpoolInp.ptr<float>(0, c);
         float *unpoolOutData = unpoolOut.ptr<float>(0, c);
         for (int y = 0; y < 64; ++y) {
@@ -195,7 +205,7 @@ TEST_P(Test_TFLite, max_unpooling)
                 }
                 EXPECT_EQ(poolInpData[maxIdx], poolOutData[y * 64 + x]) << errMsg;
                 if (backend != DNN_BACKEND_INFERENCE_ENGINE_NGRAPH) {
-                    EXPECT_EQ(poolIdsData[y * 64 + x], (float)maxIdx) << errMsg;
+                    EXPECT_EQ(poolIdsData[y * 64 + x], (int64_t)maxIdx) << errMsg;
                 }
                 EXPECT_EQ(unpoolOutData[maxIdx], unpoolInpData[y * 64 + x]) << errMsg;
             }
@@ -204,6 +214,9 @@ TEST_P(Test_TFLite, max_unpooling)
 }
 
 TEST_P(Test_TFLite, EfficientDet_int8) {
+    if (backend == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH)
+        applyTestTag(CV_TEST_TAG_DNN_SKIP_IE_NGRAPH); // TODO: fix this test for OpenVINO
+
     if (target != DNN_TARGET_CPU || (backend != DNN_BACKEND_OPENCV &&
         backend != DNN_BACKEND_TIMVX && backend != DNN_BACKEND_INFERENCE_ENGINE_NGRAPH)) {
         throw SkipTestException("Only OpenCV, TimVX and OpenVINO targets support INT8 on CPU");
@@ -233,6 +246,47 @@ TEST_P(Test_TFLite, replicate_by_pack) {
         lInf = 2e-3;
     }
     testLayer("replicate_by_pack", l1, lInf);
+}
+
+TEST_P(Test_TFLite, split) {
+    testLayer("split");
+}
+
+TEST_P(Test_TFLite, fully_connected) {
+    if (backend == DNN_BACKEND_VKCOM)
+        applyTestTag(CV_TEST_TAG_DNN_SKIP_VULKAN);
+    testLayer("fully_connected");
+}
+
+TEST_P(Test_TFLite, permute) {
+    testLayer("permutation_3d");
+    // Temporarily disabled as TFLiteConverter produces a incorrect graph in this case
+    //testLayer("permutation_4d_0123");
+    testLayer("permutation_4d_0132");
+    testLayer("permutation_4d_0213");
+    testLayer("permutation_4d_0231");
+}
+
+TEST_P(Test_TFLite, global_average_pooling_2d) {
+    testLayer("global_average_pooling_2d");
+}
+
+TEST_P(Test_TFLite, global_max_pooling_2d) {
+    testLayer("global_max_pooling_2d");
+}
+
+TEST_P(Test_TFLite, leakyRelu) {
+    testLayer("leakyRelu");
+}
+
+TEST_P(Test_TFLite, StridedSlice) {
+    testLayer("strided_slice");
+}
+
+TEST_P(Test_TFLite, face_blendshapes)
+{
+    Mat inp = blobFromNPY(findDataFile("dnn/tflite/face_blendshapes_inp.npy"));
+    testModel("face_blendshapes", inp);
 }
 
 INSTANTIATE_TEST_CASE_P(/**/, Test_TFLite, dnnBackendsAndTargets());

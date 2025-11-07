@@ -62,6 +62,10 @@ public:
                                    findDataFile("dnn/" + model, false));
         net.setPreferableBackend(backend);
         net.setPreferableTarget(target);
+
+        if (target == DNN_TARGET_CPU_FP16)
+            net.enableWinograd(false);
+
         Mat img = imread(findDataFile("dnn/dog416.png"));
         resize(img, img, Size(800, 600));
         Mat blob = blobFromImage(img, 1.0, Size(), Scalar(102.9801, 115.9465, 122.7717), false, false);
@@ -205,7 +209,7 @@ TEST_P(Reproducibility_AlexNet, Accuracy)
     // Test input layer size
     std::vector<MatShape> inLayerShapes;
     std::vector<MatShape> outLayerShapes;
-    net.getLayerShapes(MatShape(), 0, inLayerShapes, outLayerShapes);
+    net.getLayerShapes(MatShape(), CV_32F, 0, inLayerShapes, outLayerShapes);
     ASSERT_FALSE(inLayerShapes.empty());
     ASSERT_EQ(inLayerShapes[0].size(), 4);
     ASSERT_EQ(inLayerShapes[0][0], 1);
@@ -219,11 +223,21 @@ TEST_P(Reproducibility_AlexNet, Accuracy)
     net.setPreferableBackend(DNN_BACKEND_OPENCV);
     net.setPreferableTarget(targetId);
 
+    if (targetId == DNN_TARGET_CPU_FP16)
+        net.enableWinograd(false);
+
     Mat sample = imread(_tf("grace_hopper_227.png"));
     ASSERT_TRUE(!sample.empty());
 
     net.setInput(blobFromImage(sample, 1.0f, Size(227, 227), Scalar(), false), "data");
-    Mat out = net.forward("prob");
+
+    Mat out;
+    // BUG: https://github.com/opencv/opencv/issues/26349
+    if (net.getMainGraph())
+        out = net.forward();
+    else
+        out = net.forward("prob");
+
     Mat ref = blobFromNPY(_tf("caffe_alexnet_prob.npy"));
     normAssert(ref, out, "", l1, lInf);
 }
@@ -249,10 +263,16 @@ TEST(Reproducibility_FCN, Accuracy)
 
     std::vector<int> layerIds;
     std::vector<size_t> weights, blobs;
-    net.getMemoryConsumption(shape(1,3,227,227), layerIds, weights, blobs);
+    net.getMemoryConsumption(shape(1,3,227,227), CV_32F, layerIds, weights, blobs);
 
     net.setInput(blobFromImage(sample, 1.0f, Size(500, 500), Scalar(), false), "data");
-    Mat out = net.forward("score");
+
+    Mat out;
+    // BUG: https://github.com/opencv/opencv/issues/26349
+    if (net.getMainGraph())
+        out = net.forward();
+    else
+        out = net.forward("score");
 
     Mat refData = imread(_tf("caffe_fcn8s_prob.png"), IMREAD_ANYDEPTH);
     int shape[] = {1, 21, 500, 500};
@@ -263,7 +283,11 @@ TEST(Reproducibility_FCN, Accuracy)
 
 TEST(Reproducibility_SSD, Accuracy)
 {
-    applyTestTag(CV_TEST_TAG_MEMORY_512MB, CV_TEST_TAG_DEBUG_LONG);
+    applyTestTag(
+        CV_TEST_TAG_MEMORY_512MB,
+        CV_TEST_TAG_DEBUG_VERYLONG
+    );
+
     Net net;
     {
         const string proto = findDataFile("dnn/ssd_vgg16.prototxt");
@@ -281,7 +305,13 @@ TEST(Reproducibility_SSD, Accuracy)
 
     Mat in_blob = blobFromImage(sample, 1.0f, Size(300, 300), Scalar(), false);
     net.setInput(in_blob, "data");
-    Mat out = net.forward("detection_out");
+
+    // BUG: https://github.com/opencv/opencv/issues/26349
+    Mat out;
+    if(net.getMainGraph())
+        out = net.forward();
+    else
+        out = net.forward("detection_out");
 
     Mat ref = blobFromNPY(_tf("ssd_out.npy"));
     normAssertDetections(ref, out, "", 0.06);
@@ -383,6 +413,9 @@ TEST_P(Reproducibility_ResNet50, Accuracy)
     net.setPreferableBackend(DNN_BACKEND_OPENCV);
     net.setPreferableTarget(targetId);
 
+    if (targetId == DNN_TARGET_CPU_FP16)
+        net.enableWinograd(false);
+
     float l1 = (targetId == DNN_TARGET_OPENCL_FP16 || targetId == DNN_TARGET_CPU_FP16) ? 3e-5 : 1e-5;
     float lInf = (targetId == DNN_TARGET_OPENCL_FP16 || targetId == DNN_TARGET_CPU_FP16) ? 6e-3 : 1e-4;
 
@@ -481,7 +514,13 @@ TEST(Reproducibility_GoogLeNet_fp16, Accuracy)
     ASSERT_TRUE(!inpMats[0].empty() && !inpMats[1].empty());
 
     net.setInput(blobFromImages(inpMats, 1.0f, Size(), Scalar(), false), "data");
-    Mat out = net.forward("prob");
+
+    // BUG: https://github.com/opencv/opencv/issues/26349
+    Mat out;
+    if(net.getMainGraph())
+        out = net.forward();
+    else
+        out = net.forward("prob");
 
     Mat ref = blobFromNPY(_tf("googlenet_prob.npy"));
     normAssert(out, ref, "", l1, lInf);
@@ -490,7 +529,10 @@ TEST(Reproducibility_GoogLeNet_fp16, Accuracy)
 // https://github.com/richzhang/colorization
 TEST_P(Test_Caffe_nets, Colorization)
 {
-    applyTestTag(target == DNN_TARGET_CPU ? CV_TEST_TAG_MEMORY_512MB : CV_TEST_TAG_MEMORY_1GB);
+    applyTestTag(
+        target == DNN_TARGET_CPU ? CV_TEST_TAG_MEMORY_512MB : CV_TEST_TAG_MEMORY_1GB,
+        CV_TEST_TAG_DEBUG_VERYLONG
+    );
     checkBackend();
 
     Mat inp = blobFromNPY(_tf("colorization_inp.npy"));
@@ -502,6 +544,10 @@ TEST_P(Test_Caffe_nets, Colorization)
     Net net = readNetFromCaffe(proto, model);
     net.setPreferableBackend(backend);
     net.setPreferableTarget(target);
+
+    // This model has bad accuracy when the FP16 and Winograd are enable at same time.
+    if (target == DNN_TARGET_CPU_FP16)
+        net.enableWinograd(false);
 
     net.getLayer(net.getLayerId("class8_ab"))->blobs.push_back(kernel);
     net.getLayer(net.getLayerId("conv8_313_rh"))->blobs.push_back(Mat(1, 313, CV_32F, 2.606));
@@ -568,10 +614,15 @@ TEST_P(Test_Caffe_nets, DenseNet_121)
     {
         l1 = 0.11; lInf = 0.5;
     }
-    else if (target == DNN_TARGET_CUDA_FP16 || target == DNN_TARGET_CPU_FP16)
+    else if (target == DNN_TARGET_CUDA_FP16)
     {
         l1 = 0.04; lInf = 0.2;
     }
+    else if (target == DNN_TARGET_CPU_FP16)
+    {
+        l1 = 0.06; lInf = 0.3;
+    }
+
     normAssert(outs[0], ref, "", l1, lInf);
     if (target != DNN_TARGET_MYRIAD || getInferenceEngineVPUType() != CV_DNN_INFERENCE_ENGINE_VPU_TYPE_MYRIAD_X)
         expectNoFallbacksFromIE(model.getNetwork_());
@@ -758,7 +809,7 @@ TEST_P(Test_Caffe_nets, FasterRCNN_zf)
 #else
         (target == DNN_TARGET_CPU ? CV_TEST_TAG_MEMORY_512MB : CV_TEST_TAG_MEMORY_1GB),
 #endif
-        CV_TEST_TAG_DEBUG_LONG
+        CV_TEST_TAG_DEBUG_VERYLONG
     );
 #if defined(INF_ENGINE_RELEASE) && INF_ENGINE_VER_MAJOR_EQ(2021040000)
     // IE exception: Ngraph operation Reshape with name rpn_cls_score_reshape has dynamic output shape on 0 port, but CPU plug-in supports only static shape

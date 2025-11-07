@@ -14,7 +14,7 @@ ocv_module_include_directories(
 
 # try to use dynamic symbols linking with libpython.so
 set(OPENCV_FORCE_PYTHON_LIBS OFF CACHE BOOL "")
-string(REPLACE "-Wl,--no-undefined" "" CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS}")
+string(REGEX REPLACE "(^| )-Wl,--no-undefined( |$)" " " CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS}")
 if(NOT WIN32 AND NOT APPLE AND NOT OPENCV_PYTHON_SKIP_LINKER_EXCLUDE_LIBS)
   set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} -Wl,--exclude-libs=ALL")
 endif()
@@ -46,6 +46,7 @@ if(${PYTHON}_LIMITED_API)
   # support only python3.3+
   ocv_assert(${PYTHON}_VERSION_MAJOR EQUAL 3 AND ${PYTHON}_VERSION_MINOR GREATER 2)
   target_compile_definitions(${the_module} PRIVATE CVPY_DYNAMIC_INIT)
+  target_compile_definitions(${the_module} PRIVATE PYTHON3_LIMITED_API_VERSION=${PYTHON3_LIMITED_API_VERSION})
   if(WIN32)
     string(REPLACE
       "python${${PYTHON}_VERSION_MAJOR}${${PYTHON}_VERSION_MINOR}.lib"
@@ -59,6 +60,7 @@ if(APPLE)
   set_target_properties(${the_module} PROPERTIES LINK_FLAGS "-undefined dynamic_lookup")
 elseif(WIN32 OR OPENCV_FORCE_PYTHON_LIBS)
   if(${PYTHON}_DEBUG_LIBRARIES AND NOT ${PYTHON}_LIBRARIES MATCHES "optimized.*debug")
+    ocv_target_link_libraries(${the_module} PRIVATE ${${PYTHON}_LIBRARIES})
     ocv_target_link_libraries(${the_module} PRIVATE debug ${${PYTHON}_DEBUG_LIBRARIES} optimized ${${PYTHON}_LIBRARIES})
   else()
     ocv_target_link_libraries(${the_module} PRIVATE ${${PYTHON}_LIBRARIES})

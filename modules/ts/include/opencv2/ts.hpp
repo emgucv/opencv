@@ -300,8 +300,8 @@ Mat randomMat(RNG& rng, Size size, int type, double minVal, double maxVal, bool 
 Mat randomMat(RNG& rng, const vector<int>& size, int type, double minVal, double maxVal, bool useRoi);
 void add(const Mat& a, double alpha, const Mat& b, double beta,
                       Scalar gamma, Mat& c, int ctype, bool calcAbs=false);
-void multiply(const Mat& a, const Mat& b, Mat& c, double alpha=1);
-void divide(const Mat& a, const Mat& b, Mat& c, double alpha=1);
+void multiply(const Mat& a, const Mat& b, Mat& c, double alpha=1, int ctype=-1);
+void divide(const Mat& a, const Mat& b, Mat& c, double alpha=1, int ctype=-1);
 
 void convert(const Mat& src, cv::OutputArray dst, int dtype, double alpha=1, double beta=0);
 void copy(const Mat& src, Mat& dst, const Mat& mask=Mat(), bool invertMask=false);
@@ -611,7 +611,7 @@ public:
     };
 
     // get RNG to generate random input data for a test
-    RNG& get_rng() { return rng; }
+    RNG& get_rng() { return cv::theRNG(); }
 
     // returns the current error code
     TS::FailureCode get_err_code() { return TS::FailureCode(current_test_info.code); }
@@ -629,7 +629,6 @@ public:
 protected:
 
     // these are allocated within a test to try to keep them valid in case of stack corruption
-    RNG rng;
 
     // information about the current test
     TestInfo current_test_info;
@@ -667,8 +666,6 @@ protected:
     virtual void get_minmax_bounds( int i, int j, int type, Scalar& low, Scalar& high );
     virtual double get_success_error_level( int test_case_idx, int i, int j );
 
-    bool cvmat_allowed;
-    bool iplimage_allowed;
     bool optional_mask;
     bool element_wise_relative_error;
 
@@ -677,8 +674,31 @@ protected:
 
     enum { INPUT, INPUT_OUTPUT, OUTPUT, REF_INPUT_OUTPUT, REF_OUTPUT, TEMP, MASK, MAX_ARR };
 
-    vector<vector<void*> > test_array;
-    vector<vector<Mat> > test_mat;
+    // Helper classes to proxy specific calls to test_mat array, emulates vector<vector<void*>>
+    // allowed calls:
+    // test_array.size() - always MAX_ARR
+    // test_array[i].size()
+    // test_array[i].push_back(NULL) - only NULL is supported
+    // test_array[i].pop_back()
+    struct ProxyAccessor {
+        ProxyAccessor(ArrayTest & parent_, size_t idx_) : parent(parent_), idx(idx_) {}
+        inline void push_back(void * ptr) const { CV_Assert(ptr == NULL); parent.test_mat[idx].push_back(Mat()); }
+        inline void pop_back() const { CV_Assert(parent.test_mat[idx].size() > 0); parent.test_mat[idx].pop_back(); }
+        inline size_t size() const { return parent.test_mat[idx].size(); }
+    private:
+        ArrayTest &parent;
+        size_t idx;
+    };
+    struct ProxyInterface {
+        ProxyInterface(ArrayTest & parent_) : parent(parent_) {}
+        inline ProxyAccessor operator[](size_t idx) const { return ProxyAccessor(parent, idx); }
+        inline size_t size() const { return MAX_ARR; }
+    private:
+        ArrayTest &parent;
+    };
+
+    ProxyInterface test_array; // former vector<vector<void*> > test_array;
+    std::vector<std::vector<cv::Mat> > test_mat;
     float buf[4];
 };
 
@@ -749,12 +769,81 @@ struct DefaultRngAuto
 
 
 // test images generation functions
-void fillGradient(Mat& img, int delta = 5);
-void smoothBorder(Mat& img, const Scalar& color, int delta = 3);
+template<typename T>
+void fillGradient(Mat& img, int delta = 5)
+{
+    CV_UNUSED(delta);
+    const int ch = img.channels();
+
+    int r, c, i;
+    for(r=0; r<img.rows; r++)
+    {
+        for(c=0; c<img.cols; c++)
+        {
+            T vals[] = {(T)r, (T)c, (T)(r*c), (T)(r*c/(r+c+1))};
+            T *p = (T*)img.ptr(r, c);
+            for(i=0; i<ch; i++) p[i] = (T)vals[i];
+        }
+    }
+}
+template<>
+void fillGradient<uint8_t>(Mat& img, int delta);
+
+template<typename T>
+void smoothBorder(Mat& img, const Scalar& color, int delta = 3)
+{
+    const int ch = img.channels();
+    CV_Assert(!img.empty() && ch <= 4);
+
+    Scalar s;
+    int n = 100/delta;
+    int nR = std::min(n, (img.rows+1)/2), nC = std::min(n, (img.cols+1)/2);
+
+    int r, c, i;
+    for(r=0; r<nR; r++)
+    {
+        double k1 = r*delta/100., k2 = 1-k1;
+        for(c=0; c<img.cols; c++)
+        {
+            auto *p = img.ptr<T>(r, c);
+            for(i=0; i<ch; i++) s[i] = p[i];
+            s = s * k1 + color * k2;
+            for(i=0; i<ch; i++) p[i] = static_cast<T>((s[i]));
+        }
+        for(c=0; c<img.cols; c++)
+        {
+            auto *p = img.ptr<T>(img.rows-r-1, c);
+            for(i=0; i<ch; i++) s[i] = p[i];
+            s = s * k1 + color * k2;
+            for(i=0; i<ch; i++) p[i] = static_cast<T>((s[i]));
+        }
+    }
+
+    for(r=0; r<img.rows; r++)
+    {
+        for(c=0; c<nC; c++)
+        {
+            double k1 = c*delta/100., k2 = 1-k1;
+            auto *p = img.ptr<T>(r, c);
+            for(i=0; i<ch; i++) s[i] = p[i];
+            s = s * k1 + color * k2;
+            for(i=0; i<ch; i++) p[i] = static_cast<T>((s[i]));
+        }
+        for(c=0; c<n; c++)
+        {
+            double k1 = c*delta/100., k2 = 1-k1;
+            auto *p = img.ptr<T>(r, img.cols-c-1);
+            for(i=0; i<ch; i++) s[i] = p[i];
+            s = s * k1 + color * k2;
+            for(i=0; i<ch; i++) p[i] = static_cast<T>((s[i]));
+        }
+    }
+}
 
 // Utility functions
 
 void addDataSearchPath(const std::string& path);
+void addDataSearchEnv(const std::string& env_name);
 void addDataSearchSubDirectory(const std::string& subdir);
 
 /*! @brief Try to find requested data file
@@ -941,13 +1030,9 @@ namespace opencv_test {
 using namespace cvtest;
 using namespace cv;
 
-#ifdef CV_CXX11
 #define CVTEST_GUARD_SYMBOL(name) \
     class required_namespace_specificatin_here_for_symbol_ ## name {}; \
     using name = required_namespace_specificatin_here_for_symbol_ ## name;
-#else
-#define CVTEST_GUARD_SYMBOL(name) /* nothing */
-#endif
 
 CVTEST_GUARD_SYMBOL(norm)
 CVTEST_GUARD_SYMBOL(add)

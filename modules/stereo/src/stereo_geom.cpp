@@ -263,11 +263,11 @@ void stereoRectify( InputArray _cameraMatrix1, InputArray _distCoeffs1,
                  s0);
 
         double s1 = std::min(std::min(std::min((double)cx1/(cx1_0 - outer1.x), (double)cy1/(cy1_0 - outer1.y)),
-                            (double)(newImgSize.width - cx1)/(outer1.x + outer1.width - cx1_0)),
-                        (double)(newImgSize.height - cy1)/(outer1.y + outer1.height - cy1_0));
+                            (double)(newImgSize.width - 1 - cx1)/(outer1.x + outer1.width - cx1_0)),
+                        (double)(newImgSize.height - 1 - cy1)/(outer1.y + outer1.height - cy1_0));
         s1 = std::min(std::min(std::min(std::min((double)cx2/(cx2_0 - outer2.x), (double)cy2/(cy2_0 - outer2.y)),
-                         (double)(newImgSize.width - cx2)/(outer2.x + outer2.width - cx2_0)),
-                     (double)(newImgSize.height - cy2)/(outer2.y + outer2.height - cy2_0)),
+                         (double)(newImgSize.width - 1 - cx2)/(outer2.x + outer2.width - cx2_0)),
+                     (double)(newImgSize.height - 1 - cy2)/(outer2.y + outer2.height - cy2_0)),
                  s1);
 
         s = s0*(1 - alpha) + s1*alpha;
@@ -290,22 +290,22 @@ void stereoRectify( InputArray _cameraMatrix1, InputArray _distCoeffs1,
 
     if(roi1)
     {
-        *roi1 = cvRect(
+        *roi1 =
             cv::Rect(cvCeil((inner1.x - cx1_0)*s + cx1),
                      cvCeil((inner1.y - cy1_0)*s + cy1),
                      cvFloor(inner1.width*s), cvFloor(inner1.height*s))
             & cv::Rect(0, 0, newImgSize.width, newImgSize.height)
-        );
+        ;
     }
 
     if(roi2)
     {
-        *roi2 = cvRect(
+        *roi2 =
             cv::Rect(cvCeil((inner2.x - cx2_0)*s + cx2),
                      cvCeil((inner2.y - cy2_0)*s + cy2),
                      cvFloor(inner2.width*s), cvFloor(inner2.height*s))
             & cv::Rect(0, 0, newImgSize.width, newImgSize.height)
-        );
+        ;
     }
     }
 

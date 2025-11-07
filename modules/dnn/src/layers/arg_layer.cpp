@@ -43,7 +43,7 @@ public:
 
     virtual bool supportBackend(int backendId) CV_OVERRIDE
     {
-        return backendId == DNN_BACKEND_OPENCV && preferableTarget == DNN_TARGET_CPU;
+        return backendId == DNN_BACKEND_OPENCV;
     }
 
     void handleKeepDims(MatShape& shape, const int axis_) const
@@ -64,12 +64,27 @@ public:
                                  std::vector<MatShape> &internals) const CV_OVERRIDE
     {
         MatShape inpShape = inputs[0];
+        // no axis for scalar
+        if (inpShape.empty()){
+            CV_Assert(axis == 0);
+        }
 
         const int axis_ = normalize_axis(axis, inpShape);
-        handleKeepDims(inpShape, axis_);
+        // handle dims = 0 situation
+        if (inpShape.dims > 0)
+            handleKeepDims(inpShape, axis_);
         outputs.assign(1, inpShape);
 
         return false;
+    }
+
+    virtual void getTypes(const std::vector<MatType>& inputs,
+        const int requiredOutputs,
+        const int requiredInternals,
+        std::vector<MatType>& outputs,
+        std::vector<MatType>& internals) const CV_OVERRIDE
+    {
+        outputs.assign(1, CV_64S);
     }
 
     void forward(InputArrayOfArrays inputs_arr, OutputArrayOfArrays outputs_arr, OutputArrayOfArrays internals_arr) CV_OVERRIDE
@@ -82,7 +97,7 @@ public:
         outputs_arr.getMatVector(outputs);
 
         CV_Assert_N(inputs.size() == 1, outputs.size() == 1);
-        std::vector<int> outShape = shape(outputs[0]);
+        MatShape outShape = shape(outputs[0]);
         Mat output(outShape, CV_32SC1);
 
         switch (op)
@@ -98,7 +113,7 @@ public:
         }
 
         output = output.reshape(1, outShape);
-        output.convertTo(outputs[0], CV_32FC1);
+        output.convertTo(outputs[0], CV_64SC1);
     }
 
 private:

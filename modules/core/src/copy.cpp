@@ -12,6 +12,7 @@
 // Copyright (C) 2000-2008, Intel Corporation, all rights reserved.
 // Copyright (C) 2009-2011, Willow Garage Inc., all rights reserved.
 // Copyright (C) 2014, Itseez Inc., all rights reserved.
+// Copyright (C) 2025, SpaceMIT Inc., all rights reserved.
 // Third party copyrights are property of their respective owners.
 //
 // Redistribution and use in source and binary forms, with or without modification,
@@ -48,7 +49,6 @@
 
 #include "precomp.hpp"
 #include "opencl_kernels_core.hpp"
-
 
 namespace cv
 {
@@ -87,10 +87,10 @@ void scalarToRawData(const Scalar& s, void* _buf, int type, int unroll_to)
         scalarToRawData_(s, (short*)_buf, cn, unroll_to);
         break;
     case CV_16F:
-        scalarToRawData_(s, (float16_t*)_buf, cn, unroll_to);
+        scalarToRawData_(s, (hfloat*)_buf, cn, unroll_to);
         break;
     case CV_16BF:
-        scalarToRawData_(s, (bfloat16_t*)_buf, cn, unroll_to);
+        scalarToRawData_(s, (bfloat*)_buf, cn, unroll_to);
         break;
     case CV_32U:
         scalarToRawData_(s, (unsigned*)_buf, cn, unroll_to);
@@ -111,7 +111,7 @@ void scalarToRawData(const Scalar& s, void* _buf, int type, int unroll_to)
         scalarToRawData_(s, (double*)_buf, cn, unroll_to);
         break;
     default:
-        CV_Error(CV_StsUnsupportedFormat,"");
+        CV_Error(cv::Error::StsUnsupportedFormat,"");
     }
 }
 
@@ -194,6 +194,41 @@ copyMask_<uchar>(const uchar* _src, size_t sstep, const uchar* mask, size_t mste
 }
 
 template<> void
+copyMask_<Vec3b>(const uchar* _src, size_t sstep, const uchar* mask, size_t mstep, uchar* _dst, size_t dstep, Size size)
+{
+    for( ; size.height--; mask += mstep, _src += sstep, _dst += dstep )
+    {
+        const uchar* src = (const uchar*)_src;
+        uchar* dst = (uchar*)_dst;
+        int x = 0;
+#if (CV_SIMD || CV_SIMD_SCALABLE)
+        for( ; x <= size.width - VTraits<v_uint8>::vlanes(); x += VTraits<v_uint8>::vlanes() )
+        {
+            v_uint8 v_nmask = v_eq(vx_load(mask + x), vx_setzero_u8());
+
+            v_uint8 v_src0, v_src1, v_src2;
+            v_uint8 v_dst0, v_dst1, v_dst2;
+            v_load_deinterleave(src + 3 * x, v_src0, v_src1, v_src2);
+            v_load_deinterleave(dst + 3 * x, v_dst0, v_dst1, v_dst2);
+
+            v_dst0 = v_select(v_nmask, v_dst0, v_src0);
+            v_dst1 = v_select(v_nmask, v_dst1, v_src1);
+            v_dst2 = v_select(v_nmask, v_dst2, v_src2);
+
+            v_store_interleave(dst + 3 * x, v_dst0, v_dst1, v_dst2);
+        }
+        vx_cleanup();
+#endif
+        for( ; x < size.width; x++ )
+            if( mask[x] ) {
+                dst[3 * x] = src[3 * x];
+                dst[3 * x + 1] = src[3 * x + 1];
+                dst[3 * x + 2] = src[3 * x + 2];
+            }
+    }
+}
+
+template<> void
 copyMask_<ushort>(const uchar* _src, size_t sstep, const uchar* mask, size_t mstep, uchar* _dst, size_t dstep, Size size)
 {
     CV_IPP_RUN_FAST(CV_INSTRUMENT_FUN_IPP(ippiCopy_16u_C1MR, (const Ipp16u *)_src, (int)sstep, (Ipp16u *)_dst, (int)dstep, ippiSize(size), mask, (int)mstep) >= 0)
@@ -226,6 +261,92 @@ copyMask_<ushort>(const uchar* _src, size_t sstep, const uchar* mask, size_t mst
         #endif
         for( ; x < size.width; x++ )
             if( mask[x] )
+                dst[x] = src[x];
+    }
+}
+
+template<> void
+copyMask_<Vec3s>(const uchar* _src, size_t sstep, const uchar* mask, size_t mstep, uchar* _dst, size_t dstep, Size size)
+{
+    for( ; size.height--; mask += mstep, _src += sstep, _dst += dstep )
+    {
+        const ushort* src = (const ushort*)_src;
+        ushort* dst = (ushort*)_dst;
+        int x = 0;
+#if (CV_SIMD || CV_SIMD_SCALABLE)
+        for( ; x <= size.width - VTraits<v_uint8>::vlanes(); x += VTraits<v_uint8>::vlanes() )
+        {
+            v_uint8 v_nmask = v_eq(vx_load(mask + x), vx_setzero_u8());
+            v_uint8 v_nmask0, v_nmask1;
+            v_zip(v_nmask, v_nmask, v_nmask0, v_nmask1);
+
+            v_uint16 v_src0, v_src1, v_src2;
+            v_uint16 v_dst0, v_dst1, v_dst2;
+            v_load_deinterleave(src + 3 * x, v_src0, v_src1, v_src2);
+            v_load_deinterleave(dst + 3 * x, v_dst0, v_dst1, v_dst2);
+            v_uint16 v_src3, v_src4, v_src5;
+            v_uint16 v_dst3, v_dst4, v_dst5;
+            v_load_deinterleave(src + 3 * (x + VTraits<v_uint16>::vlanes()), v_src3, v_src4, v_src5);
+            v_load_deinterleave(dst + 3 * (x + VTraits<v_uint16>::vlanes()), v_dst3, v_dst4, v_dst5);
+
+            v_dst0 = v_select(v_reinterpret_as_u16(v_nmask0), v_dst0, v_src0);
+            v_dst1 = v_select(v_reinterpret_as_u16(v_nmask0), v_dst1, v_src1);
+            v_dst2 = v_select(v_reinterpret_as_u16(v_nmask0), v_dst2, v_src2);
+            v_dst3 = v_select(v_reinterpret_as_u16(v_nmask1), v_dst3, v_src3);
+            v_dst4 = v_select(v_reinterpret_as_u16(v_nmask1), v_dst4, v_src4);
+            v_dst5 = v_select(v_reinterpret_as_u16(v_nmask1), v_dst5, v_src5);
+
+            v_store_interleave(dst + 3 * x, v_dst0, v_dst1, v_dst2);
+            v_store_interleave(dst + 3 * (x + VTraits<v_uint16>::vlanes()), v_dst3, v_dst4, v_dst5);
+        }
+        vx_cleanup();
+#endif
+        for( ; x < size.width; x++ )
+            if( mask[x] ) {
+                dst[3 * x] = src[3 * x];
+                dst[3 * x + 1] = src[3 * x + 1];
+                dst[3 * x + 2] = src[3 * x + 2];
+            }
+    }
+}
+
+template<> void
+copyMask_<int>(const uchar* _src, size_t sstep, const uchar* mask, size_t mstep, uchar* _dst, size_t dstep, Size size)
+{
+    for( ; size.height--; mask += mstep, _src += sstep, _dst += dstep )
+    {
+        const int* src = (const int*)_src;
+        int* dst = (int*)_dst;
+        int x = 0;
+#if (CV_SIMD || CV_SIMD_SCALABLE)
+        for (; x <= size.width - VTraits<v_uint8>::vlanes(); x += VTraits<v_uint8>::vlanes())
+        {
+            v_int32 v_src0 = vx_load(src + x), v_dst0 = vx_load(dst + x);
+            v_int32 v_src1 = vx_load(src + x +     VTraits<v_int32>::vlanes()), v_dst1 = vx_load(dst + x +     VTraits<v_int32>::vlanes());
+            v_int32 v_src2 = vx_load(src + x + 2 * VTraits<v_int32>::vlanes()), v_dst2 = vx_load(dst + x + 2 * VTraits<v_int32>::vlanes());
+            v_int32 v_src3 = vx_load(src + x + 3 * VTraits<v_int32>::vlanes()), v_dst3 = vx_load(dst + x + 3 * VTraits<v_int32>::vlanes());
+
+            v_uint8 v_nmask = v_eq(vx_load(mask + x), vx_setzero_u8());
+            v_uint8 v_nmask0, v_nmask1;
+            v_zip(v_nmask, v_nmask, v_nmask0, v_nmask1);
+            v_uint8 v_nmask00, v_nmask01, v_nmask10, v_nmask11;
+            v_zip(v_nmask0, v_nmask0, v_nmask00, v_nmask01);
+            v_zip(v_nmask1, v_nmask1, v_nmask10, v_nmask11);
+
+            v_dst0 = v_select(v_reinterpret_as_s32(v_nmask00), v_dst0, v_src0);
+            v_dst1 = v_select(v_reinterpret_as_s32(v_nmask01), v_dst1, v_src1);
+            v_dst2 = v_select(v_reinterpret_as_s32(v_nmask10), v_dst2, v_src2);
+            v_dst3 = v_select(v_reinterpret_as_s32(v_nmask11), v_dst3, v_src3);
+
+            vx_store(dst + x, v_dst0);
+            vx_store(dst + x +     VTraits<v_int32>::vlanes(), v_dst1);
+            vx_store(dst + x + 2 * VTraits<v_int32>::vlanes(), v_dst2);
+            vx_store(dst + x + 3 * VTraits<v_int32>::vlanes(), v_dst3);
+        }
+        vx_cleanup();
+#endif
+        for (; x < size.width; x++)
+            if ( mask[x] )
                 dst[x] = src[x];
     }
 }
@@ -329,17 +450,25 @@ void Mat::copyTo( OutputArray _dst ) const
     }
 #endif
 
+    int stype = type();
     int dtype = _dst.type();
-    if( _dst.fixedType() && dtype != type() )
+    if( _dst.fixedType() && dtype != stype )
     {
-        CV_Assert( channels() == CV_MAT_CN(dtype) );
+        CV_Assert( CV_MAT_CN(stype) == CV_MAT_CN(dtype) );
         convertTo( _dst, dtype );
         return;
     }
 
-    if( empty() )
+    if( dims == 0 && empty() )
     {
         _dst.release();
+        void* obj = _dst.getObj();
+        if (_dst.isMat())
+            reinterpret_cast<Mat*>(obj)->flags = Mat::MAGIC_VAL | Mat::CONTINUOUS_FLAG | stype;
+        else if (_dst.isUMat())
+            reinterpret_cast<UMat*>(obj)->flags = UMat::MAGIC_VAL | UMat::CONTINUOUS_FLAG | stype;
+        else if (_dst.isGpuMat())
+            reinterpret_cast<cuda::GpuMat*>(obj)->flags = stype;
         return;
     }
 
@@ -348,10 +477,12 @@ void Mat::copyTo( OutputArray _dst ) const
         (_dst.fixedSize() && _dst.dims() == 1);
     if( _dst.isUMat() )
     {
-        _dst.create( dims, size.p, type(), -1, allowTransposed );
+        _dst.create( dims, size.p, stype, -1, allowTransposed );
+        if (empty())
+            return;
         UMat dst = _dst.getUMat();
         CV_Assert(dst.u != NULL);
-        size_t i, sz[CV_MAX_DIM] = {1}, dstofs[CV_MAX_DIM] = {0}, esz = elemSize();
+        size_t i, sz[CV_MAX_DIM] = {1}, dstofs[CV_MAX_DIM] = {0}, esz = CV_ELEM_SIZE(stype);
         CV_Assert(dims >= 0 && dims < CV_MAX_DIM);
         for( i = 0; i < (size_t)dims; i++ )
             sz[i] = size.p[i];
@@ -365,7 +496,7 @@ void Mat::copyTo( OutputArray _dst ) const
 
     if( dims <= 2 )
     {
-        _dst.create( dims, size.p, type(), -1, allowTransposed );
+        _dst.create( dims, size.p, stype, -1, allowTransposed );
         Mat dst = _dst.getMat();
         if( data == dst.data )
             return;
@@ -389,7 +520,7 @@ void Mat::copyTo( OutputArray _dst ) const
         return;
     }
 
-    _dst.create( dims, size, type() );
+    _dst.create( size, stype );
     Mat dst = _dst.getMat();
     if( data == dst.data )
         return;
@@ -454,7 +585,7 @@ void Mat::copyTo( OutputArray _dst, InputArray _mask ) const
     }
 
     int cn = channels(), mcn = mask.channels();
-    CV_Assert( mask.depth() == CV_8U && (mcn == 1 || mcn == cn) );
+    CV_Assert( (mask.depth() == CV_8U || mask.depth() == CV_8S || mask.depth() == CV_Bool) && (mcn == 1 || mcn == cn) );
     bool colorMask = mcn > 1;
     if( dims <= 2 )
     {
@@ -464,7 +595,7 @@ void Mat::copyTo( OutputArray _dst, InputArray _mask ) const
     Mat dst;
     {
         Mat dst0 = _dst.getMat();
-        _dst.create(dims, size, type()); // TODO Prohibit 'dst' re-creation, user should pass it explicitly with correct size/type or empty
+        _dst.create(size, type()); // TODO Prohibit 'dst' re-creation, user should pass it explicitly with correct size/type or empty
         dst = _dst.getMat();
 
         if (dst.data != dst0.data) // re-allocation happened
@@ -478,6 +609,18 @@ void Mat::copyTo( OutputArray _dst, InputArray _mask ) const
     }
 
     CV_IPP_RUN_FAST(ipp_copyTo(*this, dst, mask))
+    if ( this->dims <= 2 ) {
+        if ( this->size() == dst.size() && this->size() == dst.size() ) {
+            CALL_HAL(copyToMask, cv_hal_copyToMasked, this->data, this->step, dst.data, dst.step, this->cols, this->rows, this->type(), mask.data, mask.step, mask.type());
+        }
+    }
+    else if ( this->isContinuous() && dst.isContinuous() && mask.isContinuous() )
+    {
+        size_t sz = this->total();
+        if (sz < INT_MAX) {
+            CALL_HAL(copyToMask, cv_hal_copyToMasked, this->data, 0, dst.data, 0, (int)sz, 1, this->type(), mask.data, 0, mask.type());
+        }
+    }
 
     size_t esz = colorMask ? elemSize1() : elemSize();
     BinaryFunc copymask = getCopyMaskFunc(esz);
@@ -643,7 +786,8 @@ Mat& Mat::setTo(InputArray _value, InputArray _mask)
 
     CV_Assert( checkScalar(value, type(), _value.kind(), _InputArray::MAT ));
     int cn = channels(), mcn = mask.channels();
-    CV_Assert( mask.empty() || (mask.depth() == CV_8U && (mcn == 1 || mcn == cn) && size == mask.size) );
+    CV_Assert( mask.empty() || ((mask.depth() == CV_8U || mask.depth() == CV_8S || mask.depth() == CV_Bool) &&
+               (mcn == 1 || mcn == cn) && size == mask.size) );
 
     CV_IPP_RUN_FAST(ipp_Mat_setTo_Mat(*this, value, mask), *this)
 
@@ -826,7 +970,7 @@ int cv::borderInterpolate( int p, int len, int borderType )
     else if( borderType == BORDER_CONSTANT )
         p = -1;
     else
-        CV_Error( CV_StsBadArg, "Unknown/unsupported border type" );
+        CV_Error( cv::Error::StsBadArg, "Unknown/unsupported border type" );
     return p;
 }
 
@@ -1118,115 +1262,4 @@ void cv::copyMakeBorder( InputArray _src, OutputArray _dst, int top, int bottom,
                                 top, left, (int)src.elemSize(), (uchar*)buf.data() );
     }
 }
-
-
-#ifndef OPENCV_EXCLUDE_C_API
-
-/* dst = src */
-CV_IMPL void
-cvCopy( const void* srcarr, void* dstarr, const void* maskarr )
-{
-    if( CV_IS_SPARSE_MAT(srcarr) && CV_IS_SPARSE_MAT(dstarr))
-    {
-        CV_Assert( maskarr == 0 );
-        CvSparseMat* src1 = (CvSparseMat*)srcarr;
-        CvSparseMat* dst1 = (CvSparseMat*)dstarr;
-        CvSparseMatIterator iterator;
-        CvSparseNode* node;
-
-        dst1->dims = src1->dims;
-        memcpy( dst1->size, src1->size, src1->dims*sizeof(src1->size[0]));
-        dst1->valoffset = src1->valoffset;
-        dst1->idxoffset = src1->idxoffset;
-        cvClearSet( dst1->heap );
-
-        if( src1->heap->active_count >= dst1->hashsize*CV_SPARSE_HASH_RATIO )
-        {
-            cvFree( &dst1->hashtable );
-            dst1->hashsize = src1->hashsize;
-            dst1->hashtable =
-                (void**)cvAlloc( dst1->hashsize*sizeof(dst1->hashtable[0]));
-        }
-
-        memset( dst1->hashtable, 0, dst1->hashsize*sizeof(dst1->hashtable[0]));
-
-        for( node = cvInitSparseMatIterator( src1, &iterator );
-             node != 0; node = cvGetNextSparseNode( &iterator ))
-        {
-            CvSparseNode* node_copy = (CvSparseNode*)cvSetNew( dst1->heap );
-            int tabidx = node->hashval & (dst1->hashsize - 1);
-            memcpy( node_copy, node, dst1->heap->elem_size );
-            node_copy->next = (CvSparseNode*)dst1->hashtable[tabidx];
-            dst1->hashtable[tabidx] = node_copy;
-        }
-        return;
-    }
-    cv::Mat src = cv::cvarrToMat(srcarr, false, true, 1), dst = cv::cvarrToMat(dstarr, false, true, 1);
-    CV_Assert( src.depth() == dst.depth() && src.size == dst.size );
-
-    int coi1 = 0, coi2 = 0;
-    if( CV_IS_IMAGE(srcarr) )
-        coi1 = cvGetImageCOI((const IplImage*)srcarr);
-    if( CV_IS_IMAGE(dstarr) )
-        coi2 = cvGetImageCOI((const IplImage*)dstarr);
-
-    if( coi1 || coi2 )
-    {
-        CV_Assert( (coi1 != 0 || src.channels() == 1) &&
-            (coi2 != 0 || dst.channels() == 1) );
-
-        int pair[] = { std::max(coi1-1, 0), std::max(coi2-1, 0) };
-        cv::mixChannels( &src, 1, &dst, 1, pair, 1 );
-        return;
-    }
-    else
-        CV_Assert( src.channels() == dst.channels() );
-
-    if( !maskarr )
-        src.copyTo(dst);
-    else
-        src.copyTo(dst, cv::cvarrToMat(maskarr));
-}
-
-CV_IMPL void
-cvSet( void* arr, CvScalar value, const void* maskarr )
-{
-    cv::Mat m = cv::cvarrToMat(arr);
-    if( !maskarr )
-        m = value;
-    else
-        m.setTo(cv::Scalar(value), cv::cvarrToMat(maskarr));
-}
-
-CV_IMPL void
-cvSetZero( CvArr* arr )
-{
-    if( CV_IS_SPARSE_MAT(arr) )
-    {
-        CvSparseMat* mat1 = (CvSparseMat*)arr;
-        cvClearSet( mat1->heap );
-        if( mat1->hashtable )
-            memset( mat1->hashtable, 0, mat1->hashsize*sizeof(mat1->hashtable[0]));
-        return;
-    }
-    cv::Mat m = cv::cvarrToMat(arr);
-    m = cv::Scalar(0);
-}
-
-CV_IMPL void
-cvFlip( const CvArr* srcarr, CvArr* dstarr, int flip_mode )
-{
-    cv::Mat src = cv::cvarrToMat(srcarr);
-    cv::Mat dst;
-
-    if (!dstarr)
-      dst = src;
-    else
-      dst = cv::cvarrToMat(dstarr);
-
-    CV_Assert( src.type() == dst.type() && src.size() == dst.size() );
-    cv::flip( src, dst, flip_mode );
-}
-
-#endif  // OPENCV_EXCLUDE_C_API
 /* End of file. */

@@ -136,11 +136,6 @@ class Bindings(NewOpenCVTests):
         bm.getPreFilterCap()  # from StereoBM
         bm.getBlockSize()  # from SteroMatcher
 
-        boost = cv.ml.Boost_create()
-        boost.getBoostType()  # from ml::Boost
-        boost.getMaxDepth()  # from ml::DTrees
-        boost.isClassifier()  # from ml::StatModel
-
     def test_raiseGeneralException(self):
         with self.assertRaises((cv.error,),
                             msg='C++ exception is not propagated to Python in the right way') as cm:
@@ -239,6 +234,7 @@ class Bindings(NewOpenCVTests):
             cv.CV_16UC2: [cv.CV_16U, 2, cv.CV_16UC],
             cv.CV_32SC1: [cv.CV_32S, 1, cv.CV_32SC],
             cv.CV_16FC3: [cv.CV_16F, 3, cv.CV_16FC],
+            cv.CV_BoolC1: [cv.CV_Bool, 1, cv.CV_BoolC],
         }
         for ref, (depth, channels, func) in data.items():
             self.assertEqual(ref, cv.CV_MAKETYPE(depth, channels))
@@ -282,6 +278,9 @@ class Arguments(NewOpenCVTests):
         a = np.zeros((2,3,4,5), dtype='f')
         res7 = cv.utils.dumpInputArray(a)
         self.assertEqual(res7, "InputArray: empty()=false kind=0x00010000 flags=0x01010000 total(-1)=120 dims(-1)=4 size(-1)=[2 3 4 5] type(-1)=CV_32FC1")
+        a = np.array([0, 1, 0, 1], dtype=bool)
+        res8 = cv.utils.dumpInputArray(a)
+        self.assertEqual(res8, "InputArray: empty()=false kind=0x00010000 flags=0x01010000 total(-1)=4 dims(-1)=1 size(-1)=4x1 type(-1)=CV_BoolC1")
 
     def test_InputArrayOfArrays(self):
         res1 = cv.utils.dumpInputArrayOfArrays(None)
@@ -344,7 +343,7 @@ class Arguments(NewOpenCVTests):
 
     def test_parse_to_bool_not_convertible(self):
         for not_convertible in (1.2, np.float32(2.3), 's', 'str', (1, 2), [1, 2], complex(1, 1),
-                                complex(imag=2), complex(1.1), np.array([1, 0], dtype=bool)):
+                                complex(imag=2), complex(1.1)):
             with self.assertRaises((TypeError, OverflowError),
                                    msg=get_no_exception_msg(not_convertible)):
                 _ = cv.utils.dumpBool(not_convertible)
@@ -451,7 +450,7 @@ class Arguments(NewOpenCVTests):
         try_to_convert = partial(self._try_to_convert, cv.utils.dumpFloat)
         min_float, max_float = get_limits(ctypes.c_float)
         for convertible in (2, -13, 1.24, np.float32(32.45), float(32), np.double(12.23),
-                            np.float32(-12.3), np.float64(3.22), np.float_(-1.5), min_float,
+                            np.float32(-12.3), np.float64(3.22), min_float,
                             max_float, np.inf, -np.inf, float('Inf'), -float('Inf'),
                             np.double(np.inf), np.double(-np.inf), np.double(float('Inf')),
                             np.double(-float('Inf'))):
@@ -495,7 +494,7 @@ class Arguments(NewOpenCVTests):
         min_float, max_float = get_limits(ctypes.c_float)
         min_double, max_double = get_limits(ctypes.c_double)
         for convertible in (2, -13, 1.24, np.float32(32.45), float(2), np.double(12.23),
-                            np.float32(-12.3), np.float64(3.22), np.float_(-1.5), min_float,
+                            np.float32(-12.3), np.float64(3.22), min_float,
                             max_float, min_double, max_double, np.inf, -np.inf, float('Inf'),
                             -float('Inf'), np.double(np.inf), np.double(-np.inf),
                             np.double(float('Inf')), np.double(-float('Inf'))):
@@ -608,6 +607,14 @@ class Arguments(NewOpenCVTests):
         _, inter_pts = cv.rotatedRectangleIntersection(rect1, rect2)
         self.assertLess(np.max(np.abs(inter_pts.reshape(-1, 2) - pts)), 1e-4)
 
+    def test_result_rotated_rect_boundingRect2f(self):
+        center = (0, 0)
+        size = (10, 10)
+        angle = 0
+        gold_box = (-5.0, -5.0, 10.0, 10.0)
+        rect1 = cv.RotatedRect(center, size, angle)
+        bbox = rect1.boundingRect2f()
+        self.assertEqual(gold_box, bbox)
 
     def test_parse_to_rotated_rect_not_convertible(self):
         for not_convertible in ([], (), np.array([]), (123, (45, 34), 1), {1: 2, 3: 4}, 123,
@@ -812,16 +819,6 @@ class Arguments(NewOpenCVTests):
             self.assertEqual(flag, cv.utils.nested.testEchoBooleanFunction(flag),
                              msg="Function in nested module returns wrong result")
 
-    def test_class_from_submodule_has_global_alias(self):
-        self.assertTrue(hasattr(cv.ml, "Boost"),
-                        msg="Class is not registered in the submodule")
-        self.assertTrue(hasattr(cv, "ml_Boost"),
-                        msg="Class from submodule doesn't have alias in the "
-                        "global module")
-        self.assertEqual(cv.ml.Boost, cv.ml_Boost,
-                         msg="Classes from submodules and global module don't refer "
-                         "to the same type")
-
     def test_inner_class_has_global_alias(self):
         self.assertTrue(hasattr(cv.SimpleBlobDetector, "Params"),
                         msg="Class is not registered as inner class")
@@ -965,7 +962,7 @@ class CanUsePurePythonModuleFunction(NewOpenCVTests):
 class SamplesFindFile(NewOpenCVTests):
 
     def test_ExistedFile(self):
-        res = cv.samples.findFile('lena.jpg', False)
+        res = cv.samples.findFile('HappyFish.jpg', False)
         self.assertNotEqual(res, '')
 
     def test_MissingFile(self):
@@ -979,6 +976,10 @@ class SamplesFindFile(NewOpenCVTests):
         except cv.error as _e:
             pass
 
+class AlgorithmImplHit(NewOpenCVTests):
+    def test_callable(self):
+        res = cv.getDefaultAlgorithmHint()
+        self.assertTrue(res is not None)
 
 if __name__ == '__main__':
     NewOpenCVTests.bootstrap()

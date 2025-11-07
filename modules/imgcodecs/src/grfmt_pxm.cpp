@@ -340,7 +340,9 @@ bool PxMDecoder::readData( Mat& img )
                 {
                     if( color )
                     {
-                        if( img.depth() == CV_8U )
+                        if (m_use_rgb)
+                            memcpy(data, src, m_width * CV_ELEM_SIZE(img.type()));
+                        else if( img.depth() == CV_8U )
                             icvCvt_RGB2BGR_8u_C3R( src, 0, data, 0, Size(m_width,1) );
                         else
                             icvCvt_RGB2BGR_16u_C3R( (ushort *)src, 0, (ushort *)data, 0, Size(m_width,1) );
@@ -387,6 +389,7 @@ PxMEncoder::PxMEncoder(PxMMode mode) :
         CV_Error(Error::StsInternal, "");
     }
     m_buf_supported = true;
+    m_supported_encode_key = {IMWRITE_PXM_BINARY};
 }
 
 PxMEncoder::~PxMEncoder()
@@ -412,8 +415,14 @@ bool PxMEncoder::write(const Mat& img, const std::vector<int>& params)
 
     for( size_t i = 0; i < params.size(); i += 2 )
     {
+        const int value = params[i+1];
         if( params[i] == IMWRITE_PXM_BINARY )
-            isBinary = params[i+1] != 0;
+        {
+            isBinary = value != 0;
+            if((value != 0) && (value != 1)) {
+                CV_LOG_WARNING(nullptr, cv::format("The value(%d) for IMWRITE_PXM_BINARY must be 0 or 1. It is fallbacked to 1", value));
+            }
+        }
     }
 
     int mode = mode_;
@@ -477,7 +486,7 @@ bool PxMEncoder::write(const Mat& img, const std::vector<int>& params)
         header_sz += sz;
     }
 
-    strm.putBytes(buffer, header_sz);
+    CHECK_WRITE(strm.putBytes(buffer, header_sz));
 
     for( y = 0; y < height; y++ )
     {
@@ -510,7 +519,7 @@ bool PxMEncoder::write(const Mat& img, const std::vector<int>& params)
                 {
                     *ptr++ = byte;
                 }
-                strm.putBytes(buffer, (int)(ptr - buffer));
+                CHECK_WRITE(strm.putBytes(buffer, (int)(ptr - buffer)));
                 continue;
             }
 
@@ -537,7 +546,7 @@ bool PxMEncoder::write(const Mat& img, const std::vector<int>& params)
                 }
             }
 
-            strm.putBytes( (channels > 1 || depth > 8) ? buffer : (const char*)data, fileStep);
+            CHECK_WRITE(strm.putBytes( (channels > 1 || depth > 8) ? buffer : (const char*)data, fileStep));
         }
         else
         {
@@ -608,7 +617,7 @@ bool PxMEncoder::write(const Mat& img, const std::vector<int>& params)
 
             *ptr++ = '\n';
 
-            strm.putBytes( buffer, (int)(ptr - buffer) );
+            CHECK_WRITE(strm.putBytes( buffer, (int)(ptr - buffer) ));
         }
     }
 

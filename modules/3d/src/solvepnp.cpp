@@ -41,8 +41,6 @@
  //M*/
 
 #include "precomp.hpp"
-//#include "upnp.h"
-#include "dls.h"
 #include "epnp.h"
 #include "p3p.h"
 #include "ap3p.h"
@@ -56,7 +54,7 @@ namespace cv {
 
 using namespace std;
 
-#if defined _DEBUG || defined CV_STATIC_ANALYSIS
+#if !defined(NDEBUG) || defined(CV_STATIC_ANALYSIS)
 static bool isPlanarObjectPoints(InputArray _objectPoints, double threshold)
 {
     CV_CheckType(_objectPoints.type(), _objectPoints.type() == CV_32FC3 || _objectPoints.type() == CV_64FC3,
@@ -99,7 +97,8 @@ void drawFrameAxes(InputOutputArray image, InputArray cameraMatrix, InputArray d
     CV_CheckType(type, cn == 1 || cn == 3 || cn == 4,
                  "Number of channels must be 1, 3 or 4" );
 
-    CV_Assert(image.getMat().total() > 0);
+    cv::Mat img = image.getMat();
+    CV_Assert(img.total() > 0);
     CV_Assert(length > 0);
 
     // project axes points
@@ -110,6 +109,18 @@ void drawFrameAxes(InputOutputArray image, InputArray cameraMatrix, InputArray d
     axesPoints.push_back(Point3f(0, 0, length));
     std::vector<Point2f> imagePoints;
     projectPoints(axesPoints, rvec, tvec, cameraMatrix, distCoeffs, imagePoints);
+
+    cv::Rect imageRect(0, 0, img.cols, img.rows);
+    bool allIn = true;
+    for (size_t i = 0; i < imagePoints.size(); i++)
+    {
+        allIn &= imageRect.contains(imagePoints[i]);
+    }
+
+    if (!allIn)
+    {
+        CV_LOG_WARNING(NULL, "Some of projected axes endpoints are out of frame. The drawn axes may be not reliable.");
+    }
 
     // draw axes lines
     line(image, imagePoints[0], imagePoints[1], Scalar(0, 0, 255), thickness);
@@ -440,8 +451,8 @@ int solveP3P( InputArray _opoints, InputArray _ipoints,
     int solutions = 0;
     if (flags == SOLVEPNP_P3P)
     {
-        p3p P3Psolver(cameraMatrix);
-        solutions = P3Psolver.solve(Rs, ts, opoints, undistortedPoints);
+        p3p P3Psolver;
+        solutions = P3Psolver.estimate(Rs, ts, opoints, undistortedPoints);
     }
     else if (flags == SOLVEPNP_AP3P)
     {
@@ -840,17 +851,8 @@ int solvePnPGeneric( InputArray _opoints, InputArray _ipoints,
     Mat distCoeffs = Mat_<double>(distCoeffs0);
 
     std::vector<Mat> vec_rvecs, vec_tvecs;
-    if (flags == SOLVEPNP_EPNP || flags == SOLVEPNP_DLS || flags == SOLVEPNP_UPNP)
+    if (flags == SOLVEPNP_EPNP)
     {
-        if (flags == SOLVEPNP_DLS)
-        {
-            CV_LOG_DEBUG(NULL, "Broken implementation for SOLVEPNP_DLS. Fallback to EPnP.");
-        }
-        else if (flags == SOLVEPNP_UPNP)
-        {
-            CV_LOG_DEBUG(NULL, "Broken implementation for SOLVEPNP_UPNP. Fallback to EPnP.");
-        }
-
         Mat undistortedPoints;
         undistortPoints(ipoints, undistortedPoints, cameraMatrix, distCoeffs);
         epnp PnP(cameraMatrix, opoints, undistortedPoints);
@@ -924,7 +926,7 @@ int solvePnPGeneric( InputArray _opoints, InputArray _ipoints,
     {
         CV_Assert(npoints == 4);
 
-#if defined _DEBUG || defined CV_STATIC_ANALYSIS
+#if !defined(NDEBUG) || defined(CV_STATIC_ANALYSIS)
         double Xs[4][3];
         if (opoints.depth() == CV_32F)
         {
@@ -1000,35 +1002,9 @@ int solvePnPGeneric( InputArray _opoints, InputArray _ipoints,
         sqpnp::PoseSolver solver;
         solver.solve(opoints, undistortedPoints, vec_rvecs, vec_tvecs);
     }
-    /*else if (flags == SOLVEPNP_DLS)
-    {
-        Mat undistortedPoints;
-        undistortPoints(ipoints, undistortedPoints, cameraMatrix, distCoeffs);
-
-        dls PnP(opoints, undistortedPoints);
-
-        Mat rvec, tvec, R;
-        bool result = PnP.compute_pose(R, tvec);
-        if (result)
-        {
-            Rodrigues(R, rvec);
-            vec_rvecs.push_back(rvec);
-            vec_tvecs.push_back(tvec);
-        }
-    }
-    else if (flags == SOLVEPNP_UPNP)
-    {
-        upnp PnP(cameraMatrix, opoints, ipoints);
-
-        Mat rvec, tvec, R;
-        PnP.compute_pose(R, tvec);
-        Rodrigues(R, rvec);
-        vec_rvecs.push_back(rvec);
-        vec_tvecs.push_back(tvec);
-    }*/
     else
-        CV_Error(CV_StsBadArg, "The flags argument must be one of SOLVEPNP_ITERATIVE, SOLVEPNP_P3P, "
-            "SOLVEPNP_EPNP, SOLVEPNP_DLS, SOLVEPNP_UPNP, SOLVEPNP_AP3P, SOLVEPNP_IPPE, SOLVEPNP_IPPE_SQUARE or SOLVEPNP_SQPNP");
+        CV_Error(cv::Error::StsBadArg, "The flags argument must be one of SOLVEPNP_ITERATIVE, SOLVEPNP_P3P, "
+            "SOLVEPNP_EPNP, SOLVEPNP_AP3P, SOLVEPNP_IPPE, SOLVEPNP_IPPE_SQUARE or SOLVEPNP_SQPNP");
 
     CV_Assert(vec_rvecs.size() == vec_tvecs.size());
 

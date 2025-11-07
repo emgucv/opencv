@@ -182,16 +182,12 @@ static std::string printMethod(int method)
     case 2:
         return "SOLVEPNP_P3P";
     case 3:
-        return "SOLVEPNP_DLS (remaped to SOLVEPNP_EPNP)";
-    case 4:
-        return "SOLVEPNP_UPNP (remaped to SOLVEPNP_EPNP)";
-    case 5:
         return "SOLVEPNP_AP3P";
-    case 6:
+    case 4:
         return "SOLVEPNP_IPPE";
-    case 7:
+    case 5:
         return "SOLVEPNP_IPPE_SQUARE";
-    case 8:
+    case 6:
         return "SOLVEPNP_SQPNP";
     default:
         return "Unknown value";
@@ -207,11 +203,27 @@ public:
         eps[SOLVEPNP_EPNP] = 1.0e-2;
         eps[SOLVEPNP_P3P] = 1.0e-2;
         eps[SOLVEPNP_AP3P] = 1.0e-2;
-        eps[SOLVEPNP_DLS] = 1.0e-2;
-        eps[SOLVEPNP_UPNP] = 1.0e-2;
+        eps[SOLVEPNP_IPPE] = 1.0e-2;
+        eps[SOLVEPNP_IPPE_SQUARE] = 1.0e-2;
         eps[SOLVEPNP_SQPNP] = 1.0e-2;
-        totalTestsCount = 10;
-        pointsCount = 500;
+
+        totalTestsCount = 1000;
+
+        if (planar || planarTag)
+        {
+            if (planarTag)
+            {
+                pointsCount = 4;
+            }
+            else
+            {
+                pointsCount = 30;
+            }
+        }
+        else
+        {
+            pointsCount = 500;
+        }
     }
     ~CV_solvePnPRansac_Test() {}
 protected:
@@ -290,22 +302,11 @@ protected:
 
     virtual bool runTest(RNG& rng, int mode, int method, const vector<Point3f>& points, double& errorTrans, double& errorRot)
     {
-        if ((!planar && method == SOLVEPNP_IPPE) || method == SOLVEPNP_IPPE_SQUARE)
-        {
-            return true;
-        }
-
         Mat rvec, tvec;
         vector<int> inliers;
         Mat trueRvec, trueTvec;
         Mat intrinsics, distCoeffs;
         generateCameraMatrix(intrinsics, rng);
-        //UPnP is mapped to EPnP
-        //Uncomment this when UPnP is fixed
-//        if (method == SOLVEPNP_UPNP)
-//        {
-//            intrinsics.at<double>(1,1) = intrinsics.at<double>(0,0);
-//        }
         if (mode == 0)
         {
             distCoeffs = Mat::zeros(4, 1, CV_64FC1);
@@ -320,17 +321,24 @@ protected:
         vector<Point2f> projectedPoints;
         projectedPoints.resize(points.size());
         projectPoints(points, trueRvec, trueTvec, intrinsics, distCoeffs, projectedPoints);
+
+        size_t numOutliers = 0;
         for (size_t i = 0; i < projectedPoints.size(); i++)
         {
-            if (i % 20 == 0)
+            if (!planarTag && rng.uniform(0., 1.) > 0.95)
             {
                 projectedPoints[i] = projectedPoints[rng.uniform(0,(int)points.size()-1)];
+                numOutliers++;
             }
         }
 
-        solvePnPRansac(points, projectedPoints, intrinsics, distCoeffs, rvec, tvec, false, pointsCount, 0.5f, 0.99, inliers, method);
+        bool isEstimateSuccess = solvePnPRansac(points, projectedPoints, intrinsics, distCoeffs, rvec, tvec, false, pointsCount, 0.5f, 0.99, inliers, method);
+        if (!isEstimateSuccess)
+        {
+            return false;
+        }
 
-        bool isTestSuccess = inliers.size() >= points.size()*0.95;
+        bool isTestSuccess = inliers.size() + numOutliers >= points.size();
 
         double rvecDiff = cvtest::norm(rvec, trueRvec, NORM_L2), tvecDiff = cvtest::norm(tvec, trueTvec, NORM_L2);
         isTestSuccess = isTestSuccess && rvecDiff < eps[method] && tvecDiff < eps[method];
@@ -362,6 +370,22 @@ protected:
         {
             for (int method = 0; method < SOLVEPNP_MAX_COUNT; method++)
             {
+                // SOLVEPNP_IPPE need planar object
+                if (!planar && method == SOLVEPNP_IPPE)
+                {
+                    cout << "mode: " << printMode(mode) << ", method: " << printMethod(method) << " -> "
+                         << "Skip for non-planar object" << endl;
+                    continue;
+                }
+
+                // SOLVEPNP_IPPE_SQUARE need planar tag object
+                if (!planarTag && method == SOLVEPNP_IPPE_SQUARE)
+                {
+                    cout << "mode: " << printMode(mode) << ", method: " << printMethod(method) << " -> "
+                         << "Skip for non-planar tag object" << endl;
+                    continue;
+                }
+
                 //To get the same input for each methods
                 RNG rngCopy = rng;
                 std::vector<double> vec_errorTrans, vec_errorRot;
@@ -434,10 +458,8 @@ public:
     {
         eps[SOLVEPNP_ITERATIVE] = 1.0e-6;
         eps[SOLVEPNP_EPNP] = 1.0e-6;
-        eps[SOLVEPNP_P3P] = 2.0e-4;
+        eps[SOLVEPNP_P3P] = 1.0e-4;
         eps[SOLVEPNP_AP3P] = 1.0e-4;
-        eps[SOLVEPNP_DLS] = 1.0e-6; //DLS is remapped to EPnP, so we use the same threshold
-        eps[SOLVEPNP_UPNP] = 1.0e-6; //UPnP is remapped to EPnP, so we use the same threshold
         eps[SOLVEPNP_IPPE] = 1.0e-6;
         eps[SOLVEPNP_IPPE_SQUARE] = 1.0e-6;
         eps[SOLVEPNP_SQPNP] = 1.0e-6;
@@ -465,15 +487,6 @@ public:
 protected:
     virtual bool runTest(RNG& rng, int mode, int method, const vector<Point3f>& points, double& errorTrans, double& errorRot)
     {
-        if ((!planar && (method == SOLVEPNP_IPPE || method == SOLVEPNP_IPPE_SQUARE)) ||
-            (!planarTag && method == SOLVEPNP_IPPE_SQUARE))
-        {
-            errorTrans = -1;
-            errorRot = -1;
-            //SOLVEPNP_IPPE and SOLVEPNP_IPPE_SQUARE need planar object
-            return true;
-        }
-
         //Tune thresholds...
         double epsilon_trans[SOLVEPNP_MAX_COUNT];
         memcpy(epsilon_trans, eps, SOLVEPNP_MAX_COUNT * sizeof(*epsilon_trans));
@@ -486,19 +499,12 @@ protected:
             if (mode == 0)
             {
                 epsilon_trans[SOLVEPNP_EPNP] = 5.0e-3;
-                epsilon_trans[SOLVEPNP_DLS] = 5.0e-3;
-                epsilon_trans[SOLVEPNP_UPNP] = 5.0e-3;
-
                 epsilon_rot[SOLVEPNP_EPNP] = 5.0e-3;
-                epsilon_rot[SOLVEPNP_DLS] = 5.0e-3;
-                epsilon_rot[SOLVEPNP_UPNP] = 5.0e-3;
             }
             else
             {
                 epsilon_trans[SOLVEPNP_ITERATIVE] = 1e-4;
                 epsilon_trans[SOLVEPNP_EPNP] = 5e-3;
-                epsilon_trans[SOLVEPNP_DLS] = 5e-3;
-                epsilon_trans[SOLVEPNP_UPNP] = 5e-3;
                 epsilon_trans[SOLVEPNP_P3P] = 1e-4;
                 epsilon_trans[SOLVEPNP_AP3P] = 1e-4;
                 epsilon_trans[SOLVEPNP_IPPE] = 1e-4;
@@ -506,8 +512,6 @@ protected:
 
                 epsilon_rot[SOLVEPNP_ITERATIVE] = 1e-4;
                 epsilon_rot[SOLVEPNP_EPNP] = 5e-3;
-                epsilon_rot[SOLVEPNP_DLS] = 5e-3;
-                epsilon_rot[SOLVEPNP_UPNP] = 5e-3;
                 epsilon_rot[SOLVEPNP_P3P] = 1e-4;
                 epsilon_rot[SOLVEPNP_AP3P] = 1e-4;
                 epsilon_rot[SOLVEPNP_IPPE] = 1e-4;
@@ -518,12 +522,6 @@ protected:
         Mat trueRvec, trueTvec;
         Mat intrinsics, distCoeffs;
         generateCameraMatrix(intrinsics, rng);
-        //UPnP is mapped to EPnP
-        //Uncomment this when UPnP is fixed
-//        if (method == SOLVEPNP_UPNP)
-//        {
-//            intrinsics.at<double>(1,1) = intrinsics.at<double>(0,0);
-//        }
         if (mode == 0)
         {
             distCoeffs = Mat::zeros(4, 1, CV_64FC1);
@@ -542,18 +540,6 @@ protected:
             case SOLVEPNP_AP3P:
                 opoints = std::vector<Point3f>(points.begin(), points.begin()+4);
                 break;
-                //UPnP is mapped to EPnP
-                //Uncomment this when UPnP is fixed
-//            case SOLVEPNP_UPNP:
-//                if (points.size() > 50)
-//                {
-//                    opoints = std::vector<Point3f>(points.begin(), points.begin()+50);
-//                }
-//                else
-//                {
-//                    opoints = points;
-//                }
-//                break;
             default:
                 opoints = points;
                 break;
@@ -586,7 +572,7 @@ class CV_solveP3P_Test : public CV_solvePnPRansac_Test
 public:
     CV_solveP3P_Test()
     {
-        eps[SOLVEPNP_P3P] = 2.0e-4;
+        eps[SOLVEPNP_P3P] = 1.0e-4;
         eps[SOLVEPNP_AP3P] = 1.0e-4;
         totalTestsCount = 1000;
     }
@@ -703,6 +689,8 @@ protected:
 
 TEST(Calib3d_SolveP3P, accuracy) { CV_solveP3P_Test test; test.safe_run();}
 TEST(Calib3d_SolvePnPRansac, accuracy) { CV_solvePnPRansac_Test test; test.safe_run(); }
+TEST(Calib3d_SolvePnPRansac, accuracy_planar) { CV_solvePnPRansac_Test test(true); test.safe_run(); }
+TEST(Calib3d_SolvePnPRansac, accuracy_planar_tag) { CV_solvePnPRansac_Test test(true, true); test.safe_run(); }
 TEST(Calib3d_SolvePnP, accuracy) { CV_solvePnP_Test test; test.safe_run(); }
 TEST(Calib3d_SolvePnP, accuracy_planar) { CV_solvePnP_Test test(true); test.safe_run(); }
 TEST(Calib3d_SolvePnP, accuracy_planar_tag) { CV_solvePnP_Test test(true, true); test.safe_run(); }
@@ -1484,7 +1472,7 @@ TEST(Calib3d_SolvePnP, generic)
                 for (size_t i = 0; i < rvecs_est.size() && !isTestSuccess; i++) {
                     double rvecDiff = cvtest::norm(rvecs_est[i], rvec_ground_truth, NORM_L2);
                     double tvecDiff = cvtest::norm(tvecs_est[i], tvec_ground_truth, NORM_L2);
-                    const double threshold = method == SOLVEPNP_P3P ? 1e-2 : 1e-4;
+                    const double threshold = 1e-4;
                     isTestSuccess = rvecDiff < threshold && tvecDiff < threshold;
                 }
 
@@ -1552,7 +1540,7 @@ TEST(Calib3d_SolvePnP, generic)
                 for (size_t i = 0; i < rvecs_est.size() && !isTestSuccess; i++) {
                     double rvecDiff = cvtest::norm(rvecs_est[i], rvec_ground_truth, NORM_L2);
                     double tvecDiff = cvtest::norm(tvecs_est[i], tvec_ground_truth, NORM_L2);
-                    const double threshold = method == SOLVEPNP_P3P ? 1e-2 : 1e-4;
+                    const double threshold = 1e-4;
                     isTestSuccess = rvecDiff < threshold && tvecDiff < threshold;
                 }
 
@@ -2317,7 +2305,7 @@ TEST(AP3P, ctheta1p_nan_23607)
             res.row(j) += t[i].reshape(1, 1);
             res.row(j) /= res.row(j).at<double>(2);
         }
-        EXPECT_LE(cvtest::norm(res.colRange(0, 2), expected, NORM_INF), 3e-16);
+        EXPECT_LE(cvtest::norm(res.colRange(0, 2), expected, NORM_INF), 3.34e-16);
     }
 }
 

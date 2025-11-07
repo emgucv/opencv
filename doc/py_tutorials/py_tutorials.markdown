@@ -20,7 +20,7 @@ OpenCV-Python Tutorials {#tutorial_py_root}
     In this section
     you will learn different image processing functions inside OpenCV.
 
--   @subpage tutorial_py_table_of_contents_feature2d
+-   @subpage tutorial_py_table_of_contents_features
 
     In this section
     you will learn about feature detectors and descriptors
@@ -48,7 +48,7 @@ OpenCV-Python Tutorials {#tutorial_py_root}
 -   @ref tutorial_table_of_content_objdetect
 
     In this section you
-    will learn object detection techniques like face detection etc.
+    will learn object detection techniques.
 
 -   @subpage tutorial_py_table_of_contents_bindings
 

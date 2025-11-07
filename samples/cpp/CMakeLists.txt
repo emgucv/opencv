@@ -7,17 +7,15 @@ set(OPENCV_CPP_SAMPLES_REQUIRED_DEPS
   opencv_imgcodecs
   opencv_videoio
   opencv_highgui
-  opencv_ml
   opencv_video
   opencv_objdetect
   opencv_photo
-  opencv_features2d
+  opencv_features
   opencv_3d
   opencv_stereo
   opencv_calib
   opencv_stitching
   opencv_dnn
-  opencv_gapi
   ${OPENCV_MODULES_PUBLIC}
   ${OpenCV_LIB_COMPONENTS})
 ocv_check_dependencies(${OPENCV_CPP_SAMPLES_REQUIRED_DEPS})
@@ -73,11 +71,9 @@ endforeach()
 include("tutorial_code/calib3d/real_time_pose_estimation/CMakeLists.txt" OPTIONAL)
 
 # Standalone samples only
-if(OpenCV_FOUND AND NOT CMAKE_VERSION VERSION_LESS "3.1")
+if(OpenCV_FOUND)
   add_subdirectory("example_cmake")
 endif()
-if(OpenCV_FOUND AND NOT CMAKE_VERSION VERSION_LESS "3.9"
-    AND NOT OPENCV_EXAMPLES_SKIP_PARALLEL_BACKEND
-)
+if(OpenCV_FOUND AND NOT OPENCV_EXAMPLES_SKIP_PARALLEL_BACKEND)
   add_subdirectory("tutorial_code/core/parallel_backend")
 endif()

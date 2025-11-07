@@ -39,8 +39,8 @@
  //
  //M*/
 
+#include "opencv2/core/types.hpp"
 #include "test_precomp.hpp"
-#include "opencv2/imgproc/imgproc_c.h"
 #include "test_chessboardgenerator.hpp"
 
 namespace opencv_test { namespace {
@@ -251,7 +251,7 @@ TEST(Calib3d_CornerSubPix, regression_7204)
     std::vector<cv::Point2f> corners;
     corners.push_back(cv::Point2f(65, 30));
     cv::cornerSubPix(image, corners, cv::Size(3, 3), cv::Size(-1, -1),
-        cv::TermCriteria(CV_TERMCRIT_EPS + CV_TERMCRIT_ITER, 30, 0.1));
+        cv::TermCriteria(cv::TermCriteria::EPS + cv::TermCriteria::COUNT, 30, 0.1));
 }
 
 }} // namespace

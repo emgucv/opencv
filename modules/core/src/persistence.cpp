@@ -11,6 +11,8 @@
 
 #include <opencv2/core/utils/logger.hpp>
 
+#define CV_SEQ_ELTYPE_PTR            CV_MAKE_TYPE(CV_8U, 8 /*sizeof(void*)*/)
+
 namespace cv
 {
 
@@ -98,9 +100,11 @@ char* doubleToString( char* buf, size_t bufSize, double value, bool explicitZero
         }
         else
         {
-            static const char* fmt = "%.16e";
+            // binary64 has 52 bit fraction with hidden bit.
+            // 53 * log_10(2) is 15.955. So "%.16f" should be fine, but its test fails.
+            snprintf( buf, bufSize, "%.17g", value );
+
             char* ptr = buf;
-            snprintf( buf, bufSize, fmt, value );
             if( *ptr == '+' || *ptr == '-' )
                 ptr++;
             for( ; cv_isdigit(*ptr); ptr++ )
@@ -140,11 +144,21 @@ char* floatToString( char* buf, size_t bufSize, float value, bool halfprecision,
         }
         else
         {
-            char* ptr = buf;
             if (halfprecision)
-                snprintf(buf, bufSize, "%.4e", value);
+            {
+                // bfloat16 has 7 bit fraction with hidden bit.
+                // binary16 has 10 bit fraction with hidden bit.
+                // 11 * log_10(2) is 3.311. So "%.4f" should be fine, but its test fails.
+                snprintf(buf, bufSize, "%.5g", value);
+            }
             else
-                snprintf(buf, bufSize, "%.8e", value);
+            {
+                // binray32 has 23 bit fraction with hidden bit.
+                // 24 * log_10(2) is 7.225. So "%.8f" should be fine, but its test fails.
+                snprintf(buf, bufSize, "%.9g", value);
+            }
+
+            char* ptr = buf;
             if( *ptr == '+' || *ptr == '-' )
                 ptr++;
             for( ; cv_isdigit(*ptr); ptr++ )
@@ -164,7 +178,7 @@ char* floatToString( char* buf, size_t bufSize, float value, bool halfprecision,
     return buf;
 }
 
-static const char symbols[] = "ucwsifdhHbLUn";
+static const char symbols[] = "ucwsifdhHbUIn";
 
 static char typeSymbol(int depth)
 {
@@ -294,8 +308,8 @@ int calcStructSize( const char* dt, int initial_size )
         case 'n': { elem_max_size = std::max( elem_max_size, sizeof(unsigned) ); break; }
         case 'f': { elem_max_size = std::max( elem_max_size, sizeof(float ) ); break; }
         case 'd': { elem_max_size = std::max( elem_max_size, sizeof(double) ); break; }
-        case 'h': { elem_max_size = std::max( elem_max_size, sizeof(float16_t)); break; }
-        case 'H': { elem_max_size = std::max( elem_max_size, sizeof(bfloat16_t)); break; }
+        case 'h': { elem_max_size = std::max( elem_max_size, sizeof(hfloat)); break; }
+        case 'H': { elem_max_size = std::max( elem_max_size, sizeof(bfloat)); break; }
         case 'I': { elem_max_size = std::max( elem_max_size, sizeof(int64_t)); break; }
         case 'U': { elem_max_size = std::max( elem_max_size, sizeof(uint64_t)); break; }
         default:
@@ -342,6 +356,20 @@ static inline int readInt(const uchar* p)
 #endif
 }
 
+static inline int64_t readLong(const uchar* p)
+{
+    // On little endian CPUs, both branches produce the same result. On big endian, only the else branch does.
+#if CV_LITTLE_ENDIAN_MEM_ACCESS
+    int64_t val;
+    memcpy(&val, p, sizeof(val));
+    return val;
+#else
+    unsigned val0 = (unsigned)(p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24));
+    unsigned val1 = (unsigned)(p[4] | (p[5] << 8) | (p[6] << 16) | (p[7] << 24));
+    return val0 | ((int64_t)val1 << 32);
+#endif
+}
+
 static inline double readReal(const uchar* p)
 {
     // On little endian CPUs, both branches produce the same result. On big endian, only the else branch does.
@@ -358,16 +386,15 @@ static inline double readReal(const uchar* p)
 #endif
 }
 
-static inline void writeInt(uchar* p, int ival)
+template <typename T>
+static inline void writeInt(uchar* p, T ival)
 {
     // On little endian CPUs, both branches produce the same result. On big endian, only the else branch does.
 #if CV_LITTLE_ENDIAN_MEM_ACCESS
     memcpy(p, &ival, sizeof(ival));
 #else
-    p[0] = (uchar)ival;
-    p[1] = (uchar)(ival >> 8);
-    p[2] = (uchar)(ival >> 16);
-    p[3] = (uchar)(ival >> 24);
+    for (size_t i = 0, j = 0; i < sizeof(ival); ++i, j += 8)
+        p[i] = (uchar)(ival >> j);
 #endif
 }
 
@@ -1071,6 +1098,11 @@ void FileStorage::Impl::write(const String &key, int value) {
     getEmitter().write(key.c_str(), value);
 }
 
+void FileStorage::Impl::write(const String &key, int64_t value) {
+    CV_Assert(write_mode);
+    getEmitter().write(key.c_str(), value);
+}
+
 void FileStorage::Impl::write(const String &key, double value) {
     CV_Assert(write_mode);
     getEmitter().write(key.c_str(), value);
@@ -1172,12 +1204,12 @@ void FileStorage::Impl::writeRawData(const std::string &dt, const void *_data, s
                         data += sizeof(double);
                         break;
                     case CV_16F:
-                        ptr = fs::floatToString(buf, sizeof(buf), (float) *(float16_t *) data, true, explicitZero);
-                        data += sizeof(float16_t);
+                        ptr = fs::floatToString(buf, sizeof(buf), (float) *(hfloat *) data, true, explicitZero);
+                        data += sizeof(hfloat);
                         break;
                     case CV_16BF:
-                        ptr = fs::floatToString(buf, sizeof(buf), (float) *(bfloat16_t *) data, true, explicitZero);
-                        data += sizeof(bfloat16_t);
+                        ptr = fs::floatToString(buf, sizeof(buf), (float) *(bfloat *) data, true, explicitZero);
+                        data += sizeof(bfloat);
                         break;
                     default:
                         CV_Error(cv::Error::StsUnsupportedFormat, "Unsupported type");
@@ -1443,7 +1475,7 @@ void FileStorage::Impl::convertToCollection(int type, FileNode &node) {
     bool named = node.isNamed();
     uchar *ptr = node.ptr() + 1 + (named ? 4 : 0);
 
-    int ival = 0;
+    int64_t ival = 0;
     double fval = 0;
     std::string sval;
     bool add_first_scalar = false;
@@ -1456,7 +1488,7 @@ void FileStorage::Impl::convertToCollection(int type, FileNode &node) {
         // otherwise we don't know where to get the element names from
         CV_Assert(type == FileNode::SEQ);
         if (node_type == FileNode::INT) {
-            ival = readInt(ptr);
+            ival = readLong(ptr);
             add_first_scalar = true;
         } else if (node_type == FileNode::REAL) {
             fval = readReal(ptr);
@@ -1786,6 +1818,15 @@ int FileStorage::Impl::Base64Decoder::getInt32() {
     return ival;
 }
 
+int64_t FileStorage::Impl::Base64Decoder::getInt64() {
+    size_t sz = decoded.size();
+    if (ofs + 8 > sz && !readMore(8))
+        return 0;
+    int64_t ival = readLong(&decoded[ofs]);
+    ofs += 8;
+    return ival;
+}
+
 double FileStorage::Impl::Base64Decoder::getFloat64() {
     size_t sz = decoded.size();
     if (ofs + 8 > sz && !readMore(8))
@@ -1818,7 +1859,7 @@ char *FileStorage::Impl::parseBase64(char *ptr, int indent, FileNode &collection
 
     int fmt_pairs[CV_FS_MAX_FMT_PAIRS * 2];
     int fmt_pair_count = fs::decodeFormat(dt, fmt_pairs, CV_FS_MAX_FMT_PAIRS);
-    int ival = 0;
+    int64_t ival = 0;
     double fval = 0;
 
     for (;;) {
@@ -1835,14 +1876,26 @@ char *FileStorage::Impl::parseBase64(char *ptr, int indent, FileNode &collection
                     case CV_8S:
                         ival = (char) base64decoder.getUInt8();
                         break;
+                    case CV_Bool:
+                        ival = base64decoder.getUInt8() != 0;
+                        break;
                     case CV_16U:
                         ival = base64decoder.getUInt16();
                         break;
                     case CV_16S:
                         ival = (short) base64decoder.getUInt16();
                         break;
+                    case CV_32U:
+                        ival = base64decoder.getInt32();
+                        break;
                     case CV_32S:
                         ival = base64decoder.getInt32();
+                        break;
+                    case CV_64U:
+                        ival = base64decoder.getInt64();
+                        break;
+                    case CV_64S:
+                        ival = base64decoder.getInt64();
                         break;
                     case CV_32F: {
                         Cv32suf v;
@@ -1856,7 +1909,7 @@ char *FileStorage::Impl::parseBase64(char *ptr, int indent, FileNode &collection
                         node_type = FileNode::REAL;
                         break;
                     case CV_16F:
-                        fval = (float) float16_t::fromBits(base64decoder.getUInt16());
+                        fval = float(hfloatFromBits(base64decoder.getUInt16()));
                         node_type = FileNode::REAL;
                         break;
                     default:
@@ -2058,6 +2111,11 @@ void writeScalar( FileStorage& fs, int value )
     fs.p->write(String(), value);
 }
 
+void writeScalar( FileStorage& fs, int64_t value )
+{
+    fs.p->write(String(), value);
+}
+
 void writeScalar( FileStorage& fs, float value )
 {
     fs.p->write(String(), (double)value);
@@ -2078,6 +2136,11 @@ void write( FileStorage& fs, const String& name, int value )
     fs.p->write(name, value);
 }
 
+void write( FileStorage& fs, const String& name, int64_t value )
+{
+    fs.p->write(name, value);
+}
+
 void write( FileStorage& fs, const String& name, float value )
 {
     fs.p->write(name, (double)value);
@@ -2094,6 +2157,7 @@ void write( FileStorage& fs, const String& name, const String& value )
 }
 
 void FileStorage::write(const String& name, int val) { p->write(name, val); }
+void FileStorage::write(const String& name, int64_t val) { p->write(name, val); }
 void FileStorage::write(const String& name, double val) { p->write(name, val); }
 void FileStorage::write(const String& name, const String& val) { p->write(name, val); }
 void FileStorage::write(const String& name, const Mat& val) { cv::write(*this, name, val); }
@@ -2314,6 +2378,27 @@ FileNode::operator int() const
         return 0x7fffffff;
 }
 
+FileNode::operator int64_t() const
+{
+    const uchar* p = ptr();
+    if(!p)
+        return 0;
+    int tag = *p;
+    int type = (tag & TYPE_MASK);
+    p += (tag & NAMED) ? 5 : 1;
+
+    if( type == INT )
+    {
+        return readLong(p);
+    }
+    else if( type == REAL )
+    {
+        return cvRound(readReal(p));
+    }
+    else
+        return 0x7fffffff;
+}
+
 FileNode::operator float() const
 {
     const uchar* p = ptr();
@@ -2404,7 +2489,7 @@ size_t FileNode::rawSize() const
         p += 4;
     size_t sz0 = (size_t)(p - p0);
     if( tp == INT )
-        return sz0 + 4;
+        return sz0 + 8;
     if( tp == REAL )
         return sz0 + 8;
     if( tp == NONE )
@@ -2438,7 +2523,7 @@ void FileNode::setValue( int type, const void* value, int len )
         sz += 4;
 
     if( type == INT )
-        sz += 4;
+        sz += 8;
     else if( type == REAL )
         sz += 8;
     else if( type == STRING )
@@ -2458,7 +2543,7 @@ void FileNode::setValue( int type, const void* value, int len )
 
     if( type == INT )
     {
-        int ival = *(const int*)value;
+        int64_t ival = *(const int64_t*)value;
         writeInt(p, ival);
     }
     else if( type == REAL )
@@ -2615,7 +2700,7 @@ FileNodeIterator& FileNodeIterator::readRaw( const String& fmt, void* _data0, si
                     FileNode node = *(*this);
                     if( node.isInt() )
                     {
-                        int ival = (int)node;
+                        int64_t ival = static_cast<int64_t>(elem_size == 8 ? (int64_t)node : (int)node);
                         switch( elem_type )
                         {
                         case CV_8U:
@@ -2639,11 +2724,11 @@ FileNodeIterator& FileNodeIterator::readRaw( const String& fmt, void* _data0, si
                             data += sizeof(short);
                             break;
                         case CV_32U:
-                            *(unsigned*)data = (unsigned)std::max(ival, 0);
+                            *(unsigned*)data = (unsigned)std::max(ival, (int64_t)0);
                             data += sizeof(unsigned);
                             break;
                         case CV_32S:
-                            *(int*)data = ival;
+                            *(int*)data = (int)ival;
                             data += sizeof(int);
                             break;
                         case CV_32F:
@@ -2663,12 +2748,12 @@ FileNodeIterator& FileNodeIterator::readRaw( const String& fmt, void* _data0, si
                             data += sizeof(double);
                             break;
                         case CV_16F:
-                            *(float16_t*)data = float16_t((float)ival);
-                            data += sizeof(float16_t);
+                            *(hfloat*)data = hfloat((float)ival);
+                            data += sizeof(hfloat);
                             break;
                         case CV_16BF:
-                            *(bfloat16_t*)data = bfloat16_t((float)ival);
-                            data += sizeof(bfloat16_t);
+                            *(bfloat*)data = bfloat((float)ival);
+                            data += sizeof(bfloat);
                             break;
                         default:
                             CV_Error( Error::StsUnsupportedFormat, "Unsupported type" );
@@ -2721,12 +2806,12 @@ FileNodeIterator& FileNodeIterator::readRaw( const String& fmt, void* _data0, si
                             data += sizeof(double);
                             break;
                         case CV_16F:
-                            *(float16_t*)data = float16_t((float)fval);
-                            data += sizeof(float16_t);
+                            *(hfloat*)data = hfloat((float)fval);
+                            data += sizeof(hfloat);
                             break;
                         case CV_16BF:
-                            *(bfloat16_t*)data = bfloat16_t((float)fval);
-                            data += sizeof(bfloat16_t);
+                            *(bfloat*)data = bfloat((float)fval);
+                            data += sizeof(bfloat);
                             break;
                         default:
                             CV_Error( Error::StsUnsupportedFormat, "Unsupported type" );
@@ -2770,6 +2855,15 @@ void read(const FileNode& node, int& val, int default_val)
     if( !node.empty() )
     {
         val = (int)node;
+    }
+}
+
+void read(const FileNode& node, int64_t& val, int64_t default_val)
+{
+    val = default_val;
+    if( !node.empty() )
+    {
+        val = (int64_t)node;
     }
 }
 

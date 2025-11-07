@@ -370,6 +370,7 @@ void Net::Impl::fuseLayers(const std::vector<LayerPin>& blobsToKeep_)
                 Ptr<NaryEltwiseLayer> nextNaryEltwiseLayer = nextData->layerInstance.dynamicCast<NaryEltwiseLayer>();
                 if (nextEltwiseLayer.empty() && nextNaryEltwiseLayer.empty())
                     break;
+                LayerData *naryOrEltwiseData = nextData;
 
                 // TODO: fused the Conv+NaryEltwise on OpenCL backend. At present, we can only support it at CUDA backend.
                 if (IS_DNN_OPENCL_TARGET(preferableTarget) && nextNaryEltwiseLayer)
@@ -605,8 +606,17 @@ void Net::Impl::fuseLayers(const std::vector<LayerPin>& blobsToKeep_)
                             else if (fuse_eltwise) // conv + eltwise/naryEltwise (note: conv could have fused activations before eltwise)
                             {
                                 CV_Assert(IS_DNN_CUDA_TARGET(preferableTarget));
-                                CV_Assert_N(biasLayerData->outputBlobsWrappers.size() == 1, ld.inputBlobsWrappers.size() == 1);
-                                ld.inputBlobsWrappers.push_back(biasLayerData->outputBlobsWrappers[0]);
+                                CV_Assert_N(biasLayerData->outputBlobsWrappers.size() >= 1, ld.inputBlobsWrappers.size() == 1);
+                                // Iterate over eltwise inputs to find exact output id
+                                for (const auto& pin : naryOrEltwiseData->inputBlobsId)
+                                {
+                                    if (pin.lid == biasLayerData->id)
+                                    {
+                                        ld.inputBlobsWrappers.push_back(biasLayerData->outputBlobsWrappers[pin.oid]);
+                                        break;
+                                    }
+                                }
+                                CV_Assert(ld.inputBlobsWrappers.size() == 2);  // Check input was found
 
                                 if (nextEltwiseLayer)
                                     printf_(("\tfused with %s\n", nextEltwiseLayer->name.c_str()));
@@ -662,6 +672,15 @@ void Net::Impl::fuseLayers(const std::vector<LayerPin>& blobsToKeep_)
         if (preferableBackend != DNN_BACKEND_OPENCV && preferableBackend != DNN_BACKEND_CUDA)
             continue;  // Go to the next layer.
 
+        // [TODO] temporarily disabled Concat optimization.
+        //
+        // Ticket: https://github.com/opencv/opencv/issues/26195
+        //
+        // It's not quite compatible with dynamic shapes,
+        // so we need to make sure that we correctly predicted shapes
+        // of all the concatenated tensors and their offsets inside the result
+        // and also properly allocated that concatenated tensor in advance
+#if 0
         // the optimization #2. if there is concat layer that concatenates channels
         // from the inputs together (i.e. axis == 1) then we make the inputs of
         // the concat layer to write to the concatenation output buffer
@@ -728,6 +747,10 @@ void Net::Impl::fuseLayers(const std::vector<LayerPin>& blobsToKeep_)
                     if(inp_i_data->skip || inp_i_data->consumers.size() != 1)
                         break;
 #ifdef HAVE_CUDA
+                    /* Risk: Not every operation in "NaryEltwise" is supported in the CUDA backend. There is a chance
+                             that Concat's output is filled with data in both host and device, leading to data missing.
+                             See https://github.com/opencv/opencv/issues/24721 for more details.
+                    */
                     if (preferableBackend == DNN_BACKEND_CUDA &&
                         (inp_i_data->layerInstance->supportBackend(DNN_BACKEND_CUDA) == false ||
                          (inp_i_data->layerInstance->type != "Convolution" &&
@@ -828,6 +851,7 @@ void Net::Impl::fuseLayers(const std::vector<LayerPin>& blobsToKeep_)
                 }
             }
         }
+#endif
     }
 }
 

@@ -195,6 +195,11 @@ public:
 
     void expectNoFallbacks(Net& net, bool raiseError = true)
     {
+        // The new DNN engine does not support back-ends for now
+        // bug: https://github.com/opencv/opencv/issues/26198
+        if (net.getMainGraph())
+            return;
+
         // Check if all the layers are supported with current backend and target.
         // Some layers might be fused so their timings equal to zero.
         std::vector<double> timings;
@@ -210,7 +215,7 @@ public:
             if ((!l->supportBackend(backend) || l->preferableTarget != target) && !fused)
             {
                 hasFallbacks = true;
-                std::cout << "FALLBACK: Layer [" << l->type << "]:[" << l->name << "] is expected to has backend implementation" << endl;
+                std::cout << "FALLBACK: Layer [" << l->type << "]:[" << l->name << "] is expected to have backend implementation" << endl;
             }
         }
         if (hasFallbacks && raiseError)
@@ -231,6 +236,8 @@ public:
             expectNoFallbacks(net);
     }
 
+    size_t getTopMemoryUsageMB();
+
 protected:
     void checkBackend(Mat* inp = 0, Mat* ref = 0)
     {
@@ -238,7 +245,8 @@ protected:
     }
 };
 
-} // namespace
+void runLayer(cv::Ptr<cv::dnn::Layer> layer, std::vector<cv::Mat> &inpBlobs, std::vector<cv::Mat> &outBlobs);
 
+} // namespace
 
 #endif

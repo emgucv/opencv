@@ -53,6 +53,7 @@
 #define PyInt_CheckExact PyLong_CheckExact
 #define PyInt_AsLong PyLong_AsLong
 #define PyInt_AS_LONG PyLong_AS_LONG
+#define PyInt_AsUnsignedLongLongMask PyLong_AsUnsignedLongLongMask
 #define PyInt_FromLong PyLong_FromLong
 #define PyNumber_Int PyNumber_Long
 
@@ -82,6 +83,15 @@ static inline bool getUnicodeString(PyObject * obj, std::string &str)
             }
         }
         Py_XDECREF(bytes);
+    }
+    else if (PyBytes_Check(obj))
+    {
+        const char * raw = PyBytes_AsString(obj);
+        if (raw)
+        {
+            str = std::string(raw);
+            res = true;
+        }
     }
 #if PY_MAJOR_VERSION < 3
     else if (PyString_Check(obj))

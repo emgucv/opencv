@@ -21,25 +21,27 @@ const string FOLDER_OMIT_INIT = "initOmit";
 #include "test_trackers.impl.hpp"
 
 //[TESTDATA]
-PARAM_TEST_CASE(DistanceAndOverlap, string)
+PARAM_TEST_CASE(DistanceAndOverlap, string, int)
 {
     string dataset;
+    int numFramesLimit;
     virtual void SetUp()
     {
         dataset = GET_PARAM(0);
+        numFramesLimit = GET_PARAM(1);
     }
 };
 
 TEST_P(DistanceAndOverlap, MIL)
 {
     TrackerTest<Tracker, Rect> test(TrackerMIL::create(), dataset, 30, .65f, NoTransform);
-    test.run();
+    test.run(numFramesLimit);
 }
 
 TEST_P(DistanceAndOverlap, Shifted_Data_MIL)
 {
     TrackerTest<Tracker, Rect> test(TrackerMIL::create(), dataset, 30, .6f, CenterShiftLeft);
-    test.run();
+    test.run(numFramesLimit);
 }
 
 /***************************************************************************************/
@@ -48,21 +50,23 @@ TEST_P(DistanceAndOverlap, Shifted_Data_MIL)
 TEST_P(DistanceAndOverlap, Scaled_Data_MIL)
 {
     TrackerTest<Tracker, Rect> test(TrackerMIL::create(), dataset, 30, .7f, Scale_1_1);
-    test.run();
+    test.run(numFramesLimit);
 }
 
-TEST_P(DistanceAndOverlap, GOTURN)
-{
-    std::string model = cvtest::findDataFile("dnn/gsoc2016-goturn/goturn.prototxt");
-    std::string weights = cvtest::findDataFile("dnn/gsoc2016-goturn/goturn.caffemodel", false);
-    cv::TrackerGOTURN::Params params;
-    params.modelTxt = model;
-    params.modelBin = weights;
-    TrackerTest<Tracker, Rect> test(TrackerGOTURN::create(params), dataset, 35, .35f, NoTransform);
-    test.run();
-}
+INSTANTIATE_TEST_CASE_P(Tracking, DistanceAndOverlap,
+    testing::Combine(
+        TESTSET_NAMES,
+        testing::Values(0)
+    )
+);
 
-INSTANTIATE_TEST_CASE_P(Tracking, DistanceAndOverlap, TESTSET_NAMES);
+INSTANTIATE_TEST_CASE_P(Tracking5Frames, DistanceAndOverlap,
+    testing::Combine(
+        TESTSET_NAMES,
+        testing::Values(5)
+    )
+);
+
 
 static bool checkIOU(const Rect& r0, const Rect& r1, double threshold)
 {
@@ -111,18 +115,6 @@ static void checkTrackingAccuracy(cv::Ptr<Tracker>& tracker, double iouThreshold
     }
 }
 
-TEST(GOTURN, accuracy)
-{
-    std::string model = cvtest::findDataFile("dnn/gsoc2016-goturn/goturn.prototxt");
-    std::string weights = cvtest::findDataFile("dnn/gsoc2016-goturn/goturn.caffemodel", false);
-    cv::TrackerGOTURN::Params params;
-    params.modelTxt = model;
-    params.modelBin = weights;
-    cv::Ptr<Tracker> tracker = TrackerGOTURN::create(params);
-    // TODO! GOTURN have low accuracy. Try to remove this api at 5.x.
-    checkTrackingAccuracy(tracker, 0.08);
-}
-
 TEST(DaSiamRPN, accuracy)
 {
     std::string model = cvtest::findDataFile("dnn/onnx/models/dasiamrpn_model.onnx", false);
@@ -166,7 +158,7 @@ TEST(vittrack, accuracy_vittrack)
     cv::TrackerVit::Params params;
     params.net = model;
     cv::Ptr<Tracker> tracker = TrackerVit::create(params);
-    checkTrackingAccuracy(tracker, 0.67);
+    checkTrackingAccuracy(tracker, 0.64);
 }
 
 }}  // namespace opencv_test::

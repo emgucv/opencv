@@ -5,6 +5,8 @@
 #include "../precomp.hpp"
 #include <opencv2/dnn/shape_utils.hpp>
 
+#include "../op_cann.hpp"
+
 
 namespace cv { namespace dnn {
 
@@ -54,6 +56,13 @@ public:
     }
 
     virtual bool supportBackend(int backendId) CV_OVERRIDE {
+#ifdef HAVE_CANN
+        if (backendId == DNN_BACKEND_CANN)
+            return reduce_type == ReduceType::MAX  || reduce_type == ReduceType::MIN     ||
+                   reduce_type == ReduceType::MEAN || reduce_type == ReduceType::SUM     ||
+                   reduce_type == ReduceType::PROD || reduce_type == ReduceType::LOG_SUM ||
+                   reduce_type == ReduceType::LOG_SUM_EXP;
+#endif
         return backendId == DNN_BACKEND_OPENCV;
     }
 
@@ -71,10 +80,12 @@ public:
             auto norm_axis = normalize_axis(axes[i], shape_input);
             axes[i] = norm_axis;
         }
+        if (shape_input.empty())
+            return;
 
         bool do_nothing = true;
         for (auto axis : axes) {
-            if (shape_input[axis] != 1) {
+            if (shape_input[axis] != 1 || keepdims) {
                 do_nothing = false;
             }
         }
@@ -89,6 +100,11 @@ public:
                          std::vector<MatShape> &outputs,
                          std::vector<MatShape> &internals) const CV_OVERRIDE
     {
+        if (inputs[0].empty()){
+            CV_CheckEQ(axes[0], 0, "Axis must be 0 when input is empty.");
+            outputs.assign(1, MatShape());
+            return false;
+        }
         // empty axes
         if (axes.empty()) {
             if (noop_with_empty_axes) {
@@ -129,6 +145,16 @@ public:
         }
 
         return false;
+    }
+
+    virtual void getTypes(const std::vector<MatType>& inputs,
+        const int requiredOutputs,
+        const int requiredInternals,
+        std::vector<MatType>& outputs,
+        std::vector<MatType>& internals) const CV_OVERRIDE
+    {
+        CV_CheckType(inputs[0], inputs[0] == CV_32F || inputs[0] == CV_32S || inputs[0] == CV_64S || inputs[0] == CV_16F || inputs[0] == CV_8U || inputs[0] == CV_8S, "");
+        outputs.assign(1, inputs[0]);
     }
 
     template <typename T>
@@ -380,9 +406,10 @@ public:
                         if (unprojected_indices[j] < shape_src[unreduced_axes[j]]) {
                             break;
                         }
-                        unprojected_indices[j] = 0;
+                        unprojected_indices[j] -= shape_src[unreduced_axes[j]];
+                        current_step -= shape_src[unreduced_axes[j]] * steps_src[unreduced_axes[j]];
                         ++unprojected_indices[j - 1];
-                        current_step = steps_src[unreduced_axes[j - 1]];
+                        current_step += steps_src[unreduced_axes[j - 1]];
                     }
                 }
             }
@@ -395,6 +422,13 @@ public:
         static void run(const Mat& src, Mat& dst, std::vector<int> axes, bool noop_with_empty_axes) {
             CV_Assert(src.isContinuous());
             CV_Assert(dst.isContinuous());
+            if (shape(src).empty() || (shape(src).size() == 1)){
+                // since there is only one element no need for parallel compute
+                // axis does not matter either (one element)
+                ReduceAllInvoker<Op> p(src, dst);
+                p(Range(0, p.total));
+                return;
+            }
 
             if (axes.empty()) {
                 if (noop_with_empty_axes) {
@@ -456,7 +490,7 @@ public:
         CV_TRACE_FUNCTION();
         CV_TRACE_ARG_VALUE(name, "name", name.c_str());
 
-        if (inputs_arr.depth() == CV_16S)
+        if (inputs_arr.depth() == CV_16F)
         {
             forward_fallback(inputs_arr, outputs_arr, internals_arr);
             return;
@@ -490,11 +524,60 @@ public:
     inline void typeDispatch(const int type, Args&&... args) {
         switch (type) {
             case CV_8U: opDispatch<uint8_t>(std::forward<Args>(args)...); break;
+            case CV_8S: opDispatch<int8_t>(std::forward<Args>(args)...); break;
             case CV_32S: opDispatch<int32_t>(std::forward<Args>(args)...); break;
+            case CV_64S: opDispatch<int64_t>(std::forward<Args>(args)...); break;
             case CV_32F: opDispatch<float>(std::forward<Args>(args)...); break;
             default: CV_Error(cv::Error::BadDepth, "DNN/Reduce: Unsupported type.");
         }
     }
+
+#ifdef HAVE_CANN
+    virtual Ptr<BackendNode> initCann(const std::vector<Ptr<BackendWrapper> > &inputs,
+                                      const std::vector<Ptr<BackendWrapper> > &outputs,
+                                      const std::vector<Ptr<BackendNode> >& nodes) CV_OVERRIDE
+    {
+        CV_CheckFalse(axes.empty(), "DNN/CANN: Reduce layers need axes to build CANN operators");
+
+        auto input_node = nodes[0].dynamicCast<CannBackendNode>()->getOp();
+        auto input_wrapper = inputs[0].dynamicCast<CannBackendWrapper>();
+        auto input_desc = input_wrapper->getTensorDesc();
+
+        std::vector<int> axes_shape{(int)axes.size()};
+        Mat axes_mat(axes_shape, CV_32S, &axes[0]);
+        auto axes_node = std::make_shared<CannConstOp>(axes_mat.data, axes_mat.type(), axes_shape, cv::format("%s_axes", name.c_str()));
+        auto axes_desc = axes_node->getTensorDesc();
+
+        auto output_desc = std::make_shared<ge::TensorDesc>(ge::Shape(), ge::FORMAT_NCHW, ge::DT_FLOAT);
+
+        std::shared_ptr<ge::Operator> reduce_op = nullptr;
+        switch (reduce_type)
+        {
+#define BUILD_CANN_REDUCE_OP(op_type, class_name, op_name)                         \
+            case op_type: {                                                        \
+                auto op = std::make_shared<ge::op::class_name>(op_name);           \
+                op->set_input_x_by_name(*input_node, input_wrapper->name.c_str()); \
+                op->set_input_axes(*(axes_node)->getOp());                         \
+                op->set_attr_keep_dims(keepdims);                                  \
+                op->update_input_desc_x(*input_desc);                              \
+                op->update_input_desc_axes(*axes_desc);                            \
+                op->update_output_desc_y(*output_desc);                            \
+                reduce_op = op;                                                    \
+            } break;
+            BUILD_CANN_REDUCE_OP(ReduceType::MAX,         ReduceMax,       name);
+            BUILD_CANN_REDUCE_OP(ReduceType::MIN,         ReduceMin,       name);
+            BUILD_CANN_REDUCE_OP(ReduceType::MEAN,        ReduceMean,      name);
+            BUILD_CANN_REDUCE_OP(ReduceType::SUM,         ReduceSum,       name);
+            BUILD_CANN_REDUCE_OP(ReduceType::PROD,        ReduceProd,      name);
+            BUILD_CANN_REDUCE_OP(ReduceType::LOG_SUM,     ReduceLogSum,    name);
+            BUILD_CANN_REDUCE_OP(ReduceType::LOG_SUM_EXP, ReduceLogSumExp, name);
+#undef BUILD_CANN_REDUCE_OP
+            default: CV_Error(Error::StsNotImplemented, "Unsupported reduce operation");
+        }
+
+        return Ptr<BackendNode>(new CannBackendNode(reduce_op));
+    }
+#endif // HAVE_CANN
 
 private:
     enum ReduceType

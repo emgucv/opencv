@@ -10,7 +10,7 @@ namespace dnn {
 CV__DNN_INLINE_NS_BEGIN
 
 
-Net readNet(const String& _model, const String& _config, const String& _framework)
+Net readNet(const String& _model, const String& _config, const String& _framework, int engine)
 {
     String framework = toLowerCase(_framework);
     String model = _model;
@@ -21,17 +21,17 @@ Net readNet(const String& _model, const String& _config, const String& _framewor
     {
         if (modelExt == "prototxt" || configExt == "caffemodel")
             std::swap(model, config);
-        return readNetFromCaffe(config, model);
+        return readNetFromCaffe(config, model, engine);
     }
     if (framework == "tensorflow" || modelExt == "pb" || configExt == "pb" || modelExt == "pbtxt" || configExt == "pbtxt")
     {
         if (modelExt == "pbtxt" || configExt == "pb")
             std::swap(model, config);
-        return readNetFromTensorflow(model, config);
+        return readNetFromTensorflow(model, config, engine);
     }
     if (framework == "tflite" || modelExt == "tflite")
     {
-        return readNetFromTFLite(model);
+        return readNetFromTFLite(model, engine);
     }
     if (framework == "darknet" || modelExt == "weights" || configExt == "weights" || modelExt == "cfg" || configExt == "cfg")
     {
@@ -49,25 +49,27 @@ Net readNet(const String& _model, const String& _config, const String& _framewor
     }
     if (framework == "onnx" || modelExt == "onnx")
     {
-        return readNetFromONNX(model);
+        return readNetFromONNX(model, engine);
     }
     CV_Error(Error::StsError, "Cannot determine an origin framework of files: " + model + (config.empty() ? "" : ", " + config));
 }
 
 Net readNet(const String& _framework, const std::vector<uchar>& bufferModel,
-        const std::vector<uchar>& bufferConfig)
+        const std::vector<uchar>& bufferConfig, int engine)
 {
     String framework = toLowerCase(_framework);
-    if (framework == "caffe")
-        return readNetFromCaffe(bufferConfig, bufferModel);
+    if (framework == "onnx")
+        return readNetFromONNX(bufferModel, engine);
+    else if (framework == "caffe")
+        return readNetFromCaffe(bufferConfig, bufferModel, engine);
     else if (framework == "tensorflow")
-        return readNetFromTensorflow(bufferModel, bufferConfig);
+        return readNetFromTensorflow(bufferModel, bufferConfig, engine);
     else if (framework == "darknet")
         return readNetFromDarknet(bufferConfig, bufferModel);
     else if (framework == "dldt" || framework == "openvino")
         return readNetFromModelOptimizer(bufferConfig, bufferModel);
     else if (framework == "tflite")
-        return readNetFromTFLite(bufferModel);
+        return readNetFromTFLite(bufferModel, engine);
     CV_Error(Error::StsError, "Cannot determine an origin framework with a name " + framework);
 }
 

@@ -15,7 +15,12 @@ const int ARITHM_MAX_SIZE_LOG = 10;
 
 struct BaseElemWiseOp
 {
-    enum { FIX_ALPHA=1, FIX_BETA=2, FIX_GAMMA=4, REAL_GAMMA=8, SUPPORT_MASK=16, SCALAR_OUTPUT=32, SUPPORT_MULTICHANNELMASK=64 };
+    enum
+    {
+        FIX_ALPHA=1, FIX_BETA=2, FIX_GAMMA=4, REAL_GAMMA=8,
+        SUPPORT_MASK=16, SCALAR_OUTPUT=32, SUPPORT_MULTICHANNELMASK=64,
+        MIXED_TYPE=128
+   };
     BaseElemWiseOp(int _ninputs, int _flags, double _alpha, double _beta,
                    Scalar _gamma=Scalar::all(0), int _context=1)
     : ninputs(_ninputs), flags(_flags), alpha(_alpha), beta(_beta), gamma(_gamma), context(_context) {}
@@ -104,7 +109,12 @@ static const _OutputArray::DepthMask baseArithmTypeMask =
         _OutputArray::DEPTH_MASK_16S |
         _OutputArray::DEPTH_MASK_32S |
         _OutputArray::DEPTH_MASK_32F |
-        _OutputArray::DEPTH_MASK_64F);
+        _OutputArray::DEPTH_MASK_64F |
+        _OutputArray::DEPTH_MASK_16F |
+        _OutputArray::DEPTH_MASK_16BF |
+        _OutputArray::DEPTH_MASK_32U |
+        _OutputArray::DEPTH_MASK_64U |
+        _OutputArray::DEPTH_MASK_64S );
 
 struct BaseArithmOp : public BaseElemWiseOp
 {
@@ -125,14 +135,20 @@ struct BaseAddOp : public BaseArithmOp
 
     void refop(const vector<Mat>& src, Mat& dst, const Mat& mask)
     {
-        Mat temp;
+        int dstType = (flags & MIXED_TYPE) ? dst.type() : src[0].type();
         if( !mask.empty() )
         {
-            cvtest::add(src[0], alpha, src.size() > 1 ? src[1] : Mat(), beta, gamma, temp, src[0].type());
+            Mat temp;
+            cvtest::add(src[0], alpha, src.size() > 1 ? src[1] : Mat(), beta, gamma, temp, dstType);
             cvtest::copy(temp, dst, mask);
         }
         else
-            cvtest::add(src[0], alpha, src.size() > 1 ? src[1] : Mat(), beta, gamma, dst, src[0].type());
+            cvtest::add(src[0], alpha, src.size() > 1 ? src[1] : Mat(), beta, gamma, dst, dstType);
+    }
+
+    double getMaxErr(int depth)
+    {
+        return depth == CV_16BF ? 1e-2 : depth == CV_16F ? 1e-3 : depth == CV_32F ? 1e-4 : depth == CV_64F ? 1e-12 : 2;
     }
 };
 
@@ -142,10 +158,8 @@ struct AddOp : public BaseAddOp
     AddOp() : BaseAddOp(2, FIX_ALPHA+FIX_BETA+FIX_GAMMA+SUPPORT_MASK, 1, 1, Scalar::all(0)) {}
     void op(const vector<Mat>& src, Mat& dst, const Mat& mask)
     {
-        if( mask.empty() )
-            cv::add(src[0], src[1], dst);
-        else
-            cv::add(src[0], src[1], dst, mask);
+        int dtype = (flags & MIXED_TYPE) ? dst.type() : -1;
+        cv::add(src[0], src[1], dst, mask, dtype);
     }
 };
 
@@ -155,10 +169,8 @@ struct SubOp : public BaseAddOp
     SubOp() : BaseAddOp(2, FIX_ALPHA+FIX_BETA+FIX_GAMMA+SUPPORT_MASK, 1, -1, Scalar::all(0)) {}
     void op(const vector<Mat>& src, Mat& dst, const Mat& mask)
     {
-        if( mask.empty() )
-            cv::subtract(src[0], src[1], dst);
-        else
-            cv::subtract(src[0], src[1], dst, mask);
+        int dtype = (flags & MIXED_TYPE) ? dst.type() : -1;
+        cv::subtract(src[0], src[1], dst, mask, dtype);
     }
 };
 
@@ -168,10 +180,8 @@ struct AddSOp : public BaseAddOp
     AddSOp() : BaseAddOp(1, FIX_ALPHA+FIX_BETA+SUPPORT_MASK, 1, 0, Scalar::all(0)) {}
     void op(const vector<Mat>& src, Mat& dst, const Mat& mask)
     {
-        if( mask.empty() )
-            cv::add(src[0], gamma, dst);
-        else
-            cv::add(src[0], gamma, dst, mask);
+        int dtype = (flags & MIXED_TYPE) ? dst.type() : -1;
+        cv::add(src[0], gamma, dst, mask, dtype);
     }
 };
 
@@ -181,10 +191,8 @@ struct SubRSOp : public BaseAddOp
     SubRSOp() : BaseAddOp(1, FIX_ALPHA+FIX_BETA+SUPPORT_MASK, -1, 0, Scalar::all(0)) {}
     void op(const vector<Mat>& src, Mat& dst, const Mat& mask)
     {
-        if( mask.empty() )
-            cv::subtract(gamma, src[0], dst);
-        else
-            cv::subtract(gamma, src[0], dst, mask);
+        int dtype = (flags & MIXED_TYPE) ? dst.type() : -1;
+        cv::subtract(gamma, src[0], dst, mask, dtype);
     }
 };
 
@@ -198,7 +206,7 @@ struct ScaleAddOp : public BaseAddOp
     }
     double getMaxErr(int depth)
     {
-        return depth <= CV_32S ? 2 : depth < CV_64F ? 1e-4 : 1e-12;
+        return depth == CV_16BF ? 1e-2 : depth == CV_16F ? 1e-3 : depth == CV_32F ? 3e-5 : depth == CV_64F ? 1e-12 : 2;
     }
 };
 
@@ -208,11 +216,8 @@ struct AddWeightedOp : public BaseAddOp
     AddWeightedOp() : BaseAddOp(2, REAL_GAMMA, 1, 1, Scalar::all(0)) {}
     void op(const vector<Mat>& src, Mat& dst, const Mat&)
     {
-        cv::addWeighted(src[0], alpha, src[1], beta, gamma[0], dst);
-    }
-    double getMaxErr(int depth)
-    {
-        return depth <= CV_32S ? 2 : depth < CV_64F ? 1e-5 : 1e-10;
+        int dtype = (flags & MIXED_TYPE) ? dst.type() : -1;
+        cv::addWeighted(src[0], alpha, src[1], beta, gamma[0], dst, dtype);
     }
 };
 
@@ -228,15 +233,35 @@ struct MulOp : public BaseArithmOp
     }
     void op(const vector<Mat>& src, Mat& dst, const Mat&)
     {
-        cv::multiply(src[0], src[1], dst, alpha);
+        int dtype = (flags & MIXED_TYPE) ? dst.type() : -1;
+        cv::multiply(src[0], src[1], dst, alpha, dtype);
     }
     void refop(const vector<Mat>& src, Mat& dst, const Mat&)
     {
-        cvtest::multiply(src[0], src[1], dst, alpha);
+        int dtype = (flags & MIXED_TYPE) ? dst.type() : -1;
+        cvtest::multiply(src[0], src[1], dst, alpha, dtype);
     }
-    double getMaxErr(int depth)
+};
+
+struct MulSOp : public BaseArithmOp
+{
+    MulSOp() : BaseArithmOp(1, FIX_BETA+FIX_GAMMA, 1, 1, Scalar::all(0)) {}
+    void getValueRange(int depth, double& minval, double& maxval)
     {
-        return depth <= CV_32S ? 2 : depth < CV_64F ? 1e-5 : 1e-12;
+        minval = depth < CV_32S ? cvtest::getMinVal(depth) : depth == CV_32S ? -1000000 : -1000.;
+        maxval = depth < CV_32S ? cvtest::getMaxVal(depth) : depth == CV_32S ? 1000000 : 1000.;
+        minval = std::max(minval, -30000.);
+        maxval = std::min(maxval, 30000.);
+    }
+    void op(const vector<Mat>& src, Mat& dst, const Mat&)
+    {
+        int dtype = (flags & MIXED_TYPE) ? dst.type() : -1;
+        cv::multiply(src[0], alpha, dst, /* scale */ 1.0, dtype);
+    }
+    void refop(const vector<Mat>& src, Mat& dst, const Mat&)
+    {
+        int dtype = (flags & MIXED_TYPE) ? dst.type() : -1;
+        cvtest::multiply(Mat(), src[0], dst, alpha, dtype);
     }
 };
 
@@ -245,15 +270,20 @@ struct DivOp : public BaseArithmOp
     DivOp() : BaseArithmOp(2, FIX_BETA+FIX_GAMMA, 1, 1, Scalar::all(0)) {}
     void op(const vector<Mat>& src, Mat& dst, const Mat&)
     {
-        cv::divide(src[0], src[1], dst, alpha);
+        int dtype = (flags & MIXED_TYPE) ? dst.type() : -1;
+        cv::divide(src[0], src[1], dst, alpha, dtype);
+        if (flags & MIXED_TYPE)
+        {
+            // div by zero result is implementation-defined
+            // since it may involve conversions to/from intermediate format
+            Mat zeroMask = src[1] == 0;
+            dst.setTo(0, zeroMask);
+        }
     }
     void refop(const vector<Mat>& src, Mat& dst, const Mat&)
     {
-        cvtest::divide(src[0], src[1], dst, alpha);
-    }
-    double getMaxErr(int depth)
-    {
-        return depth <= CV_32S ? 2 : depth < CV_64F ? 1e-5 : 1e-12;
+        int dtype = (flags & MIXED_TYPE) ? dst.type() : -1;
+        cvtest::divide(src[0], src[1], dst, alpha, dtype);
     }
 };
 
@@ -262,15 +292,20 @@ struct RecipOp : public BaseArithmOp
     RecipOp() : BaseArithmOp(1, FIX_BETA+FIX_GAMMA, 1, 1, Scalar::all(0)) {}
     void op(const vector<Mat>& src, Mat& dst, const Mat&)
     {
-        cv::divide(alpha, src[0], dst);
+        int dtype = (flags & MIXED_TYPE) ? dst.type() : -1;
+        cv::divide(alpha, src[0], dst, dtype);
+        if (flags & MIXED_TYPE)
+        {
+            // div by zero result is implementation-defined
+            // since it may involve conversions to/from intermediate format
+            Mat zeroMask = src[0] == 0;
+            dst.setTo(0, zeroMask);
+        }
     }
     void refop(const vector<Mat>& src, Mat& dst, const Mat&)
     {
-        cvtest::divide(Mat(), src[0], dst, alpha);
-    }
-    double getMaxErr(int depth)
-    {
-        return depth <= CV_32S ? 2 : depth < CV_64F ? 1e-5 : 1e-12;
+        int dtype = (flags & MIXED_TYPE) ? dst.type() : -1;
+        cvtest::divide(Mat(), src[0], dst, alpha, dtype);
     }
 };
 
@@ -466,7 +501,7 @@ struct CmpSOp : public BaseArithmOp
     {
         BaseElemWiseOp::generateScalars(depth, rng);
         cmpop = rng.uniform(0, 6);
-        if( depth < CV_32F )
+        if( depth != CV_16F && depth != CV_16BF && depth != CV_32F && depth != CV_64F )
             gamma[0] = cvRound(gamma[0]);
     }
     void op(const vector<Mat>& src, Mat& dst, const Mat&)
@@ -532,27 +567,29 @@ struct SetOp : public BaseElemWiseOp
     }
 };
 
-template<typename _Tp, typename _WTp> static void
+template<typename _Tp, typename _WTp=_Tp> static void
 inRangeS_(const _Tp* src, const _WTp* a, const _WTp* b, uchar* dst, size_t total, int cn)
 {
     size_t i;
     int c;
     for( i = 0; i < total; i++ )
     {
-        _Tp val = src[i*cn];
+        _WTp val = (_WTp)src[i*cn];
         dst[i] = (a[0] <= val && val <= b[0]) ? uchar(255) : 0;
     }
     for( c = 1; c < cn; c++ )
     {
         for( i = 0; i < total; i++ )
         {
-            _Tp val = src[i*cn + c];
+            _WTp val = (_WTp)src[i*cn + c];
             dst[i] = a[c] <= val && val <= b[c] ? dst[i] : 0;
         }
     }
 }
 
-template<typename _Tp> static void inRange_(const _Tp* src, const _Tp* a, const _Tp* b, uchar* dst, size_t total, int cn)
+template<typename _Tp, typename _WTp=_Tp> static void
+inRange_(const _Tp* src, const _Tp* a, const _Tp* b,
+         uchar* dst, size_t total, int cn)
 {
     size_t i;
     int c;
@@ -577,7 +614,7 @@ static void inRange(const Mat& src, const Mat& lb, const Mat& rb, Mat& dst)
 {
     CV_Assert( src.type() == lb.type() && src.type() == rb.type() &&
               src.size == lb.size && src.size == rb.size );
-    dst.create( src.dims, &src.size[0], CV_8U );
+    dst.create( src.size, CV_8U );
     const Mat *arrays[]={&src, &lb, &rb, &dst, 0};
     Mat planes[4];
 
@@ -607,8 +644,17 @@ static void inRange(const Mat& src, const Mat& lb, const Mat& rb, Mat& dst)
         case CV_16S:
             inRange_((const short*)sptr, (const short*)aptr, (const short*)bptr, dptr, total, cn);
             break;
+        case CV_32U:
+            inRange_((const unsigned*)sptr, (const unsigned*)aptr, (const unsigned*)bptr, dptr, total, cn);
+            break;
         case CV_32S:
             inRange_((const int*)sptr, (const int*)aptr, (const int*)bptr, dptr, total, cn);
+            break;
+        case CV_64U:
+            inRange_((const uint64*)sptr, (const uint64*)aptr, (const uint64*)bptr, dptr, total, cn);
+            break;
+        case CV_64S:
+            inRange_((const int64*)sptr, (const int64*)aptr, (const int64*)bptr, dptr, total, cn);
             break;
         case CV_32F:
             inRange_((const float*)sptr, (const float*)aptr, (const float*)bptr, dptr, total, cn);
@@ -616,15 +662,23 @@ static void inRange(const Mat& src, const Mat& lb, const Mat& rb, Mat& dst)
         case CV_64F:
             inRange_((const double*)sptr, (const double*)aptr, (const double*)bptr, dptr, total, cn);
             break;
+        case CV_16F:
+            inRange_<cv::hfloat, float>((const cv::hfloat*)sptr, (const cv::hfloat*)aptr,
+                                           (const cv::hfloat*)bptr, dptr, total, cn);
+            break;
+        case CV_16BF:
+            inRange_<cv::bfloat, float>((const cv::bfloat*)sptr, (const cv::bfloat*)aptr,
+                                            (const cv::bfloat*)bptr, dptr, total, cn);
+            break;
         default:
-            CV_Error(CV_StsUnsupportedFormat, "");
+            CV_Error(cv::Error::StsUnsupportedFormat, "");
         }
     }
 }
 
 static void inRangeS(const Mat& src, const Scalar& lb, const Scalar& rb, Mat& dst)
 {
-    dst.create( src.dims, &src.size[0], CV_8U );
+    dst.create( src.size, CV_8U );
     const Mat *arrays[]={&src, &dst, 0};
     Mat planes[2];
 
@@ -632,8 +686,9 @@ static void inRangeS(const Mat& src, const Scalar& lb, const Scalar& rb, Mat& ds
     size_t total = planes[0].total();
     size_t i, nplanes = it.nplanes;
     int depth = src.depth(), cn = src.channels();
-    union { double d[4]; float f[4]; int i[4];} lbuf, rbuf;
-    int wtype = CV_MAKETYPE(depth <= CV_32S ? CV_32S : depth, cn);
+    union { double d[4]; float f[4]; int i[4]; unsigned u[4]; int64 L[4]; uint64 UL[4]; } lbuf, rbuf;
+    int wtype = CV_MAKETYPE((depth <= CV_32S ? CV_32S :
+        depth == CV_16F || depth == CV_16BF || depth == CV_32F ? CV_32F : depth), cn);
     scalarToRawData(lb, lbuf.d, wtype, cn);
     scalarToRawData(rb, rbuf.d, wtype, cn);
 
@@ -656,8 +711,17 @@ static void inRangeS(const Mat& src, const Scalar& lb, const Scalar& rb, Mat& ds
         case CV_16S:
             inRangeS_((const short*)sptr, lbuf.i, rbuf.i, dptr, total, cn);
             break;
+        case CV_32U:
+            inRangeS_((const unsigned*)sptr, lbuf.u, rbuf.u, dptr, total, cn);
+            break;
         case CV_32S:
             inRangeS_((const int*)sptr, lbuf.i, rbuf.i, dptr, total, cn);
+            break;
+        case CV_64U:
+            inRangeS_((const uint64*)sptr, lbuf.UL, rbuf.UL, dptr, total, cn);
+            break;
+        case CV_64S:
+            inRangeS_((const int64*)sptr, lbuf.L, rbuf.L, dptr, total, cn);
             break;
         case CV_32F:
             inRangeS_((const float*)sptr, lbuf.f, rbuf.f, dptr, total, cn);
@@ -665,8 +729,14 @@ static void inRangeS(const Mat& src, const Scalar& lb, const Scalar& rb, Mat& ds
         case CV_64F:
             inRangeS_((const double*)sptr, lbuf.d, rbuf.d, dptr, total, cn);
             break;
+        case CV_16F:
+            inRangeS_((const cv::hfloat*)sptr, lbuf.f, rbuf.f, dptr, total, cn);
+            break;
+        case CV_16BF:
+            inRangeS_((const cv::bfloat*)sptr, lbuf.f, rbuf.f, dptr, total, cn);
+            break;
         default:
-            CV_Error(CV_StsUnsupportedFormat, "");
+            CV_Error(cv::Error::StsUnsupportedFormat, "");
         }
     }
 }
@@ -766,7 +836,7 @@ static void finiteMask_(const _Tp *src, uchar *dst, size_t total, int cn)
 
 static void finiteMask(const Mat& src, Mat& dst)
 {
-    dst.create(src.dims, &src.size[0], CV_8UC1);
+    dst.create(src.size, CV_8UC1);
 
     const Mat *arrays[]={&src, &dst, 0};
     Mat planes[2];
@@ -852,8 +922,16 @@ struct ConvertScaleFp16Op : public BaseElemWiseOp
     void op(const vector<Mat>& src, Mat& dst, const Mat&)
     {
         Mat m;
-        convertFp16(src[0], m);
-        convertFp16(m, dst);
+        if (src[0].depth() == CV_32F)
+        {
+            src[0].convertTo(m, CV_16F);
+            m.convertTo(dst, CV_32F);
+        }
+        else
+        {
+            src[0].convertTo(m, CV_32F);
+            m.convertTo(dst, CV_16F);
+        }
     }
     void refop(const vector<Mat>& src, Mat& dst, const Mat&)
     {
@@ -863,7 +941,7 @@ struct ConvertScaleFp16Op : public BaseElemWiseOp
     {
         // 0: FP32 -> FP16 -> FP32
         // 1: FP16 -> FP32 -> FP16
-        int srctype = (nextRange & 1) == 0 ? CV_32F : CV_16S;
+        int srctype = (nextRange & 1) == 0 ? CV_32F : CV_16F;
         return srctype;
     }
     void getValueRange(int, double& minval, double& maxval)
@@ -937,10 +1015,11 @@ struct ConvertScaleAbsOp : public BaseElemWiseOp
 
 namespace reference {
 
+// does not support inplace operation
 static void flip(const Mat& src, Mat& dst, int flipcode)
 {
     CV_Assert(src.dims <= 2);
-    dst.createSameSize(src, src.type());
+    dst.create(src.size, src.type());
     int i, j, k, esz = (int)src.elemSize(), width = src.cols*esz;
 
     for( i = 0; i < dst.rows; i++ )
@@ -958,6 +1037,26 @@ static void flip(const Mat& src, Mat& dst, int flipcode)
     }
 }
 
+static void rotate(const Mat& src, Mat& dst, int rotateMode)
+{
+    Mat tmp;
+    switch (rotateMode)
+    {
+    case ROTATE_90_CLOCKWISE:
+        cvtest::transpose(src, tmp);
+        reference::flip(tmp, dst, 1);
+        break;
+    case ROTATE_180:
+        reference::flip(src, dst, -1);
+        break;
+    case ROTATE_90_COUNTERCLOCKWISE:
+        cvtest::transpose(src, tmp);
+        reference::flip(tmp, dst, 0);
+        break;
+    default:
+        break;
+    }
+}
 
 static void setIdentity(Mat& dst, const Scalar& s)
 {
@@ -1002,6 +1101,32 @@ struct FlipOp : public BaseElemWiseOp
         return 0;
     }
     int flipcode;
+};
+
+struct RotateOp : public BaseElemWiseOp
+{
+    RotateOp() : BaseElemWiseOp(1, FIX_ALPHA+FIX_BETA+FIX_GAMMA, 1, 1, Scalar::all(0)) { rotatecode = 0; }
+    void getRandomSize(RNG& rng, vector<int>& size)
+    {
+        cvtest::randomSize(rng, 2, 2, ARITHM_MAX_SIZE_LOG, size);
+    }
+    void op(const vector<Mat>& src, Mat& dst, const Mat&)
+    {
+        cv::rotate(src[0], dst, rotatecode);
+    }
+    void refop(const vector<Mat>& src, Mat& dst, const Mat&)
+    {
+        reference::rotate(src[0], dst, rotatecode);
+    }
+    void generateScalars(int, RNG& rng)
+    {
+        rotatecode = rng.uniform(0, 3);
+    }
+    double getMaxErr(int)
+    {
+        return 0;
+    }
+    int rotatecode;
 };
 
 struct TransposeOp : public BaseElemWiseOp
@@ -1066,7 +1191,7 @@ struct SetZeroOp : public BaseElemWiseOp
 namespace reference {
 static void exp(const Mat& src, Mat& dst)
 {
-    dst.create( src.dims, &src.size[0], src.type() );
+    dst.create( src.size, src.type() );
     const Mat *arrays[]={&src, &dst, 0};
     Mat planes[2];
 
@@ -1095,7 +1220,7 @@ static void exp(const Mat& src, Mat& dst)
 
 static void log(const Mat& src, Mat& dst)
 {
-    dst.create( src.dims, &src.size[0], src.type() );
+    dst.create( src.size, src.type() );
     const Mat *arrays[]={&src, &dst, 0};
     Mat planes[2];
 
@@ -1133,7 +1258,7 @@ struct ExpOp : public BaseArithmOp
     }
     void getValueRange(int depth, double& minval, double& maxval)
     {
-        maxval = depth == CV_32F ? 50 : 100;
+        maxval = depth == CV_32F ? 80 : 700;
         minval = -maxval;
     }
     void op(const vector<Mat>& src, Mat& dst, const Mat&)
@@ -1187,8 +1312,8 @@ static void cartToPolar(const Mat& mx, const Mat& my, Mat& mmag, Mat& mangle, bo
 {
     CV_Assert( (mx.type() == CV_32F || mx.type() == CV_64F) &&
               mx.type() == my.type() && mx.size == my.size );
-    mmag.create( mx.dims, &mx.size[0], mx.type() );
-    mangle.create( mx.dims, &mx.size[0], mx.type() );
+    mmag.create( mx.size, mx.type() );
+    mangle.create( mx.size, mx.type() );
     const Mat *arrays[]={&mx, &my, &mmag, &mangle, 0};
     Mat planes[4];
 
@@ -1255,7 +1380,7 @@ struct CartToPolarToCartOp : public BaseArithmOp
 
         Mat msrc[] = {mag, angle, x, y};
         int pairs[] = {0, 0, 1, 1, 2, 2, 3, 3};
-        dst.create(src[0].dims, src[0].size, CV_MAKETYPE(src[0].depth(), 4));
+        dst.create(src[0].size, CV_MAKETYPE(src[0].depth(), 4));
         cv::mixChannels(msrc, 4, &dst, 1, pairs, 4);
     }
     void refop(const vector<Mat>& src, Mat& dst, const Mat&)
@@ -1264,7 +1389,7 @@ struct CartToPolarToCartOp : public BaseArithmOp
         reference::cartToPolar(src[0], src[1], mag, angle, angleInDegrees);
         Mat msrc[] = {mag, angle, src[0], src[1]};
         int pairs[] = {0, 0, 1, 1, 2, 2, 3, 3};
-        dst.create(src[0].dims, src[0].size, CV_MAKETYPE(src[0].depth(), 4));
+        dst.create(src[0].size, CV_MAKETYPE(src[0].depth(), 4));
         cv::mixChannels(msrc, 4, &dst, 1, pairs, 4);
     }
     void generateScalars(int, RNG& rng)
@@ -1318,9 +1443,9 @@ struct SumOp : public BaseArithmOp
         dst.create(1, 1, CV_64FC4);
         dst.at<Scalar>(0,0) = cvtest::mean(src[0])*(double)src[0].total();
     }
-    double getMaxErr(int)
+    double getMaxErr(int depth)
     {
-        return 1e-5;
+        return depth == CV_16F || depth == CV_16BF ? 1e-3 : 1e-5;
     }
 };
 
@@ -1441,9 +1566,10 @@ struct NormOp : public BaseArithmOp
     void generateScalars(int, RNG& /*rng*/)
     {
     }
-    double getMaxErr(int)
+    double getMaxErr(int depth)
     {
-        return 1e-6;
+        return normType == NORM_INF && depth <= CV_32S ? 0 :
+            depth == CV_16F || depth == CV_16BF ? 1e-5 : 1e-6;
     }
     int normType;
 };
@@ -1604,10 +1730,15 @@ TEST_P(ElemWiseTest, accuracy)
         }
         op->generateScalars(depth, rng);
 
+        /*printf("testIdx=%d, depth=%d, channels=%d, have_mask=%d\n", testIdx, depth, src[0].channels(), (int)haveMask);
+        if (testIdx == 22)
+            printf(">>>\n");*/
+
         op->refop(src, dst0, mask);
         op->op(src, dst, mask);
 
         double maxErr = op->getMaxErr(depth);
+
         ASSERT_PRED_FORMAT2(cvtest::MatComparator(maxErr, op->context), dst0, dst) << "\nsrc[0] ~ " <<
             cvtest::MatInfo(!src.empty() ? src[0] : Mat()) << "\ntestCase #" << testIdx << "\n";
     }
@@ -1658,6 +1789,7 @@ INSTANTIATE_TEST_CASE_P(Core_InRange, ElemWiseTest, ::testing::Values(ElemWiseOp
 INSTANTIATE_TEST_CASE_P(Core_FiniteMask, ElemWiseTest, ::testing::Values(ElemWiseOpPtr(new FiniteMaskOp)));
 
 INSTANTIATE_TEST_CASE_P(Core_Flip, ElemWiseTest, ::testing::Values(ElemWiseOpPtr(new FlipOp)));
+INSTANTIATE_TEST_CASE_P(Core_Rotate, ElemWiseTest, ::testing::Values(ElemWiseOpPtr(new RotateOp)));
 INSTANTIATE_TEST_CASE_P(Core_Transpose, ElemWiseTest, ::testing::Values(ElemWiseOpPtr(new TransposeOp)));
 INSTANTIATE_TEST_CASE_P(Core_SetIdentity, ElemWiseTest, ::testing::Values(ElemWiseOpPtr(new SetIdentityOp)));
 
@@ -1673,6 +1805,119 @@ INSTANTIATE_TEST_CASE_P(Core_MinMaxLoc, ElemWiseTest, ::testing::Values(ElemWise
 INSTANTIATE_TEST_CASE_P(Core_reduceArgMinMax, ElemWiseTest, ::testing::Values(ElemWiseOpPtr(new reduceArgMinMaxOp)));
 INSTANTIATE_TEST_CASE_P(Core_CartToPolarToCart, ElemWiseTest, ::testing::Values(ElemWiseOpPtr(new CartToPolarToCartOp)));
 
+// Mixed Type Arithmetic Operations
+
+typedef std::tuple<ElemWiseOpPtr, std::tuple<cvtest::MatDepth, cvtest::MatDepth>, int> SomeType;
+class ArithmMixedTest : public ::testing::TestWithParam<SomeType> {};
+
+TEST_P(ArithmMixedTest, accuracy)
+{
+    auto p = GetParam();
+    ElemWiseOpPtr op = std::get<0>(p);
+    int srcDepth = std::get<0>(std::get<1>(p));
+    int dstDepth = std::get<1>(std::get<1>(p));
+    int channels = std::get<2>(p);
+
+    int srcType = CV_MAKETYPE(srcDepth, channels);
+    int dstType = CV_MAKETYPE(dstDepth, channels);
+    op->flags |= BaseElemWiseOp::MIXED_TYPE;
+    int testIdx = 0;
+    RNG rng((uint64)ARITHM_RNG_SEED);
+    for( testIdx = 0; testIdx < ARITHM_NTESTS; testIdx++ )
+    {
+        vector<int> size;
+        op->getRandomSize(rng, size);
+        bool haveMask = ((op->flags & BaseElemWiseOp::SUPPORT_MASK) != 0) && rng.uniform(0, 4) == 0;
+
+        double minval=0, maxval=0;
+        op->getValueRange(srcDepth, minval, maxval);
+        int ninputs = op->ninputs;
+        vector<Mat> src(ninputs);
+        for(int i = 0; i < ninputs; i++ )
+            src[i] = cvtest::randomMat(rng, size, srcType, minval, maxval, true);
+        Mat dst0, dst, mask;
+        if( haveMask )
+        {
+            mask = cvtest::randomMat(rng, size, CV_8UC1, 0, 2, true);
+        }
+
+        dst0 = cvtest::randomMat(rng, size, dstType, minval, maxval, false);
+        dst = cvtest::randomMat(rng, size, dstType, minval, maxval, true);
+        cvtest::copy(dst, dst0);
+
+        op->generateScalars(dstDepth, rng);
+
+        op->refop(src, dst0, mask);
+        op->op(src, dst, mask);
+
+        double maxErr = op->getMaxErr(dstDepth);
+        ASSERT_PRED_FORMAT2(cvtest::MatComparator(maxErr, op->context), dst0, dst) << "\nsrc[0] ~ " <<
+            cvtest::MatInfo(!src.empty() ? src[0] : Mat()) << "\ntestCase #" << testIdx << "\n";
+    }
+}
+
+
+INSTANTIATE_TEST_CASE_P(Core_AddMixed, ArithmMixedTest,
+                        ::testing::Combine(::testing::Values(ElemWiseOpPtr(new AddOp)),
+                                           ::testing::Values(std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8U, CV_16U},
+                                                             std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8S, CV_16S},
+                                                             std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8U, CV_32F},
+                                                             std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8S, CV_32F}),
+                                           ::testing::Values(1, 3, 4)));
+INSTANTIATE_TEST_CASE_P(Core_AddScalarMixed, ArithmMixedTest,
+                        ::testing::Combine(::testing::Values(ElemWiseOpPtr(new AddSOp)),
+                                           ::testing::Values(std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8U, CV_16U},
+                                                             std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8S, CV_16S},
+                                                             std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8U, CV_32F},
+                                                             std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8S, CV_32F}),
+                                           ::testing::Values(1, 3, 4)));
+INSTANTIATE_TEST_CASE_P(Core_AddWeightedMixed, ArithmMixedTest,
+                        ::testing::Combine(::testing::Values(ElemWiseOpPtr(new AddWeightedOp)),
+                                           ::testing::Values(std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8U, CV_16U},
+                                                             std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8S, CV_16S},
+                                                             std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8U, CV_32F},
+                                                             std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8S, CV_32F}),
+                                           ::testing::Values(1, 3, 4)));
+INSTANTIATE_TEST_CASE_P(Core_SubMixed, ArithmMixedTest,
+                        ::testing::Combine(::testing::Values(ElemWiseOpPtr(new SubOp)),
+                                           ::testing::Values(std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8U, CV_16U},
+                                                             std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8S, CV_16S},
+                                                             std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8U, CV_32F},
+                                                             std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8S, CV_32F}),
+                                           ::testing::Values(1, 3, 4)));
+INSTANTIATE_TEST_CASE_P(Core_SubScalarMinusArgMixed, ArithmMixedTest,
+                        ::testing::Combine(::testing::Values(ElemWiseOpPtr(new SubRSOp)),
+                                           ::testing::Values(std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8U, CV_16U},
+                                                             std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8S, CV_16S},
+                                                             std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8U, CV_32F},
+                                                             std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8S, CV_32F}),
+                                           ::testing::Values(1, 3, 4)));
+INSTANTIATE_TEST_CASE_P(Core_MulMixed, ArithmMixedTest,
+                        ::testing::Combine(::testing::Values(ElemWiseOpPtr(new MulOp)),
+                                           ::testing::Values(std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8U, CV_16U},
+                                                             std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8S, CV_16S},
+                                                             std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8U, CV_32F},
+                                                             std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8S, CV_32F}),
+                                           ::testing::Values(1, 3, 4)));
+INSTANTIATE_TEST_CASE_P(Core_MulScalarMixed, ArithmMixedTest,
+                        ::testing::Combine(::testing::Values(ElemWiseOpPtr(new MulSOp)),
+                                           ::testing::Values(std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8U, CV_16U},
+                                                             std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8S, CV_16S},
+                                                             std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8U, CV_32F},
+                                                             std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8S, CV_32F}),
+                                           ::testing::Values(1, 3, 4)));
+INSTANTIATE_TEST_CASE_P(Core_DivMixed, ArithmMixedTest,
+                        ::testing::Combine(::testing::Values(ElemWiseOpPtr(new DivOp)),
+                                           ::testing::Values(std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8U, CV_16U},
+                                                             std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8S, CV_16S},
+                                                             std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8U, CV_32F},
+                                                             std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8S, CV_32F}),
+                                           ::testing::Values(1, 3, 4)));
+INSTANTIATE_TEST_CASE_P(Core_RecipMixed, ArithmMixedTest,
+                        ::testing::Combine(::testing::Values(ElemWiseOpPtr(new RecipOp)),
+                                           ::testing::Values(std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8U, CV_16U},
+                                                             std::tuple<cvtest::MatDepth, cvtest::MatDepth>{CV_8S, CV_32F}),
+                                           ::testing::Values(1, 3, 4)));
 
 TEST(Core_ArithmMask, uninitialized)
 {
@@ -1742,7 +1987,7 @@ TEST(Core_ArithmMask, uninitialized)
         }
         Mat d1;
         d.convertTo(d1, depth);
-        EXPECT_LE(cvtest::norm(c, d1, CV_C), DBL_EPSILON);
+        EXPECT_LE(cvtest::norm(c, d1, NORM_INF), DBL_EPSILON);
     }
 
     Mat_<uchar> tmpSrc(100,100);
@@ -2067,6 +2312,31 @@ TEST(Core_FindNonZero, regression)
     findNonZero(img, pts);
     ASSERT_TRUE(pts.size() == nz);
 
+    img.convertTo( img, CV_32U );
+    pts.resize(pts.size()*3);
+    findNonZero(img, pts);
+    ASSERT_TRUE(pts.size() == nz);
+
+    img.convertTo( img, CV_64U );
+    pts.resize(pts.size()*2);
+    findNonZero(img, pts);
+    ASSERT_TRUE(pts.size() == nz);
+
+    img.convertTo( img, CV_64S );
+    pts.resize(pts.size()*5);
+    findNonZero(img, pts);
+    ASSERT_TRUE(pts.size() == nz);
+
+    img.convertTo( img, CV_16F );
+    pts.resize(pts.size()*3);
+    findNonZero(img, pts);
+    ASSERT_TRUE(pts.size() == nz);
+
+    img.convertTo( img, CV_16BF );
+    pts.resize(pts.size()*4);
+    findNonZero(img, pts);
+    ASSERT_TRUE(pts.size() == nz);
+
     img.convertTo( img, CV_32F );
     pts.resize(pts.size()*5);
     findNonZero(img, pts);
@@ -2207,26 +2477,25 @@ TEST(Compare, regression_16F_do_not_crash)
     cv::Mat mat1(2, 2, CV_16F, cv::Scalar(1));
     cv::Mat mat2(2, 2, CV_16F, cv::Scalar(2));
     cv::Mat dst;
-    EXPECT_THROW(cv::compare(mat1, mat2, dst, cv::CMP_EQ), cv::Exception);
+    EXPECT_NO_THROW(cv::compare(mat1, mat2, dst, cv::CMP_EQ));
 }
-
 
 TEST(Core_minMaxIdx, regression_9207_1)
 {
     const int rows = 4;
     const int cols = 3;
     uchar mask_[rows*cols] = {
- 255, 255, 255,
- 255,   0, 255,
-   0, 255, 255,
-   0,   0, 255
-};
+        255, 255, 255,
+        255,   0, 255,
+        0, 255, 255,
+        0,   0, 255
+    };
     uchar src_[rows*cols] = {
-   1,   1,   1,
-   1,   1,   1,
-   2,   1,   1,
-   2,   2,   1
-};
+        1,   1,   1,
+        1,   1,   1,
+        2,   1,   1,
+        2,   2,   1
+    };
     Mat mask(Size(cols, rows), CV_8UC1, mask_);
     Mat src(Size(cols, rows), CV_8UC1, src_);
     double minVal = -0.0, maxVal = -0.0;
@@ -2237,7 +2506,6 @@ TEST(Core_minMaxIdx, regression_9207_1)
     EXPECT_EQ(0, maxIdx[0]);
     EXPECT_EQ(0, maxIdx[1]);
 }
-
 
 class TransposeND : public testing::TestWithParam< tuple<std::vector<int>, perf::MatType> >
 {
@@ -2556,6 +2824,32 @@ TEST(Core_minMaxIdx, regression_9207_2)
     EXPECT_EQ(14, maxIdx[1]);
 }
 
+TEST(Core_MinMaxIdx, MatND)
+{
+    const int shape[3] = {5,5,3};
+    cv::Mat src = cv::Mat(3, shape, CV_8UC1);
+    src.setTo(1);
+    src.data[1] = 0;
+    src.data[5*5*3-2] = 2;
+
+    int minIdx[3];
+    int maxIdx[3];
+    double minVal, maxVal;
+
+    cv::minMaxIdx(src, &minVal, &maxVal, minIdx, maxIdx);
+
+    EXPECT_EQ(0, minVal);
+    EXPECT_EQ(2, maxVal);
+
+    EXPECT_EQ(0, minIdx[0]);
+    EXPECT_EQ(0, minIdx[1]);
+    EXPECT_EQ(1, minIdx[2]);
+
+    EXPECT_EQ(4, maxIdx[0]);
+    EXPECT_EQ(4, maxIdx[1]);
+    EXPECT_EQ(1, maxIdx[2]);
+}
+
 TEST(Core_Set, regression_11044)
 {
     Mat testFloat(Size(3, 3), CV_32FC1);
@@ -2608,11 +2902,11 @@ TEST(Core_Norm, IPP_regression_NORM_L1_16UC3_small)
     Mat a(sz, CV_MAKE_TYPE(CV_16U, cn), Scalar::all(1));
     Mat b(sz, CV_MAKE_TYPE(CV_16U, cn), Scalar::all(2));
     uchar mask_[9*4] = {
- 255, 255, 255,   0, 255, 255,   0, 255,   0,
-   0, 255,   0,   0, 255, 255, 255, 255,   0,
-   0,   0,   0, 255,   0, 255,   0, 255, 255,
-   0,   0, 255,   0, 255, 255, 255,   0, 255
-};
+        255, 255, 255,   0, 255, 255,   0, 255,   0,
+        0, 255,   0,   0, 255, 255, 255, 255,   0,
+        0,   0,   0, 255,   0, 255,   0, 255, 255,
+        0,   0, 255,   0, 255, 255, 255,   0, 255
+    };
     Mat mask(sz, CV_8UC1, mask_);
 
     EXPECT_EQ((double)9*4*cn, cv::norm(a, b, NORM_L1)); // without mask, IPP works well
@@ -2710,6 +3004,19 @@ TEST(Core_MeanStdDev, regression_multichannel)
         EXPECT_EQ(0, cv::norm(dst_m, ref_m, NORM_L1));
         EXPECT_EQ(0, cv::norm(dst_sd, ref_sd, NORM_L1));
     }
+}
+
+// Related issue : https://github.com/opencv/opencv/issues/26861
+TEST(Core_MeanStdDevTest, LargeImage)
+{
+    applyTestTag(CV_TEST_TAG_VERYLONG);
+    applyTestTag(CV_TEST_TAG_MEMORY_14GB);
+    // (1<<16) * ((1<<15)+10) = ~2.147 billion
+    cv::Mat largeImage = cv::Mat::ones((1 << 16), ((1 << 15) + 10), CV_8U);
+    cv::Scalar mean, stddev;
+    cv::meanStdDev(largeImage, mean, stddev);
+    EXPECT_NEAR(mean[0], 1.0, 1e-5);
+    EXPECT_NEAR(stddev[0], 0.0, 1e-5);
 }
 
 template <typename T> static inline
@@ -2917,7 +3224,6 @@ TEST(Core_MinMaxIdx, rows_overflow)
     }
 }
 
-
 TEST(Core_Magnitude, regression_19506)
 {
     for (int N = 1; N <= 64; ++N)
@@ -2929,12 +3235,26 @@ TEST(Core_Magnitude, regression_19506)
     }
 }
 
-TEST(Core_CartPolar, inplace)
+PARAM_TEST_CASE(Core_CartPolar_reverse, int, bool)
 {
-    RNG& rng = TS::ptr()->get_rng();
-    cv::Mat1d A[2] = {cv::Mat1d(10, 10), cv::Mat1d(10, 10)};
-    cv::Mat1d B[2], C[2];
+    int  depth;
+    bool angleInDegrees;
+
+    virtual void SetUp()
+    {
+        depth = GET_PARAM(0);
+        angleInDegrees = GET_PARAM(1);
+    }
+};
+
+TEST_P(Core_CartPolar_reverse, reverse)
+{
+    const int type = CV_MAKETYPE(depth, 1);
+    cv::Mat A[2] = {cv::Mat(10, 10, type), cv::Mat(10, 10, type)};
+    cv::Mat B[2], C[2];
     cv::UMat uA[2];
+    cv::UMat uB[2];
+    cv::UMat uC[2];
 
     for(int i = 0; i < 2; ++i)
     {
@@ -2943,23 +3263,155 @@ TEST(Core_CartPolar, inplace)
     }
 
     // Reverse
-    cv::cartToPolar(A[0], A[1], B[0], B[1], false);
-    cv::polarToCart(B[0], B[1], C[0], C[1], false);
+    cv::cartToPolar(A[0], A[1], B[0], B[1], angleInDegrees);
+    cv::polarToCart(B[0], B[1], C[0], C[1], angleInDegrees);
     EXPECT_MAT_NEAR(A[0], C[0], 2);
     EXPECT_MAT_NEAR(A[1], C[1], 2);
-
-    // Inplace
-    EXPECT_THROW(cv::polarToCart(B[0], B[1], B[0], B[1], false), cv::Exception);
-    EXPECT_THROW(cv::polarToCart(B[0], B[1], B[1], B[0], false), cv::Exception);
-    EXPECT_THROW(cv::cartToPolar(A[0], A[1], A[0], A[1], false), cv::Exception);
-    EXPECT_THROW(cv::cartToPolar(A[0], A[1], A[1], A[0], false), cv::Exception);
-    // Inplace OCL
-    EXPECT_THROW(cv::polarToCart(uA[0], uA[1], uA[0], uA[1]), cv::Exception);
-    EXPECT_THROW(cv::polarToCart(uA[0], uA[1], uA[1], uA[0]), cv::Exception);
-    EXPECT_THROW(cv::cartToPolar(uA[0], uA[1], uA[0], uA[1]), cv::Exception);
-    EXPECT_THROW(cv::cartToPolar(uA[0], uA[1], uA[0], uA[1]), cv::Exception);
 }
 
+INSTANTIATE_TEST_CASE_P(Core_CartPolar, Core_CartPolar_reverse,
+    testing::Combine(
+        testing::Values(CV_32F, CV_64F),
+        testing::Values(false, true)
+    )
+);
+
+PARAM_TEST_CASE(Core_CartToPolar_inplace, int, bool)
+{
+    int  depth;
+    bool angleInDegrees;
+
+    virtual void SetUp()
+    {
+        depth = GET_PARAM(0);
+        angleInDegrees = GET_PARAM(1);
+    }
+};
+
+TEST_P(Core_CartToPolar_inplace, inplace)
+{
+    const int type = CV_MAKETYPE(depth, 1);
+    cv::Mat A[2] = {cv::Mat(10, 10, type), cv::Mat(10, 10, type)};
+    cv::Mat B[2], C[2];
+    cv::UMat uA[2];
+    cv::UMat uB[2];
+    cv::UMat uC[2];
+
+    for(int i = 0; i < 2; ++i)
+    {
+        cvtest::randUni(rng, A[i], Scalar::all(-1000), Scalar::all(1000));
+        A[i].copyTo(uA[i]);
+    }
+
+    // Inplace x<->mag y<->angle
+    for(int i = 0; i < 2; ++i)
+        A[i].copyTo(B[i]);
+    cv::cartToPolar(A[0], A[1], C[0], C[1], angleInDegrees);
+    cv::cartToPolar(B[0], B[1], B[0], B[1], angleInDegrees);
+    EXPECT_MAT_NEAR(C[0], B[0], 2);
+    EXPECT_MAT_NEAR(C[1], B[1], 2);
+
+    // Inplace x<->angle y<->mag
+    for(int i = 0; i < 2; ++i)
+        A[i].copyTo(B[i]);
+    cv::cartToPolar(A[0], A[1], C[0], C[1], angleInDegrees);
+    cv::cartToPolar(B[0], B[1], B[1], B[0], angleInDegrees);
+    EXPECT_MAT_NEAR(C[0], B[1], 2);
+    EXPECT_MAT_NEAR(C[1], B[0], 2);
+
+    // Inplace OCL x<->mag y<->angle
+    for(int i = 0; i < 2; ++i)
+        uA[i].copyTo(uB[i]);
+    cv::cartToPolar(uA[0], uA[1], uC[0], uC[1], angleInDegrees);
+    cv::cartToPolar(uB[0], uB[1], uB[0], uB[1], angleInDegrees);
+    EXPECT_MAT_NEAR(uC[0], uB[0], 2);
+    EXPECT_MAT_NEAR(uC[1], uB[1], 2);
+
+    // Inplace OCL x<->angle y<->mag
+    for(int i = 0; i < 2; ++i)
+        uA[i].copyTo(uB[i]);
+    cv::cartToPolar(uA[0], uA[1], uC[0], uC[1], angleInDegrees);
+    cv::cartToPolar(uB[0], uB[1], uB[1], uB[0], angleInDegrees);
+    EXPECT_MAT_NEAR(uC[0], uB[1], 2);
+    EXPECT_MAT_NEAR(uC[1], uB[0], 2);
+}
+
+INSTANTIATE_TEST_CASE_P(Core_CartPolar, Core_CartToPolar_inplace,
+    testing::Combine(
+        testing::Values(CV_32F, CV_64F),
+        testing::Values(false, true)
+    )
+);
+
+PARAM_TEST_CASE(Core_PolarToCart_inplace, int, bool, bool)
+{
+    int  depth;
+    bool angleInDegrees;
+    bool implicitMagnitude;
+
+    virtual void SetUp()
+    {
+        depth = GET_PARAM(0);
+        angleInDegrees = GET_PARAM(1);
+        implicitMagnitude = GET_PARAM(2);
+    }
+};
+
+TEST_P(Core_PolarToCart_inplace, inplace)
+{
+    const int type = CV_MAKETYPE(depth, 1);
+    cv::Mat A[2] = {cv::Mat(10, 10, type), cv::Mat(10, 10, type)};
+    cv::Mat B[2], C[2];
+    cv::UMat uA[2];
+    cv::UMat uB[2];
+    cv::UMat uC[2];
+
+    for(int i = 0; i < 2; ++i)
+    {
+        cvtest::randUni(rng, A[i], Scalar::all(-1000), Scalar::all(1000));
+        A[i].copyTo(uA[i]);
+    }
+
+    // Inplace OCL x<->mag y<->angle
+    for(int i = 0; i < 2; ++i)
+        A[i].copyTo(B[i]);
+    cv::polarToCart(implicitMagnitude ? cv::noArray() : A[0], A[1], C[0], C[1], angleInDegrees);
+    cv::polarToCart(implicitMagnitude ? cv::noArray() : B[0], B[1], B[0], B[1], angleInDegrees);
+    EXPECT_MAT_NEAR(C[0], B[0], 2);
+    EXPECT_MAT_NEAR(C[1], B[1], 2);
+
+    // Inplace OCL x<->angle y<->mag
+    for(int i = 0; i < 2; ++i)
+        A[i].copyTo(B[i]);
+    cv::polarToCart(implicitMagnitude ? cv::noArray() : A[0], A[1], C[0], C[1], angleInDegrees);
+    cv::polarToCart(implicitMagnitude ? cv::noArray() : B[0], B[1], B[1], B[0], angleInDegrees);
+    EXPECT_MAT_NEAR(C[0], B[1], 2);
+    EXPECT_MAT_NEAR(C[1], B[0], 2);
+
+    // Inplace OCL x<->mag y<->angle
+    for(int i = 0; i < 2; ++i)
+        uA[i].copyTo(uB[i]);
+    cv::polarToCart(implicitMagnitude ? cv::noArray() : uA[0], uA[1], uC[0], uC[1], angleInDegrees);
+    cv::polarToCart(implicitMagnitude ? cv::noArray() : uB[0], uB[1], uB[0], uB[1], angleInDegrees);
+    EXPECT_MAT_NEAR(uC[0], uB[0], 2);
+    EXPECT_MAT_NEAR(uC[1], uB[1], 2);
+
+    // Inplace OCL x<->angle y<->mag
+    for(int i = 0; i < 2; ++i)
+        uA[i].copyTo(uB[i]);
+    cv::polarToCart(implicitMagnitude ? cv::noArray() : uA[0], uA[1], uC[0], uC[1], angleInDegrees);
+    cv::polarToCart(implicitMagnitude ? cv::noArray() : uB[0], uB[1], uB[1], uB[0], angleInDegrees);
+    EXPECT_MAT_NEAR(uC[0], uB[1], 2);
+    EXPECT_MAT_NEAR(uC[1], uB[0], 2);
+}
+
+INSTANTIATE_TEST_CASE_P(Core_CartPolar, Core_PolarToCart_inplace,
+    testing::Combine(
+        testing::Values(CV_32F, CV_64F),
+        testing::Values(false, true),
+        testing::Values(true, false)
+    )
+);
 
 // Check different values for finiteMask()
 
@@ -3034,73 +3486,405 @@ INSTANTIATE_TEST_CASE_P(Core_FiniteMask, FiniteMaskFixture, ::testing::Combine(:
 
 
 ///////////////////////////////////////////////////////////////////////////////////
-typedef testing::TestWithParam<perf::MatDepth> NonZeroNotSupportedMatDepth;
+typedef testing::TestWithParam<perf::MatDepth> NonZeroSupportedMatDepth;
 
-TEST_P(NonZeroNotSupportedMatDepth, findNonZero)
+TEST_P(NonZeroSupportedMatDepth, findNonZero)
 {
-    cv::Mat src = cv::Mat(16,16, CV_MAKETYPE(GetParam(), 1));
+    cv::Mat src = cv::Mat::zeros(16,16, CV_MAKETYPE(GetParam(), 1));
     vector<Point> pts;
-    EXPECT_THROW( findNonZero(src, pts), cv::Exception);
+    EXPECT_NO_THROW(findNonZero(src, pts));
 }
 
-TEST_P(NonZeroNotSupportedMatDepth, countNonZero)
+TEST_P(NonZeroSupportedMatDepth, countNonZero)
 {
-    cv::Mat src = cv::Mat(16,16, CV_MAKETYPE(GetParam(), 1));
-    EXPECT_THROW( countNonZero(src), cv::Exception);
+    cv::Mat src = cv::Mat::zeros(16,16, CV_MAKETYPE(GetParam(), 1));
+    EXPECT_NO_THROW(countNonZero(src));
 }
 
-TEST_P(NonZeroNotSupportedMatDepth, hasNonZero)
+TEST_P(NonZeroSupportedMatDepth, hasNonZero)
 {
-    cv::Mat src = cv::Mat(16,16, CV_MAKETYPE(GetParam(), 1));
-    EXPECT_THROW( hasNonZero(src), cv::Exception);
+    cv::Mat src = cv::Mat::zeros(16,16, CV_MAKETYPE(GetParam(), 1));
+    EXPECT_NO_THROW(hasNonZero(src));
 }
 
 INSTANTIATE_TEST_CASE_P(
     NonZero,
-    NonZeroNotSupportedMatDepth,
-    testing::Values(perf::MatDepth(CV_16F), CV_16BF, CV_Bool, CV_64U, CV_64S, CV_32U)
+    NonZeroSupportedMatDepth,
+    testing::Values(CV_16BF, CV_Bool, CV_64U, CV_64S, CV_32U)
 );
 
 ///////////////////////////////////////////////////////////////////////////////////
-typedef testing::TestWithParam<perf::MatDepth> LutNotSupportedMatDepth;
+typedef testing::TestWithParam<perf::MatDepth> MinMaxSupportedMatDepth;
 
-TEST_P(LutNotSupportedMatDepth, lut)
+TEST_P(MinMaxSupportedMatDepth, minMaxLoc)
 {
-    cv::Mat src = cv::Mat::zeros(16,16, CV_8UC1);
-    cv::Mat lut = cv::Mat(1, 256, CV_MAKETYPE(GetParam(), 1));
-    cv::Mat dst;
-    EXPECT_THROW( cv::LUT(src,lut,dst), cv::Exception);
-}
-
-INSTANTIATE_TEST_CASE_P(
-    Lut,
-    LutNotSupportedMatDepth,
-    testing::Values(perf::MatDepth(CV_16F), CV_16BF, CV_Bool, CV_64U, CV_64S, CV_32U)
-);
-
-///////////////////////////////////////////////////////////////////////////////////
-typedef testing::TestWithParam<perf::MatDepth> MinMaxNotSupportedMatDepth;
-
-TEST_P(MinMaxNotSupportedMatDepth, minMaxLoc)
-{
-    cv::Mat src = cv::Mat(16,16, CV_MAKETYPE(GetParam(), 1));
+    cv::Mat src = cv::Mat::zeros(16,16, CV_MAKETYPE(GetParam(), 1));
     double minV=0.0, maxV=0.0;
     Point minLoc, maxLoc;
-    EXPECT_THROW( cv::minMaxLoc(src, &minV, &maxV, &minLoc, &maxLoc), cv::Exception);
+    EXPECT_NO_THROW(cv::minMaxLoc(src, &minV, &maxV, &minLoc, &maxLoc));
 }
 
-TEST_P(MinMaxNotSupportedMatDepth, minMaxIdx)
+TEST_P(MinMaxSupportedMatDepth, minMaxIdx)
 {
-    cv::Mat src = cv::Mat(16,16, CV_MAKETYPE(GetParam(), 1));
+    cv::Mat src = cv::Mat::zeros(16,16, CV_MAKETYPE(GetParam(), 1));
     double minV=0.0, maxV=0.0;
-    int minIdx=0, maxIdx=0;
-    EXPECT_THROW( cv::minMaxIdx(src, &minV, &maxV, &minIdx, &maxIdx), cv::Exception);
+    int minIdx[2] = {0, 0};
+    int maxIdx[2] = {0, 0};
+    EXPECT_NO_THROW(cv::minMaxIdx(src, &minV, &maxV, minIdx, maxIdx));
 }
 
 INSTANTIATE_TEST_CASE_P(
     MinMaxLoc,
-    MinMaxNotSupportedMatDepth,
+    MinMaxSupportedMatDepth,
     testing::Values(perf::MatDepth(CV_16F), CV_16BF, CV_Bool, CV_64U, CV_64S, CV_32U)
 );
+
+CV_ENUM(LutIdxType, CV_8U, CV_8S, CV_16U, CV_16S)
+CV_ENUM(LutMatType, CV_8U, CV_8S, CV_16U, CV_16S, CV_32S, CV_32F, CV_64F, CV_16F, CV_16BF, CV_Bool, CV_64U, CV_64S, CV_32U)
+
+struct Core_LUT: public testing::TestWithParam< std::tuple<LutIdxType, LutMatType> >
+{
+    template<typename Ti, typename T, int ch, bool same_cn>
+    cv::Mat referenceWithType(cv::Mat input, cv::Mat table)
+    {
+        cv::Mat ref(input.size(), CV_MAKE_TYPE(table.depth(), ch));
+        for (int i = 0; i < input.rows; i++)
+        {
+            for (int j = 0; j < input.cols; j++)
+            {
+                if(ch == 1)
+                {
+                    ref.at<T>(i, j) = table.at<T>(input.at<Ti>(i, j));
+                }
+                else
+                {
+                    Vec<T, ch> val;
+                    for (int k = 0; k < ch; k++)
+                    {
+                        if (same_cn)
+                        {
+                            val[k] = table.at<Vec<T, ch>>(input.at<Vec<Ti, ch>>(i, j)[k])[k];
+                        }
+                        else
+                        {
+                            val[k] = table.at<T>(input.at<Vec<Ti, ch>>(i, j)[k]);
+                        }
+                    }
+                    ref.at<Vec<T, ch>>(i, j) = val;
+                }
+            }
+        }
+        return ref;
+    }
+
+    template<int ch = 1, bool same_cn = false>
+    cv::Mat reference(cv::Mat input, cv::Mat table)
+    {
+        cv::Mat ret = cv::Mat();
+        if ((input.depth() == CV_8U) || (input.depth() == CV_8S)) // Index type for LUT operation
+        {
+            switch(table.depth()) // Value type for LUT operation
+            {
+                case CV_8U:   ret = referenceWithType<uint8_t, uint8_t,  ch, same_cn>(input, table); break;
+                case CV_8S:   ret = referenceWithType<uint8_t, int8_t,   ch, same_cn>(input, table); break;
+                case CV_16U:  ret = referenceWithType<uint8_t, uint16_t, ch, same_cn>(input, table); break;
+                case CV_16S:  ret = referenceWithType<uint8_t, int16_t,  ch, same_cn>(input, table); break;
+                case CV_32S:  ret = referenceWithType<uint8_t, int32_t,  ch, same_cn>(input, table); break;
+                case CV_32F:  ret = referenceWithType<uint8_t, float,    ch, same_cn>(input, table); break;
+                case CV_64F:  ret = referenceWithType<uint8_t, double,   ch, same_cn>(input, table); break;
+                case CV_16F:  ret = referenceWithType<uint8_t, uint16_t, ch, same_cn>(input, table); break;
+                case CV_16BF: ret = referenceWithType<uint8_t, uint16_t, ch, same_cn>(input, table); break;
+                case CV_Bool: ret = referenceWithType<uint8_t, uint8_t,  ch, same_cn>(input, table); break;
+                case CV_64U:  ret = referenceWithType<uint8_t, uint64_t, ch, same_cn>(input, table); break;
+                case CV_64S:  ret = referenceWithType<uint8_t, int64_t,  ch, same_cn>(input, table); break;
+                case CV_32U:  ret = referenceWithType<uint8_t, uint32_t, ch, same_cn>(input, table); break;
+                default:      ret = cv::Mat();                                                       break;
+            }
+        }
+        else if ((input.depth() == CV_16U) || (input.depth() == CV_16S))
+        {
+            switch(table.depth()) // Value type for LUT operation
+            {
+                case CV_8U:   ret = referenceWithType<uint16_t, uint8_t,  ch, same_cn>(input, table); break;
+                case CV_8S:   ret = referenceWithType<uint16_t, int8_t,   ch, same_cn>(input, table); break;
+                case CV_16U:  ret = referenceWithType<uint16_t, uint16_t, ch, same_cn>(input, table); break;
+                case CV_16S:  ret = referenceWithType<uint16_t, int16_t,  ch, same_cn>(input, table); break;
+                case CV_32S:  ret = referenceWithType<uint16_t, int32_t,  ch, same_cn>(input, table); break;
+                case CV_32F:  ret = referenceWithType<uint16_t, float,    ch, same_cn>(input, table); break;
+                case CV_64F:  ret = referenceWithType<uint16_t, double,   ch, same_cn>(input, table); break;
+                case CV_16F:  ret = referenceWithType<uint16_t, uint16_t, ch, same_cn>(input, table); break;
+                case CV_16BF: ret = referenceWithType<uint16_t, uint16_t, ch, same_cn>(input, table); break;
+                case CV_Bool: ret = referenceWithType<uint16_t, uint8_t,  ch, same_cn>(input, table); break;
+                case CV_64U:  ret = referenceWithType<uint16_t, uint64_t, ch, same_cn>(input, table); break;
+                case CV_64S:  ret = referenceWithType<uint16_t, int64_t,  ch, same_cn>(input, table); break;
+                case CV_32U:  ret = referenceWithType<uint16_t, uint32_t, ch, same_cn>(input, table); break;
+                default:      ret = cv::Mat();                                                        break;
+            }
+        }
+
+        return ret;
+    }
+};
+
+TEST_P(Core_LUT, accuracy)
+{
+    int idx_type = get<0>(GetParam());
+    int value_type = get<1>(GetParam());
+
+    ASSERT_TRUE((idx_type == CV_8U) || (idx_type == CV_8S) || (idx_type == CV_16U ) || (idx_type == CV_16S));
+    const int tableSize = ((idx_type == CV_8U) || (idx_type == CV_8S)) ? 256: 65536;
+
+    cv::Mat input(117, 113, CV_MAKE_TYPE(idx_type, 1));
+    randu(input, getMinVal(idx_type), getMaxVal(idx_type));
+
+    cv::Mat table(1, tableSize, CV_MAKE_TYPE(value_type, 1));
+    randu(table, getMinVal(value_type), getMaxVal(value_type));
+
+    cv::Mat output;
+    ASSERT_NO_THROW(cv::LUT(input, table, output));
+    ASSERT_FALSE(output.empty());
+
+    cv::Mat gt = reference(input, table);
+    ASSERT_FALSE(gt.empty());
+
+    // Force convert to 8U as CV_Bool is not supported in cv::norm for now
+    // TODO: Remove conversion after cv::norm fix
+    if (value_type == CV_Bool)
+    {
+        output.convertTo(output, CV_8U);
+        gt.convertTo(gt, CV_8U);
+    }
+
+    ASSERT_EQ(0, cv::norm(output, gt, cv::NORM_INF));
+}
+
+TEST_P(Core_LUT, accuracy_multi)
+{
+    int idx_type = get<0>(GetParam());
+    int value_type = get<1>(GetParam());
+
+    ASSERT_TRUE((idx_type == CV_8U) || (idx_type == CV_8S) || (idx_type == CV_16U) || (idx_type == CV_16S));
+    const int tableSize = ((idx_type == CV_8U) || (idx_type == CV_8S) ) ? 256: 65536;
+
+    cv::Mat input(117, 113, CV_MAKE_TYPE(idx_type, 3));
+    randu(input, getMinVal(idx_type), getMaxVal(idx_type));
+
+    cv::Mat table(1, tableSize, CV_MAKE_TYPE(value_type, 1));
+    randu(table, getMinVal(value_type), getMaxVal(value_type));
+
+    cv::Mat output;
+    ASSERT_NO_THROW(cv::LUT(input, table, output));
+    ASSERT_FALSE(output.empty());
+
+    cv::Mat gt = reference<3>(input, table);
+    ASSERT_FALSE(gt.empty());
+
+    // Force convert to 8U as CV_Bool is not supported in cv::norm for now
+    // TODO: Remove conversion after cv::norm fix
+    if (value_type == CV_Bool)
+    {
+        output.convertTo(output, CV_8U);
+        gt.convertTo(gt, CV_8U);
+    }
+
+    ASSERT_EQ(0, cv::norm(output, gt, cv::NORM_INF));
+}
+
+TEST_P(Core_LUT, accuracy_multi2)
+{
+    int idx_type = get<0>(GetParam());
+    int value_type = get<1>(GetParam());
+
+    ASSERT_TRUE((idx_type == CV_8U) || (idx_type == CV_8S) || (idx_type == CV_16U) || (idx_type == CV_16S));
+    const int tableSize = ((idx_type == CV_8U) || (idx_type == CV_8S)) ? 256: 65536;
+
+    cv::Mat input(117, 113, CV_MAKE_TYPE(idx_type, 3));
+    randu(input, getMinVal(idx_type), getMaxVal(idx_type));
+
+    cv::Mat table(1, tableSize, CV_MAKE_TYPE(value_type, 3));
+    randu(table, getMinVal(value_type), getMaxVal(value_type));
+
+    cv::Mat output;
+    ASSERT_NO_THROW(cv::LUT(input, table, output));
+    ASSERT_FALSE(output.empty());
+
+    cv::Mat gt = reference<3, true>(input, table);
+    ASSERT_FALSE(gt.empty());
+
+    // Force convert to 8U as CV_Bool is not supported in cv::norm for now
+    // TODO: Remove conversion after cv::norm fix
+    if (value_type == CV_Bool)
+    {
+        output.convertTo(output, CV_8U);
+        gt.convertTo(gt, CV_8U);
+    }
+
+    ASSERT_EQ(0, cv::norm(output, gt, cv::NORM_INF));
+}
+
+INSTANTIATE_TEST_CASE_P(/**/, Core_LUT, testing::Combine( LutIdxType::all(), LutMatType::all()));
+
+CV_ENUM(MaskType, CV_8U, CV_8S, CV_Bool)
+typedef testing::TestWithParam<MaskType> Core_MaskTypeTest;
+
+TEST_P(Core_MaskTypeTest, BasicArithm)
+{
+    int mask_type = GetParam();
+    RNG& rng = theRNG();
+    const int MAX_DIM=3;
+    int sizes[MAX_DIM];
+    for( int iter = 0; iter < 100; iter++ )
+    {
+        int dims = rng.uniform(1, MAX_DIM+1);
+        int depth = rng.uniform(CV_8U, CV_64F+1);
+        int cn = rng.uniform(1, 6);
+        int type = CV_MAKETYPE(depth, cn);
+        int op = rng.uniform(0, depth < CV_32F ? 5 : 2); // don't run binary operations between floating-point values
+        int depth1 = op <= 1 ? CV_64F : depth;
+        for (int k = 0; k < MAX_DIM; k++)
+        {
+            sizes[k] = k < dims ? rng.uniform(1, 30) : 0;
+        }
+
+        Mat a(dims, sizes, type), a1;
+        Mat b(dims, sizes, type), b1;
+        Mat mask(dims, sizes, mask_type);
+        Mat mask1;
+        Mat c, d;
+
+        rng.fill(a, RNG::UNIFORM, 0, 100);
+        rng.fill(b, RNG::UNIFORM, 0, 100);
+
+        // [-2,2) range means that the each generated random number
+        // will be one of -2, -1, 0, 1. Saturated to [0,255], it will become
+        // 0, 0, 0, 1 => the mask will be filled by ~25%.
+        rng.fill(mask, RNG::UNIFORM, -2, 2);
+
+        a.convertTo(a1, depth1);
+        b.convertTo(b1, depth1);
+        // invert the mask
+        cv::compare(mask, 0, mask1, CMP_EQ);
+        a1.setTo(0, mask1);
+        b1.setTo(0, mask1);
+
+        if( op == 0 )
+        {
+            cv::add(a, b, c, mask);
+            cv::add(a1, b1, d);
+        }
+        else if( op == 1 )
+        {
+            cv::subtract(a, b, c, mask);
+            cv::subtract(a1, b1, d);
+        }
+        else if( op == 2 )
+        {
+            cv::bitwise_and(a, b, c, mask);
+            cv::bitwise_and(a1, b1, d);
+        }
+        else if( op == 3 )
+        {
+            cv::bitwise_or(a, b, c, mask);
+            cv::bitwise_or(a1, b1, d);
+        }
+        else if( op == 4 )
+        {
+            cv::bitwise_xor(a, b, c, mask);
+            cv::bitwise_xor(a1, b1, d);
+        }
+        Mat d1;
+        d.convertTo(d1, depth);
+        EXPECT_LE(cvtest::norm(c, d1, NORM_INF), DBL_EPSILON);
+    }
+}
+
+TEST_P(Core_MaskTypeTest, MinMaxIdx)
+{
+    int mask_type = GetParam();
+    const int rows = 4;
+    const int cols = 3;
+    uchar mask_[rows*cols] = {
+        255, 255, 1,
+        255,   0, 255,
+        0, 1, 255,
+        0,   0, 255
+    };
+    uchar src_[rows*cols] = {
+        1,   1,   1,
+        1,   1,   1,
+        2,   1,   1,
+        2,   2,   1
+    };
+    Mat mask(Size(cols, rows), mask_type, mask_);
+    Mat src(Size(cols, rows), CV_8UC1, src_);
+    double minVal = -0.0, maxVal = -0.0;
+    int minIdx[2] = { -2, -2 }, maxIdx[2] = { -2, -2 };
+    cv::minMaxIdx(src, &minVal, &maxVal, minIdx, maxIdx, mask);
+    EXPECT_EQ(0, minIdx[0]);
+    EXPECT_EQ(0, minIdx[1]);
+    EXPECT_EQ(0, maxIdx[0]);
+    EXPECT_EQ(0, maxIdx[1]);
+}
+
+TEST_P(Core_MaskTypeTest, Norm)
+{
+    int mask_type = GetParam();
+    int cn = 3;
+    Size sz(9, 4);  // width < 16
+    Mat a(sz, CV_MAKE_TYPE(CV_16U, cn), Scalar::all(1));
+    Mat b(sz, CV_MAKE_TYPE(CV_16U, cn), Scalar::all(2));
+    uchar mask_[9*4] = {
+        255, 255, 255,   0, 1, 255,   0, 255,   0,
+        0, 255,   0,   0, 255, 255, 255, 255,   0,
+        0,   0,   0, 255,   0, 1,   0, 255, 255,
+        0,   0, 255,   0, 255, 255, 1,   0, 255
+    };
+    Mat mask(sz, mask_type, mask_);
+
+    EXPECT_EQ((double)9*4*cn, cv::norm(a, b, NORM_L1)); // without mask, IPP works well
+    EXPECT_EQ((double)20*cn, cv::norm(a, b, NORM_L1, mask));
+}
+
+TEST_P(Core_MaskTypeTest, Mean)
+{
+    int mask_type = GetParam();
+    Size sz(9, 4);
+    Mat a(sz, CV_16UC1, Scalar::all(1));
+    uchar mask_[9*4] = {
+        255, 255, 255,   0, 1, 255,   0, 255,   0,
+        0, 255,   0,   0, 255, 255, 255, 255,   0,
+        0,   0,   0, 1,   0, 255,   0, 1, 255,
+        0,   0, 255,   0, 255, 255, 255,   0, 255
+    };
+    Mat mask(sz, mask_type, mask_);
+    a.setTo(2, mask);
+
+    Scalar result = cv::mean(a, mask);
+    EXPECT_NEAR(result[0], 2, 1e-6);
+}
+
+TEST_P(Core_MaskTypeTest, MeanStdDev)
+{
+    int mask_type = GetParam();
+    Size sz(9, 4);
+    Mat a(sz, CV_16UC1, Scalar::all(1));
+    uchar mask_[9*4] = {
+        255, 255, 255,   0, 1, 255,   0, 255,   0,
+        0, 255,   0,   0, 255, 255, 255, 255,   0,
+        0,   0,   0, 1,   0, 255,   0, 1, 255,
+        0,   0, 255,   0, 255, 255, 255,   0, 255
+    };
+    Mat mask(sz, mask_type, mask_);
+    a.setTo(2, mask);
+
+    Scalar m, stddev;
+    cv::meanStdDev(a, m, stddev, mask);
+
+    EXPECT_NEAR(m[0], 2, 1e-6);
+    EXPECT_NEAR(stddev[0], 0, 1e-6);
+}
+
+INSTANTIATE_TEST_CASE_P(/**/, Core_MaskTypeTest, MaskType::all());
+
 
 }} // namespace

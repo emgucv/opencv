@@ -51,7 +51,8 @@ void Net::Impl::initCUDABackend(const std::vector<LayerPin>& blobsToKeep_)
     for (auto& layer : layers)
     {
         auto& ld = layer.second;
-        if (ld.id == 0)
+
+        if (ld.id == 0 && netInputLayer->supportBackend(preferableBackend))
         {
             for (auto& wrapper : ld.inputBlobsWrappers)
             {
@@ -107,3 +108,18 @@ void Net::Impl::initCUDABackend(const std::vector<LayerPin>& blobsToKeep_)
 CV__DNN_INLINE_NS_END
 }}  // namespace cv::dnn
 #endif  // HAVE_CUDA
+
+namespace cv { namespace dnn {
+
+bool haveCUDA()
+{
+#ifdef HAVE_CUDA
+    int dev = 0;
+    static bool ret = (cudaGetDevice(&dev) == cudaSuccess);
+    return ret;
+#else
+    return false;
+#endif
+}
+
+}}  // namespace cv::dnn

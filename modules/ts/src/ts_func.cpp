@@ -1,7 +1,6 @@
 #include "precomp.hpp"
 #include <float.h>
 #include <limits.h>
-#include "opencv2/imgproc/types_c.h"
 
 using namespace cv;
 
@@ -10,7 +9,8 @@ namespace cvtest
 
 const char* getTypeName( int type )
 {
-    static const char* type_names[] = { "8u", "8s", "16u", "16s", "32s", "32f", "64f", "ptr" };
+    static const char* type_names[CV_DEPTH_MAX] = { "8u", "8s", "16u", "16s", "32s", "32f", "64f",
+                                                    "16f","16bf","bool","64u", "64s", "32u" };
     return type_names[CV_MAT_DEPTH(type)];
 }
 
@@ -86,9 +86,14 @@ double getMinVal(int depth)
 {
     depth = CV_MAT_DEPTH(depth);
     double val = depth == CV_8U ? 0 : depth == CV_8S ? SCHAR_MIN : depth == CV_16U ? 0 :
-    depth == CV_16S ? SHRT_MIN : depth == CV_32S ? INT_MIN :
-    depth == CV_32F ? -FLT_MAX : depth == CV_64F ? -DBL_MAX :
-            depth == CV_16F ? -65504
+            depth == CV_16S ? SHRT_MIN : depth == CV_32S ? INT_MIN :
+            depth == CV_32F ? -FLT_MAX : depth == CV_64F ? -DBL_MAX :
+            depth == CV_16F ? -65504 :
+            depth == CV_16BF ? -FLT_MAX :
+            depth == CV_32U ? 0 :
+            depth == CV_64U ? 0 :
+            depth == CV_64S ? (double)0x8000000000000000LL :
+            depth == CV_Bool ? 0
             : -1;
     CV_Assert(val != -1);
     return val;
@@ -98,9 +103,14 @@ double getMaxVal(int depth)
 {
     depth = CV_MAT_DEPTH(depth);
     double val = depth == CV_8U ? UCHAR_MAX : depth == CV_8S ? SCHAR_MAX : depth == CV_16U ? USHRT_MAX :
-    depth == CV_16S ? SHRT_MAX : depth == CV_32S ? INT_MAX :
-    depth == CV_32F ? FLT_MAX : depth == CV_64F ? DBL_MAX :
-            depth == CV_16F ? 65504
+            depth == CV_16S ? SHRT_MAX : depth == CV_32S ? INT_MAX :
+            depth == CV_32F ? FLT_MAX : depth == CV_64F ? DBL_MAX :
+            depth == CV_16F ? 65504 :
+            depth == CV_16BF ? FLT_MAX :
+            depth == CV_32U ? UINT_MAX :
+            depth == CV_64U ? (double)0xFFFFFFFFFFFFFFFFULL :
+            depth == CV_64S ? (double)0x7fffffffffffffffLL :
+            depth == CV_Bool ? 1
             : -1;
     CV_Assert(val != -1);
     return val;
@@ -177,7 +187,7 @@ void add(const Mat& _a, double alpha, const Mat& _b, double beta,
     if( ctype < 0 )
         ctype = a.depth();
     ctype = CV_MAKETYPE(CV_MAT_DEPTH(ctype), a.channels());
-    c.create(a.dims, &a.size[0], ctype);
+    c.create(a.size, ctype);
     const Mat *arrays[] = {&a, &b, &c, 0};
     Mat planes[3], buf[3];
 
@@ -317,10 +327,10 @@ convertTo(const _Tp* src, void* dst, int dtype,
         convert_(src, (int64_t*)dst, total, alpha, beta);
         break;
     case CV_16F:
-        convert_(src, (cv::float16_t*)dst, total, alpha, beta);
+        convert_(src, (cv::hfloat*)dst, total, alpha, beta);
         break;
     case CV_16BF:
-        convert_(src, (cv::bfloat16_t*)dst, total, alpha, beta);
+        convert_(src, (cv::bfloat*)dst, total, alpha, beta);
         break;
     case CV_Bool:
         convert_to_bool(src, (bool*)dst, total, alpha, beta);
@@ -339,7 +349,7 @@ void convert(const Mat& src, cv::OutputArray _dst,
     int ddepth = CV_MAT_DEPTH(dtype);
 
     dtype = CV_MAKETYPE(ddepth, src.channels());
-    _dst.create(src.dims, &src.size[0], dtype);
+    _dst.create(src.size, dtype);
     Mat dst = _dst.getMat();
     if( alpha == 0 )
     {
@@ -400,13 +410,13 @@ void convert(const Mat& src, cv::OutputArray _dst,
             convertTo((const int64_t*)sptr, dptr, dtype, total, alpha, beta);
             break;
         case CV_16F:
-            convertTo((const cv::float16_t*)sptr, dptr, dtype, total, alpha, beta);
+            convertTo((const cv::hfloat*)sptr, dptr, dtype, total, alpha, beta);
             break;
         case CV_16BF:
-            convertTo((const cv::bfloat16_t*)sptr, dptr, dtype, total, alpha, beta);
+            convertTo((const cv::bfloat*)sptr, dptr, dtype, total, alpha, beta);
             break;
         default:
-            CV_Error(CV_StsNotImplemented, "unknown/unsupported depth");
+            CV_Error(cv::Error::StsNotImplemented, "unknown/unsupported depth");
         }
     }
 }
@@ -414,7 +424,7 @@ void convert(const Mat& src, cv::OutputArray _dst,
 
 void copy(const Mat& src, Mat& dst, const Mat& mask, bool invertMask)
 {
-    dst.create(src.dims, &src.size[0], src.type());
+    dst.create(src.size, src.type());
 
     if(mask.empty())
     {
@@ -431,7 +441,7 @@ void copy(const Mat& src, Mat& dst, const Mat& mask, bool invertMask)
     }
 
     int mcn = mask.channels();
-    CV_Assert( src.size == mask.size && mask.depth() == CV_8U
+    CV_Assert( src.size == mask.size && (mask.depth() == CV_8U || mask.depth() == CV_Bool)
                && (mcn == 1 || mcn == src.channels()) );
 
     const Mat *arrays[]={&src, &dst, &mask, 0};
@@ -566,7 +576,7 @@ void insert(const Mat& src, Mat& dst, int coi)
 
 void extract(const Mat& src, Mat& dst, int coi)
 {
-    dst.create( src.dims, &src.size[0], src.depth() );
+    dst.create( src.size, src.depth() );
     CV_Assert( 0 <= coi && coi < src.channels() );
 
     const Mat* arrays[] = {&src, &dst, 0};
@@ -1069,20 +1079,20 @@ void copyMakeBorder(const Mat& src, Mat& dst, int top, int bottom, int left, int
 }
 
 
-template<typename _Tp> static void
+template<typename _Tp, typename _WTp=_Tp> static void
 minMaxLoc_(const _Tp* src, size_t total, size_t startidx,
            double* _minval, double* _maxval,
            size_t* _minpos, size_t* _maxpos,
            const uchar* mask)
 {
-    _Tp maxval = saturate_cast<_Tp>(*_maxval), minval = saturate_cast<_Tp>(*_minval);
+    _WTp maxval = saturate_cast<_WTp>(*_maxval), minval = saturate_cast<_WTp>(*_minval);
     size_t minpos = *_minpos, maxpos = *_maxpos;
 
     if( !mask )
     {
         for( size_t i = 0; i < total; i++ )
         {
-            _Tp val = src[i];
+            _WTp val = (_WTp)src[i];
             if( minval > val || !minpos )
             {
                 minval = val;
@@ -1099,7 +1109,7 @@ minMaxLoc_(const _Tp* src, size_t total, size_t startidx,
     {
         for( size_t i = 0; i < total; i++ )
         {
-            _Tp val = src[i];
+            _WTp val = (_WTp)src[i];
             if( (minval > val || !minpos) && mask[i] )
             {
                 minval = val;
@@ -1113,8 +1123,8 @@ minMaxLoc_(const _Tp* src, size_t total, size_t startidx,
         }
     }
 
-    *_maxval = maxval;
-    *_minval = minval;
+    *_maxval = (double)maxval;
+    *_minval = (double)minval;
     *_maxpos = maxpos;
     *_minpos = minpos;
 }
@@ -1191,6 +1201,28 @@ void minMaxLoc(const Mat& src, double* _minval, double* _maxval,
             minMaxLoc_((const double*)sptr, total, startidx,
                        &minval, &maxval, &minidx, &maxidx, mptr);
             break;
+        case CV_16F:
+            minMaxLoc_<cv::hfloat, float>(
+                    (const cv::hfloat*)sptr, total, startidx,
+                    &minval, &maxval, &minidx, &maxidx, mptr);
+            break;
+        case CV_16BF:
+            minMaxLoc_<cv::bfloat, float>(
+                    (const cv::bfloat*)sptr, total, startidx,
+                    &minval, &maxval, &minidx, &maxidx, mptr);
+            break;
+        case CV_64U:
+            minMaxLoc_((const uint64*)sptr, total, startidx,
+                       &minval, &maxval, &minidx, &maxidx, mptr);
+            break;
+        case CV_64S:
+            minMaxLoc_((const int64*)sptr, total, startidx,
+                       &minval, &maxval, &minidx, &maxidx, mptr);
+            break;
+        case CV_32U:
+            minMaxLoc_((const unsigned*)sptr, total, startidx,
+                       &minval, &maxval, &minidx, &maxidx, mptr);
+            break;
         default:
             CV_Assert(0);
         }
@@ -1236,26 +1268,26 @@ norm_(const _Tp* src, size_t total, int cn, int normType, double startval, const
     {
         if( !mask )
             for( i = 0; i < total; i++ )
-                result = std::max(result, (double)std::abs(0+src[i]));// trick with 0 used to quiet gcc warning
+                result = std::max(result, std::abs((double)src[i]));// trick with 0 used to quiet gcc warning
         else
             for( int c = 0; c < cn; c++ )
             {
                 for( i = 0; i < total; i++ )
                     if( mask[i] )
-                        result = std::max(result, (double)std::abs(0+src[i*cn + c]));
+                        result = std::max(result, std::abs((double)src[i*cn + c]));
             }
     }
     else if( normType == NORM_L1 )
     {
         if( !mask )
             for( i = 0; i < total; i++ )
-                result += std::abs(0+src[i]);
+                result += std::abs((double)src[i]);
         else
             for( int c = 0; c < cn; c++ )
             {
                 for( i = 0; i < total; i++ )
                     if( mask[i] )
-                        result += std::abs(0+src[i*cn + c]);
+                        result += std::abs((double)src[i*cn + c]);
             }
     }
     else
@@ -1263,7 +1295,7 @@ norm_(const _Tp* src, size_t total, int cn, int normType, double startval, const
         if( !mask )
             for( i = 0; i < total; i++ )
             {
-                double v = src[i];
+                double v = (double)src[i];
                 result += v*v;
             }
         else
@@ -1272,7 +1304,7 @@ norm_(const _Tp* src, size_t total, int cn, int normType, double startval, const
                 for( i = 0; i < total; i++ )
                     if( mask[i] )
                     {
-                        double v = src[i*cn + c];
+                        double v = (double)src[i*cn + c];
                         result += v*v;
                     }
             }
@@ -1293,26 +1325,26 @@ norm_(const _Tp* src1, const _Tp* src2, size_t total, int cn, int normType, doub
     {
         if( !mask )
             for( i = 0; i < total; i++ )
-                result = std::max(result, (double)std::abs(src1[i] - src2[i]));
+                result = std::max(result, std::abs((double)src1[i] - (double)src2[i]));
         else
             for( int c = 0; c < cn; c++ )
             {
                 for( i = 0; i < total; i++ )
                     if( mask[i] )
-                        result = std::max(result, (double)std::abs(src1[i*cn + c] - src2[i*cn + c]));
+                        result = std::max(result, std::abs((double)src1[i*cn + c] - (double)src2[i*cn + c]));
             }
     }
     else if( normType == NORM_L1 )
     {
         if( !mask )
             for( i = 0; i < total; i++ )
-                result += std::abs(src1[i] - src2[i]);
+                result += std::abs((double)src1[i] - (double)src2[i]);
         else
             for( int c = 0; c < cn; c++ )
             {
                 for( i = 0; i < total; i++ )
                     if( mask[i] )
-                        result += std::abs(src1[i*cn + c] - src2[i*cn + c]);
+                        result += std::abs((double)src1[i*cn + c] - (double)src2[i*cn + c]);
             }
     }
     else
@@ -1320,7 +1352,7 @@ norm_(const _Tp* src1, const _Tp* src2, size_t total, int cn, int normType, doub
         if( !mask )
             for( i = 0; i < total; i++ )
             {
-                double v = src1[i] - src2[i];
+                double v = (double)src1[i] - (double)src2[i];
                 result += v*v;
             }
         else
@@ -1329,11 +1361,82 @@ norm_(const _Tp* src1, const _Tp* src2, size_t total, int cn, int normType, doub
                 for( i = 0; i < total; i++ )
                     if( mask[i] )
                     {
-                        double v = src1[i*cn + c] - src2[i*cn + c];
+                        double v = (double)src1[i*cn + c] - (double)src2[i*cn + c];
                         result += v*v;
                     }
             }
     }
+    return result;
+}
+
+template<typename _Tp, typename _IntTp=_Tp> static double
+norm_flt_(const _Tp* src1, const _Tp* src2, size_t total, int cn, int normType, double startval, const uchar* mask)
+{
+    size_t i;
+    double result = startval;
+    const _IntTp* isrc1 = reinterpret_cast<const _IntTp*>(src1);
+    const _IntTp* isrc2 = reinterpret_cast<const _IntTp*>(src2);
+    if( !mask )
+        total *= cn;
+
+    if( normType == NORM_INF )
+    {
+        if( !mask )
+            for( i = 0; i < total; i++ )
+            {
+                if (isrc1[i] != isrc2[i])
+                    result = std::max(result, std::abs((double)src1[i] - (double)src2[i]));
+            }
+        else
+            for( int c = 0; c < cn; c++ )
+            {
+                for( i = 0; i < total; i++ )
+                    if( mask[i] && isrc1[i*cn + c] != isrc2[i*cn + c] )
+                        result = std::max(result, std::abs((double)src1[i*cn + c] - (double)src2[i*cn + c]));
+            }
+    }
+    else if( normType == NORM_L1 )
+    {
+        if( !mask )
+            for( i = 0; i < total; i++ )
+            {
+                if (isrc1[i] != isrc2[i])
+                    result += std::abs((double)src1[i] - (double)src2[i]);
+            }
+        else
+            for( int c = 0; c < cn; c++ )
+            {
+                for( i = 0; i < total; i++ )
+                    if( mask[i] && isrc1[i*cn + c] != isrc2[i*cn + c] )
+                        result += std::abs((double)src1[i*cn + c] - (double)src2[i*cn + c]);
+            }
+    }
+    else if( normType == NORM_L2 )
+    {
+        if( !mask )
+            for( i = 0; i < total; i++ )
+            {
+                if (isrc1[i] != isrc2[i]) {
+                    double v = (double)src1[i] - (double)src2[i];
+                    result += v*v;
+                }
+            }
+        else
+            for( int c = 0; c < cn; c++ )
+            {
+                for( i = 0; i < total; i++ )
+                    if( mask[i] && isrc1[i*cn + c] != isrc2[i*cn + c] )
+                    {
+                        double v = (double)src1[i*cn + c] - (double)src2[i*cn + c];
+                        result += v*v;
+                    }
+            }
+    }
+    else
+    {
+        CV_Error(Error::StsBadArg, "Unexpected normType value in test");
+    }
+
     return result;
 }
 
@@ -1375,7 +1478,7 @@ double norm(InputArray _src, int normType, InputArray _mask)
     int normType0 = normType;
     normType = normType == NORM_L2SQR ? NORM_L2 : normType;
 
-    CV_Assert( mask.empty() || (src.size == mask.size && mask.type() == CV_8U) );
+    CV_Assert( mask.empty() || (src.size == mask.size && (mask.type() == CV_8U || mask.type() == CV_Bool)) );
     CV_Assert( normType == NORM_INF || normType == NORM_L1 || normType == NORM_L2 );
 
     const Mat *arrays[]={&src, &mask, 0};
@@ -1394,6 +1497,9 @@ double norm(InputArray _src, int normType, InputArray _mask)
 
         switch( depth )
         {
+        case CV_Bool:
+            result = norm_((const bool*)sptr, total, cn, normType, result, mptr);
+            break;
         case CV_8U:
             result = norm_((const uchar*)sptr, total, cn, normType, result, mptr);
             break;
@@ -1406,14 +1512,29 @@ double norm(InputArray _src, int normType, InputArray _mask)
         case CV_16S:
             result = norm_((const short*)sptr, total, cn, normType, result, mptr);
             break;
+        case CV_32U:
+            result = norm_((const unsigned*)sptr, total, cn, normType, result, mptr);
+            break;
         case CV_32S:
             result = norm_((const int*)sptr, total, cn, normType, result, mptr);
+            break;
+        case CV_64U:
+            result = norm_((const uint64*)sptr, total, cn, normType, result, mptr);
+            break;
+        case CV_64S:
+            result = norm_((const int64*)sptr, total, cn, normType, result, mptr);
             break;
         case CV_32F:
             result = norm_((const float*)sptr, total, cn, normType, result, mptr);
             break;
         case CV_64F:
             result = norm_((const double*)sptr, total, cn, normType, result, mptr);
+            break;
+        case CV_16F:
+            result = norm_((const cv::hfloat*)sptr, total, cn, normType, result, mptr);
+            break;
+        case CV_16BF:
+            result = norm_((const cv::bfloat*)sptr, total, cn, normType, result, mptr);
             break;
         default:
             CV_Error(Error::StsUnsupportedFormat, "");
@@ -1428,13 +1549,6 @@ double norm(InputArray _src, int normType, InputArray _mask)
 double norm(InputArray _src1, InputArray _src2, int normType, InputArray _mask)
 {
     Mat src1 = _src1.getMat(), src2 = _src2.getMat(), mask = _mask.getMat();
-    if( src1.depth() == CV_16F || src1.depth() == CV_16BF )
-    {
-        Mat src1_32f, src2_32f;
-        src1.convertTo(src1_32f, CV_32F);
-        src2.convertTo(src2_32f, CV_32F);
-        return cvtest::norm(src1_32f, src2_32f, normType, _mask);
-    }
 
     bool isRelative = (normType & NORM_RELATIVE) != 0;
     normType &= ~NORM_RELATIVE;
@@ -1465,8 +1579,14 @@ double norm(InputArray _src1, InputArray _src2, int normType, InputArray _mask)
     normType = normType == NORM_L2SQR ? NORM_L2 : normType;
 
     CV_CheckTypeEQ(src1.type(), src2.type(), "");
-    CV_Assert(src1.size == src2.size);
-    CV_Assert( mask.empty() || (src1.size == mask.size && mask.type() == CV_8U) );
+    MatShape shape1 = src1.shape();
+    MatShape shape2 = src2.shape();
+    if (shape1 != shape2) {
+        printf("shape1: %s\n", shape1.str().c_str());
+        printf("shape2: %s\n", shape2.str().c_str());
+        CV_Assert(shape1 == shape2 && "shapes of compared arrays must be the same");
+    }
+    CV_Assert( mask.empty() || (shape1 == mask.shape() && (mask.type() == CV_8U || mask.type() == CV_Bool)) );
     CV_Assert( normType == NORM_INF || normType == NORM_L1 || normType == NORM_L2 );
     const Mat *arrays[]={&src1, &src2, &mask, 0};
     Mat planes[3];
@@ -1485,6 +1605,9 @@ double norm(InputArray _src1, InputArray _src2, int normType, InputArray _mask)
 
         switch( depth )
         {
+        case CV_Bool:
+            result = norm_((const bool*)sptr1, (const bool*)sptr2, total, cn, normType, result, mptr);
+            break;
         case CV_8U:
             result = norm_((const uchar*)sptr1, (const uchar*)sptr2, total, cn, normType, result, mptr);
             break;
@@ -1497,14 +1620,29 @@ double norm(InputArray _src1, InputArray _src2, int normType, InputArray _mask)
         case CV_16S:
             result = norm_((const short*)sptr1, (const short*)sptr2, total, cn, normType, result, mptr);
             break;
+        case CV_32U:
+            result = norm_((const unsigned*)sptr1, (const unsigned*)sptr2, total, cn, normType, result, mptr);
+            break;
         case CV_32S:
             result = norm_((const int*)sptr1, (const int*)sptr2, total, cn, normType, result, mptr);
             break;
+        case CV_64U:
+            result = norm_((const uint64*)sptr1, (const uint64*)sptr2, total, cn, normType, result, mptr);
+            break;
+        case CV_64S:
+            result = norm_((const int64*)sptr1, (const int64*)sptr2, total, cn, normType, result, mptr);
+            break;
         case CV_32F:
-            result = norm_((const float*)sptr1, (const float*)sptr2, total, cn, normType, result, mptr);
+            result = norm_flt_<float, int>((const float*)sptr1, (const float*)sptr2, total, cn, normType, result, mptr);
             break;
         case CV_64F:
-            result = norm_((const double*)sptr1, (const double*)sptr2, total, cn, normType, result, mptr);
+            result = norm_flt_<double, int64>((const double*)sptr1, (const double*)sptr2, total, cn, normType, result, mptr);
+            break;
+        case CV_16F:
+            result = norm_flt_<cv::hfloat, short>((const cv::hfloat*)sptr1, (const cv::hfloat*)sptr2, total, cn, normType, result, mptr);
+            break;
+        case CV_16BF:
+            result = norm_flt_<cv::bfloat, short>((const cv::bfloat*)sptr1, (const cv::bfloat*)sptr2, total, cn, normType, result, mptr);
             break;
         default:
             CV_Error(Error::StsUnsupportedFormat, "");
@@ -1632,7 +1770,7 @@ void logicOp( const Mat& src1, const Mat& src2, Mat& dst, char op )
 {
     CV_Assert( op == '&' || op == '|' || op == '^' );
     CV_Assert( src1.type() == src2.type() && src1.size == src2.size );
-    dst.create( src1.dims, &src1.size[0], src1.type() );
+    dst.create( src1.size, src1.type() );
     const Mat *arrays[]={&src1, &src2, &dst, 0};
     Mat planes[3];
 
@@ -1654,7 +1792,7 @@ void logicOp( const Mat& src1, const Mat& src2, Mat& dst, char op )
 void logicOp(const Mat& src, const Scalar& s, Mat& dst, char op)
 {
     CV_Assert( op == '&' || op == '|' || op == '^' || op == '~' );
-    dst.create( src.dims, &src.size[0], src.type() );
+    dst.create( src.size, src.type() );
     const Mat *arrays[]={&src, &dst, 0};
     Mat planes[2];
 
@@ -1674,7 +1812,7 @@ void logicOp(const Mat& src, const Scalar& s, Mat& dst, char op)
 }
 
 
-template<typename _Tp> static void
+template<typename _Tp, typename _WTp> static void
 compare_(const _Tp* src1, const _Tp* src2, uchar* dst, size_t total, int cmpop)
 {
     size_t i;
@@ -1682,27 +1820,27 @@ compare_(const _Tp* src1, const _Tp* src2, uchar* dst, size_t total, int cmpop)
     {
     case CMP_LT:
         for( i = 0; i < total; i++ )
-            dst[i] = src1[i] < src2[i] ? 255 : 0;
+            dst[i] = (_WTp)src1[i] < (_WTp)src2[i] ? 255 : 0;
         break;
     case CMP_LE:
         for( i = 0; i < total; i++ )
-            dst[i] = src1[i] <= src2[i] ? 255 : 0;
+            dst[i] = (_WTp)src1[i] <= (_WTp)src2[i] ? 255 : 0;
         break;
     case CMP_EQ:
         for( i = 0; i < total; i++ )
-            dst[i] = src1[i] == src2[i] ? 255 : 0;
+            dst[i] = (_WTp)src1[i] == (_WTp)src2[i] ? 255 : 0;
         break;
     case CMP_NE:
         for( i = 0; i < total; i++ )
-            dst[i] = src1[i] != src2[i] ? 255 : 0;
+            dst[i] = (_WTp)src1[i] != (_WTp)src2[i] ? 255 : 0;
         break;
     case CMP_GE:
         for( i = 0; i < total; i++ )
-            dst[i] = src1[i] >= src2[i] ? 255 : 0;
+            dst[i] = (_WTp)src1[i] >= (_WTp)src2[i] ? 255 : 0;
         break;
     case CMP_GT:
         for( i = 0; i < total; i++ )
-            dst[i] = src1[i] > src2[i] ? 255 : 0;
+            dst[i] = (_WTp)src1[i] > (_WTp)src2[i] ? 255 : 0;
         break;
     default:
         CV_Error(Error::StsBadArg, "Unknown comparison operation");
@@ -1718,27 +1856,27 @@ compareS_(const _Tp* src1, _WTp value, uchar* dst, size_t total, int cmpop)
     {
     case CMP_LT:
         for( i = 0; i < total; i++ )
-            dst[i] = src1[i] < value ? 255 : 0;
+            dst[i] = (_WTp)src1[i] < (_WTp)value ? 255 : 0;
         break;
     case CMP_LE:
         for( i = 0; i < total; i++ )
-            dst[i] = src1[i] <= value ? 255 : 0;
+            dst[i] = (_WTp)src1[i] <= (_WTp)value ? 255 : 0;
         break;
     case CMP_EQ:
         for( i = 0; i < total; i++ )
-            dst[i] = src1[i] == value ? 255 : 0;
+            dst[i] = (_WTp)src1[i] == (_WTp)value ? 255 : 0;
         break;
     case CMP_NE:
         for( i = 0; i < total; i++ )
-            dst[i] = src1[i] != value ? 255 : 0;
+            dst[i] = (_WTp)src1[i] != (_WTp)value ? 255 : 0;
         break;
     case CMP_GE:
         for( i = 0; i < total; i++ )
-            dst[i] = src1[i] >= value ? 255 : 0;
+            dst[i] = (_WTp)src1[i] >= (_WTp)value ? 255 : 0;
         break;
     case CMP_GT:
         for( i = 0; i < total; i++ )
-            dst[i] = src1[i] > value ? 255 : 0;
+            dst[i] = (_WTp)src1[i] > (_WTp)value ? 255 : 0;
         break;
     default:
         CV_Error(Error::StsBadArg, "Unknown comparison operation");
@@ -1749,7 +1887,7 @@ compareS_(const _Tp* src1, _WTp value, uchar* dst, size_t total, int cmpop)
 void compare(const Mat& src1, const Mat& src2, Mat& dst, int cmpop)
 {
     CV_Assert( src1.type() == src2.type() && src1.channels() == 1 && src1.size == src2.size );
-    dst.create( src1.dims, &src1.size[0], CV_8U );
+    dst.create( src1.size, CV_8U );
     const Mat *arrays[]={&src1, &src2, &dst, 0};
     Mat planes[3];
 
@@ -1767,25 +1905,40 @@ void compare(const Mat& src1, const Mat& src2, Mat& dst, int cmpop)
         switch( depth )
         {
         case CV_8U:
-            compare_((const uchar*)sptr1, (const uchar*)sptr2, dptr, total, cmpop);
+            compare_<uchar, int>((const uchar*)sptr1, (const uchar*)sptr2, dptr, total, cmpop);
             break;
         case CV_8S:
-            compare_((const schar*)sptr1, (const schar*)sptr2, dptr, total, cmpop);
+            compare_<schar, int>((const schar*)sptr1, (const schar*)sptr2, dptr, total, cmpop);
             break;
         case CV_16U:
-            compare_((const ushort*)sptr1, (const ushort*)sptr2, dptr, total, cmpop);
+            compare_<ushort, int>((const ushort*)sptr1, (const ushort*)sptr2, dptr, total, cmpop);
             break;
         case CV_16S:
-            compare_((const short*)sptr1, (const short*)sptr2, dptr, total, cmpop);
+            compare_<short, int>((const short*)sptr1, (const short*)sptr2, dptr, total, cmpop);
+            break;
+        case CV_32U:
+            compare_<unsigned, unsigned>((const unsigned*)sptr1, (const unsigned*)sptr2, dptr, total, cmpop);
             break;
         case CV_32S:
-            compare_((const int*)sptr1, (const int*)sptr2, dptr, total, cmpop);
+            compare_<int, int>((const int*)sptr1, (const int*)sptr2, dptr, total, cmpop);
+            break;
+        case CV_64U:
+            compare_<uint64, uint64>((const uint64*)sptr1, (const uint64*)sptr2, dptr, total, cmpop);
+            break;
+        case CV_64S:
+            compare_<int64, int64>((const int64*)sptr1, (const int64*)sptr2, dptr, total, cmpop);
             break;
         case CV_32F:
-            compare_((const float*)sptr1, (const float*)sptr2, dptr, total, cmpop);
+            compare_<float, float>((const float*)sptr1, (const float*)sptr2, dptr, total, cmpop);
             break;
         case CV_64F:
-            compare_((const double*)sptr1, (const double*)sptr2, dptr, total, cmpop);
+            compare_<double, double>((const double*)sptr1, (const double*)sptr2, dptr, total, cmpop);
+            break;
+        case CV_16F:
+            compare_<cv::hfloat, float>((const cv::hfloat*)sptr1, (const cv::hfloat*)sptr2, dptr, total, cmpop);
+            break;
+        case CV_16BF:
+            compare_<cv::bfloat, float>((const cv::bfloat*)sptr1, (const cv::bfloat*)sptr2, dptr, total, cmpop);
             break;
         default:
             CV_Error(Error::StsUnsupportedFormat, "");
@@ -1796,7 +1949,7 @@ void compare(const Mat& src1, const Mat& src2, Mat& dst, int cmpop)
 void compare(const Mat& src, double value, Mat& dst, int cmpop)
 {
     CV_Assert( src.channels() == 1 );
-    dst.create( src.dims, &src.size[0], CV_8U );
+    dst.create( src.size, CV_8U );
     const Mat *arrays[]={&src, &dst, 0};
     Mat planes[2];
 
@@ -1825,14 +1978,29 @@ void compare(const Mat& src, double value, Mat& dst, int cmpop)
         case CV_16S:
             compareS_((const short*)sptr, ivalue, dptr, total, cmpop);
             break;
+        case CV_32U:
+            compareS_((const unsigned*)sptr, value, dptr, total, cmpop);
+            break;
         case CV_32S:
             compareS_((const int*)sptr, ivalue, dptr, total, cmpop);
             break;
+        case CV_64U:
+            compareS_((const uint64*)sptr, value, dptr, total, cmpop);
+            break;
+        case CV_64S:
+            compareS_((const int64*)sptr, value, dptr, total, cmpop);
+            break;
         case CV_32F:
-            compareS_((const float*)sptr, value, dptr, total, cmpop);
+            compareS_((const float*)sptr, (float)value, dptr, total, cmpop);
             break;
         case CV_64F:
             compareS_((const double*)sptr, value, dptr, total, cmpop);
+            break;
+        case CV_16F:
+            compareS_((const cv::hfloat*)sptr, (float)value, dptr, total, cmpop);
+            break;
+        case CV_16BF:
+            compareS_((const cv::bfloat*)sptr, (float)value, dptr, total, cmpop);
             break;
         default:
             CV_Error(Error::StsUnsupportedFormat, "");
@@ -2085,14 +2253,6 @@ int cmpEps( const Mat& arr_, const Mat& refarr_, double* _realmaxdiff,
 {
     Mat arr = arr_, refarr = refarr_;
     CV_Assert( arr.type() == refarr.type() && arr.size == refarr.size );
-    if( arr.depth() == CV_16F || arr.depth() == CV_16BF )
-    {
-        Mat arr32f, refarr32f;
-        arr.convertTo(arr32f, CV_32F);
-        refarr.convertTo(refarr32f, CV_32F);
-        arr = arr32f;
-        refarr = refarr32f;
-    }
 
     int depth = refarr.depth();
     int ilevel = depth <= CV_32S || depth == CV_32U || depth == CV_64U || depth == CV_64S ? cvFloor(success_err_level) : 0;
@@ -2148,6 +2308,68 @@ int cmpEps( const Mat& arr_, const Mat& refarr_, double* _realmaxdiff,
             break;
         case CV_64U:
             realmaxdiff = cmpUlpsInt_((const uint64_t*)sptr1, (const uint64_t*)sptr2, total, ilevel, startidx, idx);
+            break;
+        case CV_16F:
+            for( j = 0; j < total; j++ )
+            {
+                if( ((short*)sptr1)[j] == ((short*)sptr2)[j] )
+                    continue;
+                double a_val = (float)((cv::hfloat*)sptr1)[j];
+                double b_val = (float)((cv::hfloat*)sptr2)[j];
+                double threshold;
+                if( cvIsNaN(a_val) || cvIsInf(a_val) )
+                {
+                    result = CMP_EPS_INVALID_TEST_DATA;
+                    idx = startidx + j;
+                    break;
+                }
+                if( cvIsNaN(b_val) || cvIsInf(b_val) )
+                {
+                    result = CMP_EPS_INVALID_REF_DATA;
+                    idx = startidx + j;
+                    break;
+                }
+                a_val = fabs(a_val - b_val);
+                threshold = element_wise_relative_error ? fabs(b_val) + 1 : maxval;
+                if( a_val > threshold*success_err_level )
+                {
+                    realmaxdiff = a_val/threshold;
+                    if( idx == 0 )
+                        idx = startidx + j;
+                    break;
+                }
+            }
+            break;
+        case CV_16BF:
+            for( j = 0; j < total; j++ )
+            {
+                if( ((short*)sptr1)[j] == ((short*)sptr2)[j] )
+                    continue;
+                double a_val = (float)((cv::bfloat*)sptr1)[j];
+                double b_val = (float)((cv::bfloat*)sptr2)[j];
+                double threshold;
+                if( cvIsNaN(a_val) || cvIsInf(a_val) )
+                {
+                    result = CMP_EPS_INVALID_TEST_DATA;
+                    idx = startidx + j;
+                    break;
+                }
+                if( cvIsNaN(b_val) || cvIsInf(b_val) )
+                {
+                    result = CMP_EPS_INVALID_REF_DATA;
+                    idx = startidx + j;
+                    break;
+                }
+                a_val = fabs(a_val - b_val);
+                threshold = element_wise_relative_error ? fabs(b_val) + 1 : maxval;
+                if( a_val > threshold*success_err_level )
+                {
+                    realmaxdiff = a_val/threshold;
+                    if( idx == 0 )
+                        idx = startidx + j;
+                    break;
+                }
+            }
             break;
         case CV_32F:
             for( j = 0; j < total; j++ )
@@ -2514,9 +2736,20 @@ minmax_(const _Tp* src1, const _Tp* src2, _Tp* dst, size_t total, char op)
             dst[i] = std::min(src1[i], src2[i]);
 }
 
+template<typename _Tp> static void
+minmax16f_(const _Tp* src1, const _Tp* src2, _Tp* dst, size_t total, char op)
+{
+    if( op == 'M' )
+        for( size_t i = 0; i < total; i++ )
+            dst[i] = _Tp(std::max((float)src1[i], (float)src2[i]));
+    else
+        for( size_t i = 0; i < total; i++ )
+            dst[i] = _Tp(std::min((float)src1[i], (float)src2[i]));
+}
+
 static void minmax(const Mat& src1, const Mat& src2, Mat& dst, char op)
 {
-    dst.create(src1.dims, src1.size, src1.type());
+    dst.create(src1.size, src1.type());
     CV_Assert( src1.type() == src2.type() && src1.size == src2.size );
     const Mat *arrays[]={&src1, &src2, &dst, 0};
     Mat planes[3];
@@ -2545,6 +2778,9 @@ static void minmax(const Mat& src1, const Mat& src2, Mat& dst, char op)
         case CV_16S:
             minmax_((const short*)sptr1, (const short*)sptr2, (short*)dptr, total, op);
             break;
+        case CV_32U:
+            minmax_((const unsigned*)sptr1, (const unsigned*)sptr2, (unsigned*)dptr, total, op);
+            break;
         case CV_32S:
             minmax_((const int*)sptr1, (const int*)sptr2, (int*)dptr, total, op);
             break;
@@ -2553,6 +2789,18 @@ static void minmax(const Mat& src1, const Mat& src2, Mat& dst, char op)
             break;
         case CV_64F:
             minmax_((const double*)sptr1, (const double*)sptr2, (double*)dptr, total, op);
+            break;
+        case CV_64U:
+            minmax_((const uint64*)sptr1, (const uint64*)sptr2, (uint64*)dptr, total, op);
+            break;
+        case CV_64S:
+            minmax_((const int64*)sptr1, (const int64*)sptr2, (int64*)dptr, total, op);
+            break;
+        case CV_16F:
+            minmax16f_((const cv::hfloat*)sptr1, (const cv::hfloat*)sptr2, (cv::hfloat*)dptr, total, op);
+            break;
+        case CV_16BF:
+            minmax16f_((const cv::bfloat*)sptr1, (const cv::bfloat*)sptr2, (cv::bfloat*)dptr, total, op);
             break;
         default:
             CV_Error(Error::StsUnsupportedFormat, "");
@@ -2583,9 +2831,21 @@ minmax_(const _Tp* src1, _Tp val, _Tp* dst, size_t total, char op)
             dst[i] = std::min(src1[i], val);
 }
 
+template<typename _Tp> static void
+minmax_16f(const _Tp* src1, _Tp val_, _Tp* dst, size_t total, char op)
+{
+    float val = (float)val_;
+    if( op == 'M' )
+        for( size_t i = 0; i < total; i++ )
+            dst[i] = _Tp(std::max((float)src1[i], val));
+    else
+        for( size_t i = 0; i < total; i++ )
+            dst[i] = _Tp(std::min((float)src1[i], val));
+}
+
 static void minmax(const Mat& src1, double val, Mat& dst, char op)
 {
-    dst.create(src1.dims, src1.size, src1.type());
+    dst.create(src1.size, src1.type());
     const Mat *arrays[]={&src1, &dst, 0};
     Mat planes[2];
 
@@ -2602,6 +2862,7 @@ static void minmax(const Mat& src1, double val, Mat& dst, char op)
         switch( depth )
         {
         case CV_8U:
+        case CV_Bool:
             minmax_((const uchar*)sptr1, saturate_cast<uchar>(ival), (uchar*)dptr, total, op);
             break;
         case CV_8S:
@@ -2613,14 +2874,29 @@ static void minmax(const Mat& src1, double val, Mat& dst, char op)
         case CV_16S:
             minmax_((const short*)sptr1, saturate_cast<short>(ival), (short*)dptr, total, op);
             break;
+        case CV_32U:
+            minmax_((const unsigned*)sptr1, saturate_cast<unsigned>(val), (unsigned*)dptr, total, op);
+            break;
         case CV_32S:
-            minmax_((const int*)sptr1, saturate_cast<int>(ival), (int*)dptr, total, op);
+            minmax_((const int*)sptr1, ival, (int*)dptr, total, op);
+            break;
+        case CV_64U:
+            minmax_((const uint64*)sptr1, saturate_cast<uint64>(val), (uint64*)dptr, total, op);
+            break;
+        case CV_64S:
+            minmax_((const int64*)sptr1, saturate_cast<int64>(val), (int64*)dptr, total, op);
             break;
         case CV_32F:
             minmax_((const float*)sptr1, saturate_cast<float>(val), (float*)dptr, total, op);
             break;
         case CV_64F:
             minmax_((const double*)sptr1, saturate_cast<double>(val), (double*)dptr, total, op);
+            break;
+        case CV_16F:
+            minmax_16f((const cv::hfloat*)sptr1, saturate_cast<cv::hfloat>(val), (cv::hfloat*)dptr, total, op);
+            break;
+        case CV_16BF:
+            minmax_16f((const cv::bfloat*)sptr1, saturate_cast<cv::bfloat>(val), (cv::bfloat*)dptr, total, op);
             break;
         default:
             CV_Error(Error::StsUnsupportedFormat, "");
@@ -2640,30 +2916,45 @@ void max(const Mat& src1, double val, Mat& dst)
 }
 
 
+template<typename SrcType, typename DstType> static void
+muldiv_(const SrcType* src1, const SrcType* src2, DstType* dst, size_t total, double scale, char op)
+{
+    for( size_t i = 0; i < total; i++ )
+    {
+        double m1 = src1 ? (double)src1[i] : 1.0;
+        double m2 = src2 ? (double)src2[i] : 1.0;
+        if (op == '/')
+        {
+            m2 = abs(m2) > FLT_EPSILON ? (1.0 / m2) : 0;
+        }
+        dst[i] = saturate_cast<DstType>(scale * m1 * m2);
+    }
+}
+
 template<typename _Tp> static void
-muldiv_(const _Tp* src1, const _Tp* src2, _Tp* dst, size_t total, double scale, char op)
+muldiv_16f(const _Tp* src1, const _Tp* src2, _Tp* dst, size_t total, double scale, char op)
 {
     if( op == '*' )
         for( size_t i = 0; i < total; i++ )
             dst[i] = saturate_cast<_Tp>((scale*src1[i])*src2[i]);
     else if( src1 )
         for( size_t i = 0; i < total; i++ )
-            dst[i] = src2[i] ? saturate_cast<_Tp>((scale*src1[i])/src2[i]) : 0;
+            dst[i] = saturate_cast<_Tp>((scale*(float)src1[i])/(float)src2[i]);
     else
         for( size_t i = 0; i < total; i++ )
-            dst[i] = src2[i] ? saturate_cast<_Tp>(scale/src2[i]) : 0;
+            dst[i] = saturate_cast<_Tp>(scale/(float)src2[i]);
 }
 
-static void muldiv(const Mat& src1, const Mat& src2, Mat& dst, double scale, char op)
+static void muldiv(const Mat& src1, const Mat& src2, Mat& dst, int ctype, double scale, char op)
 {
-    dst.create(src2.dims, src2.size, src2.type());
+    dst.create(src2.size, (ctype >= 0 ? ctype : src2.type()));
     CV_Assert( src1.empty() || (src1.type() == src2.type() && src1.size == src2.size) );
     const Mat *arrays[]={&src1, &src2, &dst, 0};
     Mat planes[3];
 
     NAryMatIterator it(arrays, planes);
     size_t total = planes[1].total()*planes[1].channels();
-    size_t i, nplanes = it.nplanes, depth = src2.depth();
+    size_t i, nplanes = it.nplanes, srcDepth = src2.depth(), dstDepth = dst.depth();
 
     for( i = 0; i < nplanes; i++, ++it )
     {
@@ -2671,48 +2962,89 @@ static void muldiv(const Mat& src1, const Mat& src2, Mat& dst, double scale, cha
         const uchar* sptr2 = planes[1].ptr();
         uchar* dptr = planes[2].ptr();
 
-        switch( depth )
+        if (srcDepth == dstDepth)
         {
-        case CV_8U:
-            muldiv_((const uchar*)sptr1, (const uchar*)sptr2, (uchar*)dptr, total, scale, op);
-            break;
-        case CV_8S:
-            muldiv_((const schar*)sptr1, (const schar*)sptr2, (schar*)dptr, total, scale, op);
-            break;
-        case CV_16U:
-            muldiv_((const ushort*)sptr1, (const ushort*)sptr2, (ushort*)dptr, total, scale, op);
-            break;
-        case CV_16S:
-            muldiv_((const short*)sptr1, (const short*)sptr2, (short*)dptr, total, scale, op);
-            break;
-        case CV_32S:
-            muldiv_((const int*)sptr1, (const int*)sptr2, (int*)dptr, total, scale, op);
-            break;
-        case CV_32F:
-            muldiv_((const float*)sptr1, (const float*)sptr2, (float*)dptr, total, scale, op);
-            break;
-        case CV_64F:
-            muldiv_((const double*)sptr1, (const double*)sptr2, (double*)dptr, total, scale, op);
-            break;
-        default:
-            CV_Error(Error::StsUnsupportedFormat, "");
+            switch( srcDepth )
+            {
+            case CV_8U:
+                muldiv_((const uchar*)sptr1, (const uchar*)sptr2, (uchar*)dptr, total, scale, op);
+                break;
+            case CV_8S:
+                muldiv_((const schar*)sptr1, (const schar*)sptr2, (schar*)dptr, total, scale, op);
+                break;
+            case CV_16U:
+                muldiv_((const ushort*)sptr1, (const ushort*)sptr2, (ushort*)dptr, total, scale, op);
+                break;
+            case CV_16S:
+                muldiv_((const short*)sptr1, (const short*)sptr2, (short*)dptr, total, scale, op);
+                break;
+            case CV_32U:
+                muldiv_((const unsigned*)sptr1, (const unsigned*)sptr2, (unsigned*)dptr, total, scale, op);
+                break;
+            case CV_32S:
+                muldiv_((const int*)sptr1, (const int*)sptr2, (int*)dptr, total, scale, op);
+                break;
+            case CV_64U:
+                muldiv_((const uint64*)sptr1, (const uint64*)sptr2, (uint64*)dptr, total, scale, op);
+                break;
+            case CV_64S:
+                muldiv_((const int64*)sptr1, (const int64*)sptr2, (int64*)dptr, total, scale, op);
+                break;
+            case CV_32F:
+                muldiv_((const float*)sptr1, (const float*)sptr2, (float*)dptr, total, scale, op);
+                break;
+            case CV_64F:
+                muldiv_((const double*)sptr1, (const double*)sptr2, (double*)dptr, total, scale, op);
+                break;
+            case CV_16F:
+                muldiv_16f((const cv::hfloat*)sptr1, (const cv::hfloat*)sptr2, (cv::hfloat*)dptr, total, scale, op);
+                break;
+            case CV_16BF:
+                muldiv_16f((const cv::bfloat*)sptr1, (const cv::bfloat*)sptr2, (cv::bfloat*)dptr, total, scale, op);
+                break;
+            default:
+                CV_Error(Error::StsUnsupportedFormat, "");
+            }
+        }
+        else
+        {
+            if (srcDepth == CV_8U && dstDepth == CV_16U)
+            {
+                muldiv_((const uchar*)sptr1, (const uchar*)sptr2, (ushort*)dptr, total, scale, op);
+            }
+            else if (srcDepth == CV_8S && dstDepth == CV_16S)
+            {
+                muldiv_((const schar*)sptr1, (const schar*)sptr2, (short*)dptr, total, scale, op);
+            }
+            else if (srcDepth == CV_8U && dstDepth == CV_32F)
+            {
+                muldiv_((const uchar*)sptr1, (const uchar*)sptr2, (float*)dptr, total, scale, op);
+            }
+            else if (srcDepth == CV_8S && dstDepth == CV_32F)
+            {
+                muldiv_((const schar*)sptr1, (const schar*)sptr2, (float*)dptr, total, scale, op);
+            }
+            else
+            {
+                CV_Error(Error::StsUnsupportedFormat, "This format combination is not supported yet");
+            }
         }
     }
 }
 
 
-void multiply(const Mat& src1, const Mat& src2, Mat& dst, double scale)
+void multiply(const Mat& src1, const Mat& src2, Mat& dst, double scale, int ctype)
 {
-    muldiv( src1, src2, dst, scale, '*' );
+    muldiv( src1, src2, dst, ctype, scale, '*' );
 }
 
-void divide(const Mat& src1, const Mat& src2, Mat& dst, double scale)
+void divide(const Mat& src1, const Mat& src2, Mat& dst, double scale, int ctype)
 {
-    muldiv( src1, src2, dst, scale, '/' );
+    muldiv( src1, src2, dst, ctype, scale, '/' );
 }
 
 
-template<typename _Tp> static void
+template<typename _Tp, typename _WTp=_Tp> static void
 mean_(const _Tp* src, const uchar* mask, size_t total, int cn, Scalar& sum, int& nz)
 {
     if( !mask )
@@ -2722,7 +3054,7 @@ mean_(const _Tp* src, const uchar* mask, size_t total, int cn, Scalar& sum, int&
         for( size_t i = 0; i < total; i += cn )
         {
             for( int c = 0; c < cn; c++ )
-                sum[c] += src[i + c];
+                sum[c] += (_WTp)src[i + c];
         }
     }
     else
@@ -2732,14 +3064,14 @@ mean_(const _Tp* src, const uchar* mask, size_t total, int cn, Scalar& sum, int&
             {
                 nz++;
                 for( int c = 0; c < cn; c++ )
-                    sum[c] += src[i*cn + c];
+                    sum[c] += (_WTp)src[i*cn + c];
             }
     }
 }
 
 Scalar mean(const Mat& src, const Mat& mask)
 {
-    CV_Assert(mask.empty() || (mask.type() == CV_8U && mask.size == src.size));
+    CV_Assert(mask.empty() || ((mask.type() == CV_8U || mask.type() == CV_Bool) && mask.size == src.size));
     Scalar sum;
     int nz = 0;
 
@@ -2770,14 +3102,29 @@ Scalar mean(const Mat& src, const Mat& mask)
         case CV_16S:
             mean_((const short*)sptr, mptr, total, cn, sum, nz);
             break;
+        case CV_32U:
+            mean_((const unsigned*)sptr, mptr, total, cn, sum, nz);
+            break;
         case CV_32S:
             mean_((const int*)sptr, mptr, total, cn, sum, nz);
+            break;
+        case CV_64U:
+            mean_((const uint64*)sptr, mptr, total, cn, sum, nz);
+            break;
+        case CV_64S:
+            mean_((const int64*)sptr, mptr, total, cn, sum, nz);
             break;
         case CV_32F:
             mean_((const float*)sptr, mptr, total, cn, sum, nz);
             break;
         case CV_64F:
             mean_((const double*)sptr, mptr, total, cn, sum, nz);
+            break;
+        case CV_16F:
+            mean_<cv::hfloat, float>((const cv::hfloat*)sptr, mptr, total, cn, sum, nz);
+            break;
+        case CV_16BF:
+            mean_<cv::bfloat, float>((const cv::bfloat*)sptr, mptr, total, cn, sum, nz);
             break;
         default:
             CV_Error(Error::StsUnsupportedFormat, "");
@@ -3043,14 +3390,14 @@ static void writeElems(std::ostream& out, const void* data, int nelems, int dept
     {
         std::streamsize pp = out.precision();
         out.precision(4);
-        writeElems<cv::float16_t, float>(out, data, nelems, starpos);
+        writeElems<cv::hfloat, float>(out, data, nelems, starpos);
         out.precision(pp);
     }
     else if(depth == CV_16BF)
     {
         std::streamsize pp = out.precision();
         out.precision(4);
-        writeElems<cv::bfloat16_t, float>(out, data, nelems, starpos);
+        writeElems<cv::bfloat, float>(out, data, nelems, starpos);
         out.precision(pp);
     }
     else if(depth == CV_32F)

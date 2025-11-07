@@ -16,13 +16,6 @@ if(NOT BUILD_EXAMPLES OR NOT OCV_DEPENDENCIES_FOUND OR OPENCV_SKIP_SAMPLES_BUILD
   return()
 endif()
 
-if(CMAKE_VERSION VERSION_LESS "3.5")
-  message(STATUS "SYCL samples require CMake 3.5+")
-  return()
-endif()
-
-cmake_policy(VERSION 3.5)
-
 find_package(SYCL QUIET)  # will oneAPI support this straightforward way?
 
 if(NOT SYCL_FOUND AND NOT OPENCV_SKIP_SAMPLES_SYCL_ONEDNN)
@@ -30,7 +23,7 @@ if(NOT SYCL_FOUND AND NOT OPENCV_SKIP_SAMPLES_SYCL_ONEDNN)
   if(NOT DEFINED DNNLROOT AND DEFINED ENV{DNNLROOT})
     set(DNNLROOT "$ENV{DNNLROOT}")
   endif()
-  # Some verions of called script violate CMake policy and may emit unrecoverable CMake errors
+  # Some versions of called script violate CMake policy and may emit unrecoverable CMake errors
   # Use OPENCV_SKIP_SAMPLES_SYCL=1 / OPENCV_SKIP_SAMPLES_SYCL_ONEDNN to bypass this
   find_package(dnnl CONFIG QUIET HINTS "${DNNLROOT}")
 endif()

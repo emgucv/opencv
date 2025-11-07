@@ -123,13 +123,13 @@ public:
     }
 };
 
-#if CV_SIMD128
 class SIMDBayerInterpolator_8u
 {
 public:
     int bayer2Gray(const uchar* bayer, int bayer_step, uchar* dst,
-                   int width, int bcoeff, int gcoeff, int rcoeff) const
+                   int width, int bcoeff, int gcoeff, int rcoeff)
     {
+#if CV_SIMD
 #if CV_NEON
         uint16x8_t masklo = vdupq_n_u16(255);
         const uchar* bayer_end = bayer + width;
@@ -177,41 +177,108 @@ public:
             vst1_u8(dst + 8, p.val[1]);
         }
 #else
-        v_uint16x8 _b2y = v_setall_u16((ushort)(rcoeff*2));
-        v_uint16x8 _g2y = v_setall_u16((ushort)(gcoeff*2));
-        v_uint16x8 _r2y = v_setall_u16((ushort)(bcoeff*2));
+        v_uint16 v255 = vx_setall_u16(255);
+        v_int16 v_descale = vx_setall_s16(static_cast<short>(1 << 14));
+        v_int16 dummy;
+        v_int16 cxrb;
+        v_int16 cxg2;
+        v_zip(vx_setall_s16(static_cast<short>(rcoeff)),
+              vx_setall_s16(static_cast<short>(bcoeff)),
+              cxrb,
+              dummy);
+        v_zip(vx_setall_s16(static_cast<short>(gcoeff)),
+              vx_setall_s16(static_cast<short>(2)),
+              cxg2,
+              dummy);
+
         const uchar* bayer_end = bayer + width;
 
-        for( ; bayer <= bayer_end - 18; bayer += 14, dst += 14 )
+        const int step = VTraits<v_uint8>::vlanes() - 2;
+        for (; bayer < bayer_end - step; bayer += step, dst += step)
         {
-            v_uint16x8 r0 = v_reinterpret_as_u16(v_load(bayer));
-            v_uint16x8 r1 = v_reinterpret_as_u16(v_load(bayer+bayer_step));
-            v_uint16x8 r2 = v_reinterpret_as_u16(v_load(bayer+bayer_step*2));
+            v_uint16 first_line = v_reinterpret_as_u16(vx_load(bayer));
+            v_uint16 second_line = v_reinterpret_as_u16(vx_load(bayer + bayer_step));
+            v_uint16 third_line = v_reinterpret_as_u16(vx_load(bayer + bayer_step * 2));
 
-            v_uint16x8 b1 = v_add(v_shr<7>(v_shl<8>(r0)), v_shr<7>(v_shl<8>(r2)));
-            v_uint16x8 b0 = v_add(v_rotate_right<1>(b1), b1);
-            b1 = v_shl<1>(v_rotate_right<1>(b1));
+            // bayer[0]
+            v_uint16 first_line0 = v_and(first_line, v255);
+            // bayer[bayer_step*2]
+            v_uint16 third_line0 = v_and(third_line, v255);
+            // bayer[0] + bayer[bayer_step*2]
+            v_uint16 first_third_line0 = v_add(first_line0, third_line0);
+            // bayer[2] + bayer[bayer_step*2+2]
+            v_uint16 first_third_line2 = v_rotate_right<1>(first_third_line0);
+            // bayer[0] + bayer[2] + bayer[bayer_step*2] + bayer[bayer_step*2+2]
+            v_int16 r0 = v_reinterpret_as_s16(v_add(first_third_line0, first_third_line2));
+            // (bayer[2] + bayer[bayer_step*2+2]) * 2
+            v_int16 r1 = v_reinterpret_as_s16(v_shl<1>(first_third_line2));
 
-            v_uint16x8 g0 = v_add(v_shr<7>(r0), v_shr<7>(r2));
-            v_uint16x8 g1 = v_shr<7>(v_shl<8>(r1));
-            g0 = v_add(g0, v_add(v_rotate_right<1>(g1), g1));
-            g1 = v_shl<2>(v_rotate_right<1>(g1));
+            // bayer[bayer_step+1]
+            v_uint16 second_line1 = v_shr<8>(second_line);
+            // bayer[bayer_step+1] * 4
+            v_int16 b0 = v_reinterpret_as_s16(v_shl<2>(second_line1));
+            // bayer[bayer_step+3]
+            v_uint16 second_line3 = v_rotate_right<1>(second_line1);
+            // bayer[bayer_step+1] + bayer[bayer_step+3]
+            v_uint16 second_line13 = v_add(second_line1, second_line3);
+            // (bayer[bayer_step+1] + bayer[bayer_step+3]) * 2
+            v_int16 b1 = v_reinterpret_as_s16(v_shl(second_line13, 1));
 
-            r0 = v_shr<8>(r1);
-            r1 = v_shl<2>(v_add(v_rotate_right<1>(r0), r0));
-            r0 = v_shl<3>(r0);
+            // bayer[1]
+            v_uint16 first_line1 = v_shr<8>(first_line);
+            // bayer[bayer_step]
+            v_uint16 second_line0 = v_and(second_line, v255);
+            // bayer[bayer_step+2]
+            v_uint16 second_line2 = v_rotate_right<1>(second_line0);
+            // bayer[bayer_step] + bayer[bayer_step+2]
+            v_uint16 second_line02 = v_add(second_line0, second_line2);
+            // bayer[bayer_step*2+1]
+            v_uint16 third_line1 = v_shr<8>(third_line);
+            // bayer[1] + bayer[bayer_step*2+1]
+            v_uint16 first_third_line1 = v_add(first_line1, third_line1);
+            // bayer[1] + bayer[bayer_step] + bayer[bayer_step+2] + bayer[bayer_step*2+1]
+            v_int16 g0 = v_reinterpret_as_s16(v_add(first_third_line1, second_line02));
+            // bayer[bayer_step+2] * 4
+            v_int16 g1 = v_reinterpret_as_s16(v_shl<2>(second_line2));
 
-            g0 = v_shr<2>(v_add(v_add(v_mul_hi(b0, _b2y), v_mul_hi(g0, _g2y)), v_mul_hi(r0, _r2y)));
-            g1 = v_shr<2>(v_add(v_add(v_mul_hi(b1, _b2y), v_mul_hi(g1, _g2y)), v_mul_hi(r1, _r2y)));
-            v_uint8x16 pack_lo, pack_hi;
-            v_zip(v_pack_u(v_reinterpret_as_s16(g0), v_reinterpret_as_s16(g0)),
-                  v_pack_u(v_reinterpret_as_s16(g1), v_reinterpret_as_s16(g1)),
-                  pack_lo, pack_hi);
-            v_store(dst, pack_lo);
+            v_int16 rb0;
+            v_int16 rb1;
+            v_int16 rb2;
+            v_int16 rb3;
+            v_zip(r0, b0, rb0, rb1);
+            v_zip(r1, b1, rb2, rb3);
+
+            v_int16 gd0;
+            v_int16 gd1;
+            v_int16 gd2;
+            v_int16 gd3;
+            v_zip(g0, v_descale, gd0, gd1);
+            v_zip(g1, v_descale, gd2, gd3);
+
+            v_int32 gray_even0 = v_shr<16>(v_add(v_dotprod(rb0, cxrb), v_dotprod(gd0, cxg2)));
+            v_int32 gray_even1 = v_shr<16>(v_add(v_dotprod(rb1, cxrb), v_dotprod(gd1, cxg2)));
+            v_int32 gray_odd0 = v_shr<16>(v_add(v_dotprod(rb2, cxrb), v_dotprod(gd2, cxg2)));
+            v_int32 gray_odd1 = v_shr<16>(v_add(v_dotprod(rb3, cxrb), v_dotprod(gd3, cxg2)));
+
+            v_int16 gray_even = v_pack(gray_even0, gray_even1);
+            v_int16 gray_odd = v_pack(gray_odd0, gray_odd1);
+
+            v_int16 gray_d0;
+            v_int16 gray_d1;
+            v_zip(gray_even, gray_odd, gray_d0, gray_d1);
+
+            v_uint8 gray = v_pack(v_reinterpret_as_u16(gray_d0), v_reinterpret_as_u16(gray_d1));
+
+            v_store(dst, gray);
         }
 #endif
 
-        return (int)(bayer - (bayer_end - width));
+        return static_cast<int>(bayer - (bayer_end - width));
+#else
+        CV_UNUSED(bayer); CV_UNUSED(bayer_step); CV_UNUSED(dst);
+        CV_UNUSED(width); CV_UNUSED(bcoeff); CV_UNUSED(gcoeff); CV_UNUSED(rcoeff);
+        return 0;
+#endif
     }
 
     int bayer2RGB(const uchar* bayer, int bayer_step, uchar* dst, int width, int blue) const
@@ -221,7 +288,7 @@ public:
          G R G R | G R G R | G R G R | G R G R
          B G B G | B G B G | B G B G | B G B G
          */
-
+#if CV_SIMD128
 #if CV_NEON
         uint16x8_t masklo = vdupq_n_u16(255);
         uint8x16x3_t pix;
@@ -344,6 +411,10 @@ public:
 #endif
 
         return (int)(bayer - (bayer_end - width));
+#else
+        CV_UNUSED(bayer); CV_UNUSED(bayer_step); CV_UNUSED(dst); CV_UNUSED(width); CV_UNUSED(blue);
+        return 0;
+#endif
     }
 
     int bayer2RGBA(const uchar* bayer, int bayer_step, uchar* dst, int width, int blue, const uchar alpha) const
@@ -354,6 +425,7 @@ public:
          B G B G | B G B G | B G B G | B G B G
          */
 
+#if CV_SIMD128
 #if CV_NEON
         uint16x8_t masklo = vdupq_n_u16(255);
         uint8x16x4_t pix;
@@ -475,10 +547,16 @@ public:
 #endif
 
         return (int)(bayer - (bayer_end - width));
+#else
+        CV_UNUSED(bayer); CV_UNUSED(bayer_step); CV_UNUSED(dst);
+        CV_UNUSED(width); CV_UNUSED(blue); CV_UNUSED(alpha);
+        return 0;
+#endif
     }
 
     int bayer2RGB_EA(const uchar* bayer, int bayer_step, uchar* dst, int width, int blue) const
     {
+#if CV_SIMD128
         const uchar* bayer_end = bayer + width;
         v_uint16x8 masklow = v_setall_u16(0x00ff);
         v_uint16x8 delta1 = v_setall_u16(1), delta2 = v_setall_u16(2);
@@ -581,22 +659,22 @@ public:
         }
 
         return int(bayer - (bayer_end - width));
+#else
+        CV_UNUSED(bayer); CV_UNUSED(bayer_step); CV_UNUSED(dst); CV_UNUSED(width); CV_UNUSED(blue);
+        return 0;
+#endif
     }
 };
-#else
-typedef SIMDBayerStubInterpolator_<uchar> SIMDBayerInterpolator_8u;
-#endif
-
 
 template<typename T, class SIMDInterpolator>
 class Bayer2Gray_Invoker :
     public ParallelLoopBody
 {
 public:
-    Bayer2Gray_Invoker(const Mat& _srcmat, Mat& _dstmat, int _start_with_green, bool _brow,
+    Bayer2Gray_Invoker(const Mat& _srcmat, Mat& _dstmat, int _start_with_green,
         const Size& _size, int _bcoeff, int _rcoeff) :
         ParallelLoopBody(), srcmat(_srcmat), dstmat(_dstmat), Start_with_green(_start_with_green),
-        Brow(_brow), size(_size), Bcoeff(_bcoeff), Rcoeff(_rcoeff)
+        size(_size), Bcoeff(_bcoeff), Rcoeff(_rcoeff)
     {
     }
 
@@ -612,13 +690,11 @@ public:
         int dst_step = (int)(dstmat.step/sizeof(T));
         int bcoeff = Bcoeff, rcoeff = Rcoeff;
         int start_with_green = Start_with_green;
-        bool brow = Brow;
 
         dst0 += dst_step + 1;
 
         if (range.start % 2)
         {
-            brow = !brow;
             std::swap(bcoeff, rcoeff);
             start_with_green = !start_with_green;
         }
@@ -680,7 +756,6 @@ public:
             dst0[-1] = dst0[0];
             dst0[size.width] = dst0[size.width-1];
 
-            brow = !brow;
             std::swap(bcoeff, rcoeff);
             start_with_green = !start_with_green;
         }
@@ -690,7 +765,6 @@ private:
     Mat srcmat;
     Mat dstmat;
     int Start_with_green;
-    bool Brow;
     Size size;
     int Bcoeff, Rcoeff;
 };
@@ -704,11 +778,9 @@ static void Bayer2Gray_( const Mat& srcmat, Mat& dstmat, int code )
     Size size = srcmat.size();
     int bcoeff = B2Y, rcoeff = R2Y;
     int start_with_green = code == COLOR_BayerGB2GRAY || code == COLOR_BayerGR2GRAY;
-    bool brow = true;
 
     if( code != COLOR_BayerBG2GRAY && code != COLOR_BayerGB2GRAY )
     {
-        brow = false;
         std::swap(bcoeff, rcoeff);
     }
     size.height -= 2;
@@ -718,7 +790,7 @@ static void Bayer2Gray_( const Mat& srcmat, Mat& dstmat, int code )
     {
         Range range(0, size.height);
         Bayer2Gray_Invoker<T, SIMDInterpolator> invoker(srcmat, dstmat,
-            start_with_green, brow, size, bcoeff, rcoeff);
+            start_with_green, size, bcoeff, rcoeff);
         parallel_for_(range, invoker, dstmat.total()/static_cast<double>(1<<16));
     }
 
@@ -969,9 +1041,11 @@ static void Bayer2RGB_( const Mat& srcmat, Mat& dstmat, int code )
     int dst_step = (int)(dstmat.step/sizeof(T));
     Size size = srcmat.size();
     int blue = (code == COLOR_BayerBG2BGR || code == COLOR_BayerGB2BGR ||
-                code == COLOR_BayerBG2BGRA || code == COLOR_BayerGB2BGRA ) ? -1 : 1;
+                code == COLOR_BayerBG2BGRA || code == COLOR_BayerGB2BGRA ||
+                code == COLOR_BayerBG2BGR_VNG || code == COLOR_BayerGB2BGR_VNG) ? -1 : 1;
     int start_with_green = (code == COLOR_BayerGB2BGR || code == COLOR_BayerGR2BGR ||
-                            code == COLOR_BayerGB2BGRA || code == COLOR_BayerGR2BGRA);
+                            code == COLOR_BayerGB2BGRA || code == COLOR_BayerGR2BGRA ||
+                            code == COLOR_BayerGB2BGR_VNG || code == COLOR_BayerGR2BGR_VNG);
 
     int dcn = dstmat.channels();
     size.height -= 2;
@@ -1001,8 +1075,20 @@ static void Bayer2RGB_( const Mat& srcmat, Mat& dstmat, int code )
 
 /////////////////// Demosaicing using Variable Number of Gradients ///////////////////////
 
-static void Bayer2RGB_VNG_8u( const Mat& srcmat, Mat& dstmat, int code )
+static void Bayer2RGB_VNG_8u( const Mat& _srcmat, Mat& dstmat, int code )
 {
+    // for too small images use the simple interpolation algorithm
+    if( MIN(_srcmat.size().width, _srcmat.size().height) < 8 )
+    {
+        Bayer2RGB_<uchar, SIMDBayerInterpolator_8u>( _srcmat, dstmat, code );
+        return;
+    }
+
+    // VNG uses a 5x5 filter to calculate the gradient around the target pixel.
+    // To make it simple for edge pixels, 2 pixel paddings are added using reflection.
+    cv::Mat srcmat;
+    copyMakeBorder(_srcmat, srcmat, 2, 2, 2, 2, BORDER_REFLECT_101);
+
     const uchar* bayer = srcmat.ptr();
     int bstep = (int)srcmat.step;
     uchar* dst = dstmat.ptr();
@@ -1012,24 +1098,15 @@ static void Bayer2RGB_VNG_8u( const Mat& srcmat, Mat& dstmat, int code )
     int blueIdx = code == COLOR_BayerBG2BGR_VNG || code == COLOR_BayerGB2BGR_VNG ? 0 : 2;
     bool greenCell0 = code != COLOR_BayerBG2BGR_VNG && code != COLOR_BayerRG2BGR_VNG;
 
-    // for too small images use the simple interpolation algorithm
-    if( MIN(size.width, size.height) < 8 )
-    {
-        Bayer2RGB_<uchar, SIMDBayerInterpolator_8u>( srcmat, dstmat, code );
-        return;
-    }
-
     const int brows = 3, bcn = 7;
     int N = size.width, N2 = N*2, N3 = N*3, N4 = N*4, N5 = N*5, N6 = N*6, N7 = N*7;
     int i, bufstep = N7*bcn;
     cv::AutoBuffer<ushort> _buf(bufstep*brows);
     ushort* buf = _buf.data();
 
-    bayer += bstep*2;
-
-    for( int y = 2; y < size.height - 4; y++ )
+    for( int y = 2; y < size.height - 2; y++ )
     {
-        uchar* dstrow = dst + dststep*y + 6;
+        uchar* dstrow = dst + dststep*(y - 2); // srcmat has 2 pixel paddings, but dstmat has no padding.
         const uchar* srow;
 
         for( int dy = (y == 2 ? -1 : 1); dy <= 1; dy++ )
@@ -1511,23 +1588,8 @@ static void Bayer2RGB_VNG_8u( const Mat& srcmat, Mat& dstmat, int code )
         }
         while( i < N - 2 );
 
-        for( i = 0; i < 6; i++ )
-        {
-            dst[dststep*y + 5 - i] = dst[dststep*y + 8 - i];
-            dst[dststep*y + (N - 2)*3 + i] = dst[dststep*y + (N - 3)*3 + i];
-        }
-
         greenCell0 = !greenCell0;
         blueIdx ^= 2;
-    }
-
-    for( i = 0; i < size.width*3; i++ )
-    {
-        dst[i] = dst[i + dststep] = dst[i + dststep*2];
-        dst[i + dststep*(size.height-4)] =
-        dst[i + dststep*(size.height-3)] =
-        dst[i + dststep*(size.height-2)] =
-        dst[i + dststep*(size.height-1)] = dst[i + dststep*(size.height-5)];
     }
 }
 
@@ -1708,7 +1770,7 @@ void cv::demosaicing(InputArray _src, OutputArray _dst, int code, int dcn)
         else if( depth == CV_16U )
             Bayer2Gray_<ushort, SIMDBayerStubInterpolator_<ushort> >(src, dst, code);
         else
-            CV_Error(CV_StsUnsupportedFormat, "Bayer->Gray demosaicing only supports 8u and 16u types");
+            CV_Error(cv::Error::StsUnsupportedFormat, "Bayer->Gray demosaicing only supports 8u and 16u types");
         break;
 
     case COLOR_BayerBG2BGRA: case COLOR_BayerGB2BGRA: case COLOR_BayerRG2BGRA: case COLOR_BayerGR2BGRA:
@@ -1735,7 +1797,7 @@ void cv::demosaicing(InputArray _src, OutputArray _dst, int code, int dcn)
                 else if( depth == CV_16U )
                     Bayer2RGB_<ushort, SIMDBayerStubInterpolator_<ushort> >(src, dst_, code);
                 else
-                    CV_Error(CV_StsUnsupportedFormat, "Bayer->RGB demosaicing only supports 8u and 16u types");
+                    CV_Error(cv::Error::StsUnsupportedFormat, "Bayer->RGB demosaicing only supports 8u and 16u types");
             }
             else
             {
@@ -1758,11 +1820,11 @@ void cv::demosaicing(InputArray _src, OutputArray _dst, int code, int dcn)
         else if (depth == CV_16U)
             Bayer2RGB_EdgeAware_T<ushort, SIMDBayerStubInterpolator_<ushort> >(src, dst, code);
         else
-            CV_Error(CV_StsUnsupportedFormat, "Bayer->RGB Edge-Aware demosaicing only currently supports 8u and 16u types");
+            CV_Error(cv::Error::StsUnsupportedFormat, "Bayer->RGB Edge-Aware demosaicing only currently supports 8u and 16u types");
 
         break;
 
     default:
-        CV_Error( CV_StsBadFlag, "Unknown / unsupported color conversion code" );
+        CV_Error( cv::Error::StsBadFlag, "Unknown / unsupported color conversion code" );
     }
 }

@@ -6,7 +6,7 @@
 #define OPENCV_3D_HPP
 
 #include "opencv2/core.hpp"
-#include "opencv2/core/types_c.h"
+#include "opencv2/core/utils/logger.hpp"
 
 #include "opencv2/3d/depth.hpp"
 #include "opencv2/3d/odometry.hpp"
@@ -391,22 +391,18 @@ enum SolvePnPMethod {
                               //!< Initial solution for non-planar "objectPoints" needs at least 6 points and uses the DLT algorithm. \n
                               //!< Initial solution for planar "objectPoints" needs at least 4 points and uses pose from homography decomposition.
     SOLVEPNP_EPNP        = 1, //!< EPnP: Efficient Perspective-n-Point Camera Pose Estimation @cite lepetit2009epnp
-    SOLVEPNP_P3P         = 2, //!< Complete Solution Classification for the Perspective-Three-Point Problem @cite gao2003complete
-    SOLVEPNP_DLS         = 3, //!< **Broken implementation. Using this flag will fallback to EPnP.** \n
-                              //!< A Direct Least-Squares (DLS) Method for PnP @cite hesch2011direct
-    SOLVEPNP_UPNP        = 4, //!< **Broken implementation. Using this flag will fallback to EPnP.** \n
-                              //!< Exhaustive Linearization for Robust Camera Pose and Focal Length Estimation @cite penate2013exhaustive
-    SOLVEPNP_AP3P        = 5, //!< An Efficient Algebraic Solution to the Perspective-Three-Point Problem @cite Ke17
-    SOLVEPNP_IPPE        = 6, //!< Infinitesimal Plane-Based Pose Estimation @cite Collins14 \n
+    SOLVEPNP_P3P         = 2, //!< Revisiting the P3P Problem @cite ding2023revisiting
+    SOLVEPNP_AP3P        = 3, //!< An Efficient Algebraic Solution to the Perspective-Three-Point Problem @cite Ke17
+    SOLVEPNP_IPPE        = 4, //!< Infinitesimal Plane-Based Pose Estimation @cite Collins14 \n
                               //!< Object points must be coplanar.
-    SOLVEPNP_IPPE_SQUARE = 7, //!< Infinitesimal Plane-Based Pose Estimation @cite Collins14 \n
+    SOLVEPNP_IPPE_SQUARE = 5, //!< Infinitesimal Plane-Based Pose Estimation @cite Collins14 \n
                               //!< This is a special case suitable for marker pose estimation.\n
                               //!< 4 coplanar object points must be defined in the following order:
                               //!<   - point 0: [-squareLength / 2,  squareLength / 2, 0]
                               //!<   - point 1: [ squareLength / 2,  squareLength / 2, 0]
                               //!<   - point 2: [ squareLength / 2, -squareLength / 2, 0]
                               //!<   - point 3: [-squareLength / 2, -squareLength / 2, 0]
-    SOLVEPNP_SQPNP       = 8, //!< SQPnP: A Consistently Fast and Globally OptimalSolution to the Perspective-n-Point Problem @cite Terzakis2020SQPnP
+    SOLVEPNP_SQPNP       = 6, //!< SQPnP: A Consistently Fast and Globally OptimalSolution to the Perspective-n-Point Problem @cite Terzakis2020SQPnP
 #ifndef CV_DOXYGEN
     SOLVEPNP_MAX_COUNT        //!< Used for count
 #endif
@@ -734,7 +730,7 @@ private:
 };
 
 
-/** @example samples/cpp/tutorial_code/features2D/Homography/pose_from_homography.cpp
+/** @example samples/cpp/tutorial_code/features/Homography/pose_from_homography.cpp
 An example program about pose estimation from coplanar points
 
 Check @ref tutorial_homography "the corresponding tutorial" for more details
@@ -792,8 +788,8 @@ correctly only when there are more than 50% of inliers. Finally, if there are no
 noise is rather small, use the default method (method=0).
 
 The function is used to find initial intrinsic and extrinsic matrices. Homography matrix is
-determined up to a scale. Thus, it is normalized so that \f$h_{33}=1\f$. Note that whenever an \f$H\f$ matrix
-cannot be estimated, an empty one will be returned.
+determined up to a scale. If \f$h_{33}\f$ is non-zero, the matrix is normalized so that \f$h_{33}=1\f$.
+@note Whenever an \f$H\f$ matrix cannot be estimated, an empty one will be returned.
 
 @sa
 getAffineTransform, estimateAffine2D, estimateAffinePartial2D, getPerspectiveTransform, warpPerspective,
@@ -828,7 +824,7 @@ and a rotation matrix.
 It optionally returns three rotation matrices, one for each axis, and the three Euler angles in
 degrees (as the return value) that could be used in OpenGL. Note, there is always more than one
 sequence of rotations about the three principal axes that results in the same orientation of an
-object, e.g. see @cite Slabaugh . Returned tree rotation matrices and corresponding three Euler angles
+object, e.g. see @cite Slabaugh . Returned three rotation matrices and corresponding three Euler angles
 are only one of the possible solutions.
  */
 CV_EXPORTS_W Vec3d RQDecomp3x3( InputArray src, OutputArray mtxR, OutputArray mtxQ,
@@ -854,7 +850,7 @@ matrix and the position of a camera.
 It optionally returns three rotation matrices, one for each axis, and three Euler angles that could
 be used in OpenGL. Note, there is always more than one sequence of rotations about the three
 principal axes that results in the same orientation of an object, e.g. see @cite Slabaugh . Returned
-tree rotation matrices and corresponding three Euler angles are only one of the possible solutions.
+three rotation matrices and corresponding three Euler angles are only one of the possible solutions.
 
 The function is based on #RQDecomp3x3 .
  */
@@ -967,13 +963,15 @@ CV_EXPORTS_AS(projectPointsSepJ) void projectPoints(
                     OutputArray dpdc=noArray(), OutputArray dpdk=noArray(),
                     OutputArray dpdo=noArray(), double aspectRatio=0.);
 
-/** @example samples/cpp/tutorial_code/features2D/Homography/homography_from_camera_displacement.cpp
+/** @example samples/cpp/tutorial_code/features/Homography/homography_from_camera_displacement.cpp
 An example program about homography from the camera displacement
 
 Check @ref tutorial_homography "the corresponding tutorial" for more details
 */
 
-/** @brief Finds an object pose from 3D-2D point correspondences.
+/** @brief Finds an object pose \f$ {}^{c}\mathbf{T}_o \f$ from 3D-2D point correspondences:
+
+![Perspective projection, from object to camera frame](pics/pinhole_homogeneous_transformation.png){ width=50% }
 
 @see @ref calib3d_solvePnP
 
@@ -1020,9 +1018,6 @@ More information about Perspective-n-Points is described in @ref calib3d_solvePn
         - Thus, given some data D = np.array(...) where D.shape = (N,M), in order to use a subset of
         it as, e.g., imagePoints, one must effectively copy it into a new array: imagePoints =
         np.ascontiguousarray(D[:,:2]).reshape((N,1,2))
-   -   The methods @ref SOLVEPNP_DLS and @ref SOLVEPNP_UPNP cannot be used as the current implementations are
-       unstable and sometimes give completely wrong results. If you pass one of these two
-       flags, @ref SOLVEPNP_EPNP method will be used instead.
    -   The minimum number of points is 4 in the general case. In the case of @ref SOLVEPNP_P3P and @ref SOLVEPNP_AP3P
        methods, it is required to use exactly 4 points (the first 3 points are used to estimate all the solutions
        of the P3P problem, the last one is used to retain the best solution that minimizes the reprojection error).
@@ -1043,7 +1038,9 @@ CV_EXPORTS_W bool solvePnP( InputArray objectPoints, InputArray imagePoints,
                             OutputArray rvec, OutputArray tvec,
                             bool useExtrinsicGuess = false, int flags = SOLVEPNP_ITERATIVE );
 
-/** @brief Finds an object pose from 3D-2D point correspondences using the RANSAC scheme.
+/** @brief Finds an object pose \f$ {}^{c}\mathbf{T}_o \f$ from 3D-2D point correspondences using the RANSAC scheme to deal with bad matches.
+
+![Perspective projection, from object to camera frame](pics/pinhole_homogeneous_transformation.png){ width=50% }
 
 @see @ref calib3d_solvePnP
 
@@ -1076,8 +1073,8 @@ projections imagePoints and the projected (using @ref projectPoints ) objectPoin
 makes the function resistant to outliers.
 
 @note
-   -   An example of how to use solvePNPRansac for object detection can be found at
-        opencv_source_code/samples/cpp/tutorial_code/3d/real_time_pose_estimation/
+   -   An example of how to use solvePnPRansac for object detection can be found at
+        @ref tutorial_real_time_pose
    -   The default method used to estimate the camera pose for the Minimal Sample Sets step
        is #SOLVEPNP_EPNP. Exceptions are:
          - if you choose #SOLVEPNP_P3P or #SOLVEPNP_AP3P, these methods will be used.
@@ -1102,7 +1099,9 @@ CV_EXPORTS_W bool solvePnPRansac( InputArray objectPoints, InputArray imagePoint
                      OutputArray rvec, OutputArray tvec, OutputArray inliers,
                      const UsacParams &params=UsacParams());
 
-/** @brief Finds an object pose from 3 3D-2D point correspondences.
+/** @brief Finds an object pose \f$ {}^{c}\mathbf{T}_o \f$ from **3** 3D-2D point correspondences.
+
+![Perspective projection, from object to camera frame](pics/pinhole_homogeneous_transformation.png){ width=50% }
 
 @see @ref calib3d_solvePnP
 
@@ -1118,8 +1117,8 @@ assumed.
 the model coordinate system to the camera coordinate system. A P3P problem has up to 4 solutions.
 @param tvecs Output translation vectors.
 @param flags Method for solving a P3P problem:
--   @ref SOLVEPNP_P3P Method is based on the paper of X.S. Gao, X.-R. Hou, J. Tang, H.-F. Chang
-"Complete Solution Classification for the Perspective-Three-Point Problem" (@cite gao2003complete).
+-   @ref SOLVEPNP_P3P Method is based on the paper of Ding, Y., Yang, J., Larsson, V., Olsson, C., & Åstrom, K.
+"Revisiting the P3P Problem" (@cite ding2023revisiting).
 -   @ref SOLVEPNP_AP3P Method is based on the paper of T. Ke and S. Roumeliotis.
 "An Efficient Algebraic Solution to the Perspective-Three-Point Problem" (@cite Ke17).
 
@@ -1197,7 +1196,9 @@ CV_EXPORTS_W void solvePnPRefineVVS( InputArray objectPoints, InputArray imagePo
                                          TermCriteria::COUNT, 20, FLT_EPSILON),
                                      double VVSlambda = 1);
 
-/** @brief Finds an object pose from 3D-2D point correspondences.
+/** @brief Finds an object pose \f$ {}^{c}\mathbf{T}_o \f$ from 3D-2D point correspondences.
+
+![Perspective projection, from object to camera frame](pics/pinhole_homogeneous_transformation.png){ width=50% }
 
 @see @ref calib3d_solvePnP
 
@@ -1252,9 +1253,6 @@ More information is described in @ref calib3d_solvePnP
         - Thus, given some data D = np.array(...) where D.shape = (N,M), in order to use a subset of
         it as, e.g., imagePoints, one must effectively copy it into a new array: imagePoints =
         np.ascontiguousarray(D[:,:2]).reshape((N,1,2))
-   -   The methods @ref SOLVEPNP_DLS and @ref SOLVEPNP_UPNP cannot be used as the current implementations are
-       unstable and sometimes give completely wrong results. If you pass one of these two
-       flags, @ref SOLVEPNP_EPNP method will be used instead.
    -   The minimum number of points is 4 in the general case. In the case of @ref SOLVEPNP_P3P and @ref SOLVEPNP_AP3P
        methods, it is required to use exactly 4 points (the first 3 points are used to estimate all the solutions
        of the P3P problem, the last one is used to retain the best solution that minimizes the reprojection error).
@@ -1268,6 +1266,7 @@ More information is described in @ref calib3d_solvePnP
          - point 1: [ squareLength / 2,  squareLength / 2, 0]
          - point 2: [ squareLength / 2, -squareLength / 2, 0]
          - point 3: [-squareLength / 2, -squareLength / 2, 0]
+   -   With @ref SOLVEPNP_SQPNP input points must be >= 3
  */
 CV_EXPORTS_W int solvePnPGeneric( InputArray objectPoints, InputArray imagePoints,
                                   InputArray cameraMatrix, InputArray distCoeffs,
@@ -1333,6 +1332,9 @@ The function converts 2D or 3D points from/to homogeneous coordinates by calling
  */
 CV_EXPORTS void convertPointsHomogeneous( InputArray src, OutputArray dst );
 
+/** @example samples/cpp/snippets/epipolar_lines.cpp
+An example using the findFundamentalMat function
+*/
 /** @brief Calculates a fundamental matrix from the corresponding points in two images.
 
 @param points1 Array of N points from the first image. The point coordinates should be
@@ -1407,13 +1409,13 @@ CV_EXPORTS_W Mat findFundamentalMat( InputArray points1, InputArray points2,
 
 @param points1 Array of N (N \>= 5) 2D points from the first image. The point coordinates should
 be floating-point (single or double precision).
-@param points2 Array of the second image points of the same size and format as points1 .
+@param points2 Array of the second image points of the same size and format as points1.
 @param cameraMatrix Camera intrinsic matrix \f$\cameramatrix{A}\f$ .
 Note that this function assumes that points1 and points2 are feature points from cameras with the
-same camera intrinsic matrix. If this assumption does not hold for your use case, use
-#undistortPoints with `P = cv::NoArray()` for both cameras to transform image points
-to normalized image coordinates, which are valid for the identity camera intrinsic matrix. When
-passing these coordinates, pass the identity matrix for this parameter.
+same camera intrinsic matrix. If this assumption does not hold for your use case, use another
+function overload or #undistortPoints with `P = cv::NoArray()` for both cameras to transform image
+points to normalized image coordinates, which are valid for the identity camera intrinsic matrix.
+When passing these coordinates, pass the identity matrix for this parameter.
 @param method Method for computing an essential matrix.
 -   @ref RANSAC for the RANSAC algorithm.
 -   @ref LMEDS for the LMedS algorithm.
@@ -1487,23 +1489,13 @@ Mat findEssentialMat(
 
 @param points1 Array of N (N \>= 5) 2D points from the first image. The point coordinates should
 be floating-point (single or double precision).
-@param points2 Array of the second image points of the same size and format as points1 .
-@param cameraMatrix1 Camera matrix \f$K = \vecthreethree{f_x}{0}{c_x}{0}{f_y}{c_y}{0}{0}{1}\f$ .
-Note that this function assumes that points1 and points2 are feature points from cameras with the
-same camera matrix. If this assumption does not hold for your use case, use
-#undistortPoints with `P = cv::NoArray()` for both cameras to transform image points
-to normalized image coordinates, which are valid for the identity camera matrix. When
-passing these coordinates, pass the identity matrix for this parameter.
-@param cameraMatrix2 Camera matrix \f$K = \vecthreethree{f_x}{0}{c_x}{0}{f_y}{c_y}{0}{0}{1}\f$ .
-Note that this function assumes that points1 and points2 are feature points from cameras with the
-same camera matrix. If this assumption does not hold for your use case, use
-#undistortPoints with `P = cv::NoArray()` for both cameras to transform image points
-to normalized image coordinates, which are valid for the identity camera matrix. When
-passing these coordinates, pass the identity matrix for this parameter.
-@param distCoeffs1 Input vector of distortion coefficients
+@param points2 Array of the second image points of the same size and format as points1.
+@param cameraMatrix1 Camera matrix for the first camera \f$K = \vecthreethree{f_x}{0}{c_x}{0}{f_y}{c_y}{0}{0}{1}\f$ .
+@param cameraMatrix2 Camera matrix for the second camera \f$K = \vecthreethree{f_x}{0}{c_x}{0}{f_y}{c_y}{0}{0}{1}\f$ .
+@param distCoeffs1 Input vector of distortion coefficients for the first camera
 \f$(k_1, k_2, p_1, p_2[, k_3[, k_4, k_5, k_6[, s_1, s_2, s_3, s_4[, \tau_x, \tau_y]]]])\f$
 of 4, 5, 8, 12 or 14 elements. If the vector is NULL/empty, the zero distortion coefficients are assumed.
-@param distCoeffs2 Input vector of distortion coefficients
+@param distCoeffs2 Input vector of distortion coefficients for the second camera
 \f$(k_1, k_2, p_1, p_2[, k_3[, k_4, k_5, k_6[, s_1, s_2, s_3, s_4[, \tau_x, \tau_y]]]])\f$
 of 4, 5, 8, 12 or 14 elements. If the vector is NULL/empty, the zero distortion coefficients are assumed.
 @param method Method for computing an essential matrix.
@@ -2084,7 +2076,7 @@ CV_EXPORTS_W cv::Mat estimateAffinePartial2D(InputArray from, InputArray to, Out
                                   size_t maxIters = 2000, double confidence = 0.99,
                                   size_t refineIters = 10);
 
-/** @example samples/cpp/tutorial_code/features2D/Homography/decompose_homography.cpp
+/** @example samples/cpp/tutorial_code/features/Homography/decompose_homography.cpp
 An example program with homography decomposition.
 
 Check @ref tutorial_homography "the corresponding tutorial" for more details.
@@ -2125,7 +2117,8 @@ CV_EXPORTS_W int decomposeHomographyMat(InputArray H,
 @param beforePoints Vector of (rectified) visible reference points before the homography is applied
 @param afterPoints Vector of (rectified) visible reference points after the homography is applied
 @param possibleSolutions Vector of int indices representing the viable solution set after filtering
-@param pointsMask optional Mat/Vector of 8u type representing the mask for the inliers as given by the #findHomography function
+@param pointsMask optional Mat/Vector of CV_8U, CV_8S or CV_Bool type representing the mask for the inliers
+as given by the #findHomography function
 
 This function is intended to filter the output of the #decomposeHomographyMat based on additional
 information as described in @cite Malis2007 . The summary of the method: the #decomposeHomographyMat function
@@ -2321,7 +2314,6 @@ CV_EXPORTS_W
 void initInverseRectificationMap( InputArray cameraMatrix, InputArray distCoeffs,
                            InputArray R, InputArray newCameraMatrix,
                            const Size& size, int m1type, OutputArray map1, OutputArray map2 );
-
 
 //! initializes maps for #remap for wide-angle
 CV_EXPORTS
@@ -2520,9 +2512,24 @@ the number of points in the view.
 @param distorted Output array of image points, 1xN/Nx1 2-channel, or vector\<Point2f\> .
 
 Note that the function assumes the camera intrinsic matrix of the undistorted points to be identity.
-This means if you want to distort image points you have to multiply them with \f$K^{-1}\f$.
+This means if you want to distort image points you have to multiply them with \f$K^{-1}\f$ or
+use another function overload.
  */
 CV_EXPORTS_W void distortPoints(InputArray undistorted, OutputArray distorted, InputArray K, InputArray D, double alpha = 0);
+
+/** @overload
+Overload of distortPoints function to handle cases when undistorted points are got with non-identity
+camera matrix, e.g. output of #estimateNewCameraMatrixForUndistortRectify.
+@param undistorted Array of object points, 1xN/Nx1 2-channel (or vector\<Point2f\> ), where N is
+the number of points in the view.
+@param Kundistorted Camera intrinsic matrix used as new camera matrix for undistortion.
+@param K Camera intrinsic matrix \f$cameramatrix{K}\f$.
+@param D Input vector of distortion coefficients \f$\distcoeffsfisheye\f$.
+@param alpha The skew coefficient.
+@param distorted Output array of image points, 1xN/Nx1 2-channel, or vector\<Point2f\> .
+@sa estimateNewCameraMatrixForUndistortRectify
+*/
+CV_EXPORTS_W void distortPoints(InputArray undistorted, OutputArray distorted, InputArray Kundistorted, InputArray K, InputArray D, double alpha = 0);
 
 /** @brief Undistorts 2D points using fisheye model
 
@@ -2604,6 +2611,81 @@ of image, we can notice that on image a) these points are distorted.
 CV_EXPORTS_W void undistortImage(InputArray distorted, OutputArray undistorted,
     InputArray K, InputArray D, InputArray Knew = cv::noArray(), const Size& new_size = Size());
 
+/**
+@brief Finds an object pose from 3D-2D point correspondences for fisheye camera moodel.
+
+@param objectPoints Array of object points in the object coordinate space, Nx3 1-channel or
+1xN/Nx1 3-channel, where N is the number of points. vector\<Point3d\> can also be passed here.
+@param imagePoints Array of corresponding image points, Nx2 1-channel or 1xN/Nx1 2-channel,
+where N is the number of points. vector\<Point2d\> can also be passed here.
+@param cameraMatrix Input camera intrinsic matrix \f$\cameramatrix{A}\f$ .
+@param distCoeffs Input vector of distortion coefficients (4x1/1x4).
+@param rvec Output rotation vector (see @ref Rodrigues ) that, together with tvec, brings points from
+the model coordinate system to the camera coordinate system.
+@param tvec Output translation vector.
+@param useExtrinsicGuess Parameter used for #SOLVEPNP_ITERATIVE. If true (1), the function uses
+the provided rvec and tvec values as initial approximations of the rotation and translation
+vectors, respectively, and further optimizes them.
+@param flags Method for solving a PnP problem: see @ref calib3d_solvePnP_flags
+This function returns the rotation and the translation vectors that transform a 3D point expressed in the object
+coordinate frame to the camera coordinate frame, using different methods:
+- P3P methods (@ref SOLVEPNP_P3P, @ref SOLVEPNP_AP3P): need 4 input points to return a unique solution.
+- @ref SOLVEPNP_IPPE Input points must be >= 4 and object points must be coplanar.
+- @ref SOLVEPNP_IPPE_SQUARE Special case suitable for marker pose estimation.
+Number of input points must be 4. Object points must be defined in the following order:
+- point 0: [-squareLength / 2,  squareLength / 2, 0]
+- point 1: [ squareLength / 2,  squareLength / 2, 0]
+- point 2: [ squareLength / 2, -squareLength / 2, 0]
+- point 3: [-squareLength / 2, -squareLength / 2, 0]
+- for all the other flags, number of input points must be >= 4 and object points can be in any configuration.
+@param criteria Termination criteria for internal undistortPoints call.
+The function interally undistorts points with @ref undistortPoints and call @ref cv::solvePnP,
+thus the input are very similar. Check there and Perspective-n-Points is described in @ref calib3d_solvePnP
+for more information.
+*/
+CV_EXPORTS_W bool solvePnP( InputArray objectPoints, InputArray imagePoints,
+                            InputArray cameraMatrix, InputArray distCoeffs,
+                            OutputArray rvec, OutputArray tvec,
+                            bool useExtrinsicGuess = false, int flags = SOLVEPNP_ITERATIVE,
+                            TermCriteria criteria = TermCriteria(TermCriteria::MAX_ITER + TermCriteria::EPS, 10, 1e-8)
+                          );
+
+/**
+@brief Finds an object pose from 3D-2D point correspondences using the RANSAC scheme for fisheye camera moodel.
+
+@param objectPoints Array of object points in the object coordinate space, Nx3 1-channel or
+1xN/Nx1 3-channel, where N is the number of points. vector\<Point3d\> can be also passed here.
+@param imagePoints Array of corresponding image points, Nx2 1-channel or 1xN/Nx1 2-channel,
+where N is the number of points. vector\<Point2d\> can be also passed here.
+@param cameraMatrix Input camera intrinsic matrix \f$\cameramatrix{A}\f$ .
+@param distCoeffs Input vector of distortion coefficients (4x1/1x4).
+@param rvec Output rotation vector (see @ref Rodrigues ) that, together with tvec, brings points from
+the model coordinate system to the camera coordinate system.
+@param tvec Output translation vector.
+@param useExtrinsicGuess Parameter used for #SOLVEPNP_ITERATIVE. If true (1), the function uses
+the provided rvec and tvec values as initial approximations of the rotation and translation
+vectors, respectively, and further optimizes them.
+@param iterationsCount Number of iterations.
+@param reprojectionError Inlier threshold value used by the RANSAC procedure. The parameter value
+is the maximum allowed distance between the observed and computed point projections to consider it
+an inlier.
+@param confidence The probability that the algorithm produces a useful result.
+@param inliers Output vector that contains indices of inliers in objectPoints and imagePoints .
+@param flags Method for solving a PnP problem: see @ref calib3d_solvePnP_flags
+@param criteria Termination criteria for internal undistortPoints call.
+The function interally undistorts points with @ref undistortPoints and call @ref cv::solvePnP,
+thus the input are very similar. More information about Perspective-n-Points is described in @ref calib3d_solvePnP
+for more information.
+*/
+CV_EXPORTS_W bool solvePnPRansac( InputArray objectPoints, InputArray imagePoints,
+                                  InputArray cameraMatrix, InputArray distCoeffs,
+                                  OutputArray rvec, OutputArray tvec,
+                                  bool useExtrinsicGuess = false, int iterationsCount = 100,
+                                  float reprojectionError = 8.0, double confidence = 0.99,
+                                  OutputArray inliers = noArray(), int flags = SOLVEPNP_ITERATIVE,
+                                  TermCriteria criteria = TermCriteria(TermCriteria::MAX_ITER + TermCriteria::EPS, 10, 1e-8)
+                                );
+
 } // namespace fisheye
 
 /** @brief Octree for 3D vision.
@@ -2638,112 +2720,156 @@ CV_EXPORTS_W void undistortImage(InputArray distorted, OutputArray undistorted,
  * children[7]: origin == (1, 1, 1), size == 1, furthest from child 0
  */
 
-class CV_EXPORTS Octree {
-
+class CV_EXPORTS_W Octree
+{
 public:
-
     //! Default constructor.
     Octree();
 
     /** @overload
-    * @brief Create an empty Octree and set the maximum depth.
-    *
-    * @param maxDepth The max depth of the Octree. The maxDepth > -1.
-    */
-    explicit Octree(int maxDepth);
+     * @brief Creates an empty Octree with given maximum depth
+     *
+     * @param maxDepth The max depth of the Octree
+     * @param size bounding box size for the Octree
+     * @param origin Initial center coordinate
+     * @param withColors Whether to keep per-point colors or not
+     * @return resulting Octree
+     */
+    CV_WRAP static Ptr<Octree> createWithDepth(int maxDepth, double size, const Point3f& origin = { }, bool withColors = false);
 
     /** @overload
-    * @brief Create an Octree from the PointCloud data with the specific max depth.
-    *
-    * @param pointCloud Point cloud data.
-    * @param maxDepth The max depth of the Octree.
-    */
-    Octree(const std::vector<Point3f> &pointCloud, int maxDepth);
+     * @brief Create an Octree from the PointCloud data with the specific maxDepth
+     *
+     * @param maxDepth Max depth of the octree
+     * @param pointCloud point cloud data, should be 3-channel float array
+     * @param colors color attribute of point cloud in the same 3-channel float format
+     * @return resulting Octree
+     */
+    CV_WRAP static Ptr<Octree> createWithDepth(int maxDepth, InputArray pointCloud, InputArray colors = noArray());
 
     /** @overload
-    * @brief Create an empty Octree.
-    *
-    * @param maxDepth Max depth.
-    * @param size Initial Cube size.
-    * @param origin Initial center coordinate.
-    */
-    Octree(int maxDepth, double size, const Point3f& origin);
+     * @brief Creates an empty Octree with given resolution
+     *
+     * @param resolution The size of the octree leaf node
+     * @param size bounding box size for the Octree
+     * @param origin Initial center coordinate
+     * @param withColors Whether to keep per-point colors or not
+     * @return resulting Octree
+     */
+    CV_WRAP static Ptr<Octree> createWithResolution(double resolution, double size, const Point3f& origin = { }, bool withColors = false);
+
+     /** @overload
+     * @brief Create an Octree from the PointCloud data with the specific resolution
+     *
+     * @param resolution The size of the octree leaf node
+     * @param pointCloud point cloud data, should be 3-channel float array
+     * @param colors color attribute of point cloud in the same 3-channel float format
+     * @return resulting octree
+     */
+    CV_WRAP static Ptr<Octree> createWithResolution(double resolution, InputArray pointCloud, InputArray colors = noArray());
 
     //! Default destructor
     ~Octree();
 
-    /** @brief Insert a point data to a OctreeNode.
+    /** @overload
+    * @brief Insert a point data with color to a OctreeNode.
     *
     * @param point The point data in Point3f format.
+    * @param color The color attribute of point in Point3f format.
     * @return Returns whether the insertion is successful.
     */
-    bool insertPoint(const Point3f& point);
-
-    /** @brief Read point cloud data and create OctreeNode.
-    *
-    * This function is only called when the octree is being created.
-    * @param pointCloud PointCloud data.
-    * @param maxDepth The max depth of the Octree.
-    * @return Returns whether the creation is successful.
-    */
-    bool create(const std::vector<Point3f> &pointCloud, int maxDepth = -1);
+    CV_WRAP bool insertPoint(const Point3f& point, const Point3f& color = { });
 
     /** @brief Determine whether the point is within the space range of the specific cube.
      *
      * @param point The point coordinates.
      * @return If point is in bound, return ture. Otherwise, false.
      */
-    bool isPointInBound(const Point3f& point) const;
-
-    //! Set MaxDepth for Octree.
-    void setMaxDepth(int maxDepth);
-
-    //! Set Box Size for Octree.
-    void setSize(double size);
-
-    //! Set Origin coordinates for Octree.
-    void setOrigin(const Point3f& origin);
+    CV_WRAP bool isPointInBound(const Point3f& point) const;
 
     //! returns true if the rootnode is NULL.
-    bool empty() const;
+    CV_WRAP bool empty() const;
 
     /** @brief Reset all octree parameter.
     *
     *  Clear all the nodes of the octree and initialize the parameters.
     */
-    void clear();
+    CV_WRAP void clear();
 
     /** @brief Delete a given point from the Octree.
     *
     * Delete the corresponding element from the pointList in the corresponding leaf node. If the leaf node
     * does not contain other points after deletion, this node will be deleted. In the same way,
     * its parent node may also be deleted if its last child is deleted.
-    * @param point The point coordinates.
+    * @param point The point coordinates, comparison is epsilon-based
     * @return return ture if the point is deleted successfully.
     */
-    bool deletePoint(const Point3f& point);
+    CV_WRAP bool deletePoint(const Point3f& point);
 
-    /** @brief Radius Nearest Neighbor Search in Octree
+    /** @brief restore point cloud data from Octree.
+    *
+    * Restore the point cloud data from existing octree. The points in same leaf node will be seen as the same point.
+    * This point is the center of the leaf node. If the resolution is small, it will work as a downSampling function.
+    * @param restoredPointCloud The output point cloud data, can be replaced by noArray() if not needed
+    * @param restoredColor The color attribute of point cloud data, can be omitted if not needed
+    */
+    CV_WRAP void getPointCloudByOctree(OutputArray restoredPointCloud, OutputArray restoredColor = noArray());
+
+    /** @brief Radius Nearest Neighbor Search in Octree.
     *
     * Search all points that are less than or equal to radius.
     * And return the number of searched points.
     * @param query Query point.
     * @param radius Retrieved radius value.
-    * @param pointSet Point output. Contains searched points, and output vector is not in order.
-    * @param squareDistSet Dist output. Contains searched squared distance, and output vector is not in order.
+    * @param points Point output. Contains searched points in 3-float format, and output vector is not in order,
+    * can be replaced by noArray() if not needed
+    * @param squareDists Dist output. Contains searched squared distance in floats, and output vector is not in order,
+    * can be omitted if not needed
     * @return the number of searched points.
     */
-    int radiusNNSearch(const Point3f& query, float radius, std::vector<Point3f> &pointSet, std::vector<float> &squareDistSet) const;
+    CV_WRAP int radiusNNSearch(const Point3f& query, float radius, OutputArray points, OutputArray squareDists = noArray()) const;
+
+    /** @overload
+    *  @brief Radius Nearest Neighbor Search in Octree.
+    *
+    * Search all points that are less than or equal to radius.
+    * And return the number of searched points.
+    * @param query Query point.
+    * @param radius Retrieved radius value.
+    * @param points Point output. Contains searched points in 3-float format, and output vector is not in order,
+    * can be replaced by noArray() if not needed
+    * @param colors Color output. Contains colors corresponding to points in pointSet, can be replaced by noArray() if not needed
+    * @param squareDists Dist output. Contains searched squared distance in floats, and output vector is not in order,
+    * can be replaced by noArray() if not needed
+    * @return the number of searched points.
+    */
+    CV_WRAP int radiusNNSearch(const Point3f& query, float radius, OutputArray points, OutputArray colors, OutputArray squareDists) const;
 
     /** @brief K Nearest Neighbor Search in Octree.
     *
     * Find the K nearest neighbors to the query point.
     * @param query Query point.
-    * @param K
-    * @param pointSet Point output. Contains K points, arranged in order of distance from near to far.
-    * @param squareDistSet Dist output. Contains K squared distance, arranged in order of distance from near to far.
+    * @param K amount of nearest neighbors to find
+    * @param points Point output. Contains K points in 3-float format, arranged in order of distance from near to far,
+    * can be replaced by noArray() if not needed
+    * @param squareDists Dist output. Contains K squared distance in floats, arranged in order of distance from near to far,
+    * can be omitted if not needed
     */
-    void KNNSearch(const Point3f& query, const int K, std::vector<Point3f> &pointSet, std::vector<float> &squareDistSet) const;
+    CV_WRAP void KNNSearch(const Point3f& query, const int K, OutputArray points, OutputArray squareDists = noArray()) const;
+
+    /** @overload
+    *  @brief K Nearest Neighbor Search in Octree.
+    *
+    * Find the K nearest neighbors to the query point.
+    * @param query Query point.
+    * @param K amount of nearest neighbors to find
+    * @param points Point output. Contains K points in 3-float format, arranged in order of distance from near to far,
+    * can be replaced by noArray() if not needed
+    * @param colors Color output. Contains colors corresponding to points in pointSet, can be replaced by noArray() if not needed
+    * @param squareDists Dist output. Contains K squared distance in floats, arranged in order of distance from near to far,
+    * can be replaced by noArray() if not needed
+    */
+    CV_WRAP void KNNSearch(const Point3f& query, const int K, OutputArray points, OutputArray colors, OutputArray squareDists) const;
 
 protected:
     struct Impl;
@@ -2754,16 +2880,19 @@ protected:
 /** @brief Loads a point cloud from a file.
 *
 * The function loads point cloud from the specified file and returns it.
-* If the cloud cannot be read, throws an error
+* If the cloud cannot be read, throws an error.
+* Vertex coordinates, normals and colors are returned as they are saved in the file
+* even if these arrays have different sizes and their elements do not correspond to each other
+* (which is typical for OBJ files for example)
 *
 * Currently, the following file formats are supported:
 * -  [Wavefront obj file *.obj](https://en.wikipedia.org/wiki/Wavefront_.obj_file)
 * -  [Polygon File Format *.ply](https://en.wikipedia.org/wiki/PLY_(file_format))
 *
-* @param filename Name of the file.
-* @param vertices (vector of Point3f) Point coordinates of a point cloud
-* @param normals (vector of Point3f) Point normals of a point cloud
-* @param rgb (vector of Point3_<uchar>) Point RGB color of a point cloud
+* @param filename Name of the file
+* @param vertices vertex coordinates, each value contains 3 floats
+* @param normals per-vertex normals, each value contains 3 floats
+* @param rgb per-vertex colors, each value contains 3 floats
 */
 CV_EXPORTS_W void loadPointCloud(const String &filename, OutputArray vertices, OutputArray normals = noArray(), OutputArray rgb = noArray());
 
@@ -2772,10 +2901,10 @@ CV_EXPORTS_W void loadPointCloud(const String &filename, OutputArray vertices, O
 * The function saves point cloud to the specified file.
 * File format is chosen based on the filename extension.
 *
-* @param filename Name of the file.
-* @param vertices (vector of Point3f) Point coordinates of a point cloud
-* @param normals (vector of Point3f) Point normals of a point cloud
-* @param rgb (vector of Point3_<uchar>) Point RGB color of a point cloud
+* @param filename Name of the file
+* @param vertices vertex coordinates, each value contains 3 floats
+* @param normals per-vertex normals, each value contains 3 floats
+* @param rgb per-vertex colors, each value contains 3 floats
 */
 CV_EXPORTS_W void savePointCloud(const String &filename, InputArray vertices, InputArray normals = noArray(), InputArray rgb = noArray());
 
@@ -2783,15 +2912,24 @@ CV_EXPORTS_W void savePointCloud(const String &filename, InputArray vertices, In
 *
 * The function loads mesh from the specified file and returns it.
 * If the mesh cannot be read, throws an error
+* Vertex attributes (i.e. space and texture coodinates, normals and colors) are returned in same-sized
+* arrays with corresponding elements having the same indices.
+* This means that if a face uses a vertex with a normal or a texture coordinate with different indices
+* (which is typical for OBJ files for example), this vertex will be duplicated for each face it uses.
 *
 * Currently, the following file formats are supported:
 * -  [Wavefront obj file *.obj](https://en.wikipedia.org/wiki/Wavefront_.obj_file) (ONLY TRIANGULATED FACES)
-* @param filename Name of the file.
-* @param vertices (vector of Point3f) vertex coordinates of a mesh
-* @param normals (vector of Point3f) vertex normals of a mesh
-* @param indices (vector of vectors of int) vertex normals of a mesh
+* -  [Polygon File Format *.ply](https://en.wikipedia.org/wiki/PLY_(file_format))
+* @param filename Name of the file
+* @param vertices vertex coordinates, each value contains 3 floats
+* @param indices per-face list of vertices, each value is a vector of ints
+* @param normals per-vertex normals, each value contains 3 floats
+* @param colors per-vertex colors, each value contains 3 floats
+* @param texCoords per-vertex texture coordinates, each value contains 2 or 3 floats
 */
-CV_EXPORTS_W void loadMesh(const String &filename, OutputArray vertices, OutputArray normals, OutputArrayOfArrays indices);
+CV_EXPORTS_W void loadMesh(const String &filename, OutputArray vertices, OutputArrayOfArrays indices,
+                           OutputArray normals = noArray(), OutputArray colors = noArray(),
+                           OutputArray texCoords = noArray());
 
 /** @brief Saves a mesh to a specified file.
 *
@@ -2799,12 +2937,144 @@ CV_EXPORTS_W void loadMesh(const String &filename, OutputArray vertices, OutputA
 * File format is chosen based on the filename extension.
 *
 * @param filename Name of the file.
-* @param vertices (vector of Point3f) vertex coordinates of a mesh
-* @param normals (vector of Point3f) vertex normals of a mesh
-* @param indices (vector of vectors of int) vertex normals of a mesh
+* @param vertices vertex coordinates, each value contains 3 floats
+* @param indices per-face list of vertices, each value is a vector of ints
+* @param normals per-vertex normals, each value contains 3 floats
+* @param colors per-vertex colors, each value contains 3 floats
+* @param texCoords per-vertex texture coordinates, each value contains 2 or 3 floats
 */
-CV_EXPORTS_W void saveMesh(const String &filename, InputArray vertices, InputArray normals, InputArrayOfArrays indices);
+CV_EXPORTS_W void saveMesh(const String &filename, InputArray vertices, InputArrayOfArrays indices,
+                           InputArray normals = noArray(), InputArray colors = noArray(), InputArray texCoords = noArray());
 
+
+//! Triangle fill settings
+enum TriangleShadingType
+{
+    RASTERIZE_SHADING_WHITE  = 0, //!< a white color is used for the whole triangle
+    RASTERIZE_SHADING_FLAT   = 1, //!< a color of 1st vertex of each triangle is used
+    RASTERIZE_SHADING_SHADED = 2  //!< a color is interpolated between 3 vertices with perspective correction
+};
+
+//! Face culling settings: what faces are drawn after face culling
+enum TriangleCullingMode
+{
+    RASTERIZE_CULLING_NONE = 0, //!< all faces are drawn, no culling is actually performed
+    RASTERIZE_CULLING_CW   = 1, //!< triangles which vertices are given in clockwork order are drawn
+    RASTERIZE_CULLING_CCW  = 2  //!< triangles which vertices are given in counterclockwork order are drawn
+};
+
+//! GL compatibility settings
+enum TriangleGlCompatibleMode
+{
+    RASTERIZE_COMPAT_DISABLED = 0, //!< Color and depth have their natural values and converted to internal formats if needed
+    RASTERIZE_COMPAT_INVDEPTH = 1  //!< Color is natural, Depth is transformed from [-zNear; -zFar] to [0; 1]
+                                   //!< by the following formula: \f$ \frac{z_{far} \left(z + z_{near}\right)}{z \left(z_{far} - z_{near}\right)} \f$ \n
+                                   //!< In this mode the input/output depthBuf is considered to be in this format,
+                                   //!< therefore it's faster since there're no conversions performed
+};
+
+/**
+ * @brief Structure to keep settings for rasterization
+ */
+struct CV_EXPORTS_W_SIMPLE TriangleRasterizeSettings
+{
+    TriangleRasterizeSettings();
+
+    CV_WRAP TriangleRasterizeSettings& setShadingType(TriangleShadingType st) { shadingType = st; return *this; }
+    CV_WRAP TriangleRasterizeSettings& setCullingMode(TriangleCullingMode cm) { cullingMode = cm; return *this; }
+    CV_WRAP TriangleRasterizeSettings& setGlCompatibleMode(TriangleGlCompatibleMode gm) { glCompatibleMode = gm; return *this; }
+
+    TriangleShadingType shadingType;
+    TriangleCullingMode cullingMode;
+    TriangleGlCompatibleMode glCompatibleMode;
+};
+
+
+/** @brief Renders a set of triangles on a depth and color image
+
+Triangles can be drawn white (1.0, 1.0, 1.0), flat-shaded or with a color interpolation between vertices.
+In flat-shaded mode the 1st vertex color of each triangle is used to fill the whole triangle.
+
+The world2cam is an inverted camera pose matrix in fact. It transforms vertices from world to
+camera coordinate system.
+
+The camera coordinate system emulates the OpenGL's coordinate system having coordinate origin in a screen center,
+X axis pointing right, Y axis pointing up and Z axis pointing towards the viewer
+except that image is vertically flipped after the render.
+This means that all visible objects are placed in z-negative area, or exactly in -zNear > z > -zFar since
+zNear and zFar are positive.
+For example, at fovY = PI/2 the point (0, 1, -1) will be projected to (width/2, 0) screen point,
+(1, 0, -1) to (width/2 + height/2, height/2). Increasing fovY makes projection smaller and vice versa.
+
+The function does not create or clear output images before the rendering. This means that it can be used
+for drawing over an existing image or for rendering a model into a 3D scene using pre-filled Z-buffer.
+
+Empty scene results in a depth buffer filled by the maximum value since every pixel is infinitely far from the camera.
+Therefore, before rendering anything from scratch the depthBuf should be filled by zFar values (or by ones in INVDEPTH mode).
+
+There are special versions of this function named triangleRasterizeDepth and triangleRasterizeColor
+for cases if a user needs a color image or a depth image alone; they may run slightly faster.
+
+@param vertices vertices coordinates array. Should contain values of CV_32FC3 type or a compatible one (e.g. cv::Vec3f, etc.)
+@param indices triangle vertices index array, 3 per triangle. Each index indicates a vertex in a vertices array.
+Should contain CV_32SC3 values or compatible
+@param colors per-vertex colors of CV_32FC3 type or compatible. Can be empty or the same size as vertices array.
+If the values are out of [0; 1] range, the result correctness is not guaranteed
+@param colorBuf an array representing the final rendered image. Should containt CV_32FC3 values and be the same size as depthBuf.
+Not cleared before rendering, i.e. the content is reused as there is some pre-rendered scene.
+@param depthBuf an array of floats containing resulting Z buffer. Should contain float values and be the same size as colorBuf.
+Not cleared before rendering, i.e. the content is reused as there is some pre-rendered scene.
+Empty scene corresponds to all values set to zFar (or to 1.0 in INVDEPTH mode)
+@param world2cam a 4x3 or 4x4 float or double matrix containing inverted (sic!) camera pose
+@param fovY field of view in vertical direction, given in radians
+@param zNear minimum Z value to render, everything closer is clipped
+@param zFar maximum Z value to render, everything farther is clipped
+@param settings see TriangleRasterizeSettings. By default the smooth shading is on,
+with CW culling and with disabled GL compatibility
+*/
+CV_EXPORTS_W void triangleRasterize(InputArray vertices, InputArray indices, InputArray colors,
+                                    InputOutputArray colorBuf, InputOutputArray depthBuf,
+                                    InputArray world2cam, double fovY, double zNear, double zFar,
+                                    const TriangleRasterizeSettings& settings = TriangleRasterizeSettings());
+
+/** @brief Overloaded version of triangleRasterize() with depth-only rendering
+
+@param vertices vertices coordinates array. Should contain values of CV_32FC3 type or a compatible one (e.g. cv::Vec3f, etc.)
+@param indices triangle vertices index array, 3 per triangle. Each index indicates a vertex in a vertices array.
+Should contain CV_32SC3 values or compatible
+@param depthBuf an array of floats containing resulting Z buffer. Should contain float values and be the same size as colorBuf.
+Not cleared before rendering, i.e. the content is reused as there is some pre-rendered scene.
+Empty scene corresponds to all values set to zFar (or to 1.0 in INVDEPTH mode)
+@param world2cam a 4x3 or 4x4 float or double matrix containing inverted (sic!) camera pose
+@param fovY field of view in vertical direction, given in radians
+@param zNear minimum Z value to render, everything closer is clipped
+@param zFar maximum Z value to render, everything farther is clipped
+@param settings see TriangleRasterizeSettings. By default the smooth shading is on,
+with CW culling and with disabled GL compatibility
+*/
+CV_EXPORTS_W void triangleRasterizeDepth(InputArray vertices, InputArray indices, InputOutputArray depthBuf,
+                                         InputArray world2cam, double fovY, double zNear, double zFar,
+                                         const TriangleRasterizeSettings& settings = TriangleRasterizeSettings());
+
+/** @brief Overloaded version of triangleRasterize() with color-only rendering
+
+@param vertices vertices coordinates array. Should contain values of CV_32FC3 type or a compatible one (e.g. cv::Vec3f, etc.)
+@param indices triangle vertices index array, 3 per triangle. Each index indicates a vertex in a vertices array.
+Should contain CV_32SC3 values or compatible
+@param colors per-vertex colors of CV_32FC3 type or compatible. Can be empty or the same size as vertices array.
+If the values are out of [0; 1] range, the result correctness is not guaranteed
+@param colorBuf an array representing the final rendered image. Should containt CV_32FC3 values and be the same size as depthBuf.
+Not cleared before rendering, i.e. the content is reused as there is some pre-rendered scene.
+@param world2cam a 4x3 or 4x4 float or double matrix containing inverted (sic!) camera pose
+@param fovY field of view in vertical direction, given in radians
+@param zNear minimum Z value to render, everything closer is clipped
+@param zFar maximum Z value to render, everything farther is clipped
+@param settings see TriangleRasterizeSettings. By default the smooth shading is on,
+with CW culling and with disabled GL compatibility
+*/
+CV_EXPORTS_W void triangleRasterizeColor(InputArray vertices, InputArray indices, InputArray colors, InputOutputArray colorBuf,
+                                         InputArray world2cam, double fovY, double zNear, double zFar,
+                                         const TriangleRasterizeSettings& settings = TriangleRasterizeSettings());
 
 //! @} _3d
 } //end namespace cv

@@ -52,11 +52,7 @@
 #include "../op_inf_engine.hpp"
 #ifdef HAVE_DNN_NGRAPH
 #include "../ie_ngraph.hpp"
-#if INF_ENGINE_VER_MAJOR_GT(INF_ENGINE_RELEASE_2020_4)
-#include <ngraph/op/reorg_yolo.hpp>
-#else
-#include <ngraph/op/experimental/layers/reorg_yolo.hpp>
-#endif
+#include <openvino/op/reorg_yolo.hpp>
 #endif
 
 #include "../op_cuda.hpp"
@@ -99,6 +95,24 @@ public:
         CV_Assert(total(outputs[0]) == total(inputs[0]));
 
         return false;
+    }
+
+    void getTypes(const std::vector<MatType>& inputs,
+        const int requiredOutputs,
+        const int requiredInternals,
+        std::vector<MatType>& outputs,
+        std::vector<MatType>& internals) const CV_OVERRIDE
+    {
+        CV_Assert(inputs.size());
+        for (auto input : inputs)
+        {
+            if (preferableTarget == DNN_TARGET_OPENCL_FP16)
+                CV_CheckType(input, input == CV_16F || input == CV_8S || input == CV_8U || input == CV_32S || input == CV_64S, "");
+            else
+                CV_CheckType(input, input == CV_32F || input == CV_8S || input == CV_8U || input == CV_32S || input == CV_64S, "");
+        }
+
+        outputs.assign(requiredOutputs, inputs[0]);
     }
 
     virtual void finalize(InputArrayOfArrays inputs_arr, OutputArrayOfArrays outputs_arr) CV_OVERRIDE
@@ -184,7 +198,7 @@ public:
         CV_OCL_RUN(IS_DNN_OPENCL_TARGET(preferableTarget),
                    forward_ocl(inputs_arr, outputs_arr, internals_arr))
 
-        if (inputs_arr.depth() == CV_16S)
+        if (inputs_arr.depth() == CV_16F)
         {
             forward_fallback(inputs_arr, outputs_arr, internals_arr);
             return;
@@ -205,7 +219,7 @@ public:
                                         const std::vector<Ptr<BackendNode> >& nodes) CV_OVERRIDE
     {
         auto& ieInpNode = nodes[0].dynamicCast<InfEngineNgraphNode>()->node;
-        auto reorg = std::make_shared<ngraph::op::ReorgYolo>(ieInpNode, ngraph::Strides{(size_t)reorgStride});
+        auto reorg = std::make_shared<ov::op::v0::ReorgYolo>(ieInpNode, ov::Strides{(size_t)reorgStride});
         return Ptr<BackendNode>(new InfEngineNgraphNode(reorg));
     }
 #endif  // HAVE_DNN_NGRAPH
@@ -219,15 +233,9 @@ public:
     ) override
     {
         auto context = reinterpret_cast<csl::CSLContext*>(context_);
-        return make_cuda_node<cuda4dnn::ReorgOp>(preferableTarget, std::move(context->stream), reorgStride);
+        return make_cuda_node_with_type<cuda4dnn::ReorgOp>(preferableTarget, inputs[0]->getHostMatDepth(), std::move(context->stream), reorgStride);
     }
 #endif
-
-    virtual bool tryQuantize(const std::vector<std::vector<float> > &scales,
-                             const std::vector<std::vector<int> > &zeropoints, LayerParams& params) CV_OVERRIDE
-    {
-        return true;
-    }
 
     virtual int64 getFLOPS(const std::vector<MatShape> &inputs,
                            const std::vector<MatShape> &outputs) const CV_OVERRIDE

@@ -75,8 +75,8 @@
 /* IJG JPEG codec */
 #cmakedefine HAVE_JPEG
 
-/* libpng/png.h needs to be included */
-#cmakedefine HAVE_LIBPNG_PNG_H
+/* JPEG XL codec */
+#cmakedefine HAVE_JPEGXL
 
 /* GDCM DICOM codec */
 #cmakedefine HAVE_GDCM
@@ -140,14 +140,8 @@
 /* Library was compiled with functions instrumentation */
 #cmakedefine ENABLE_INSTRUMENTATION
 
-/* OpenVX */
-#cmakedefine HAVE_OPENVX
-
 /* OpenCV trace utilities */
 #cmakedefine OPENCV_TRACE
-
-/* Library QR-code decoding */
-#cmakedefine HAVE_QUIRC
 
 /* The font "uni" (WQY MicroHei) is available */
 #cmakedefine HAVE_UNIFONT

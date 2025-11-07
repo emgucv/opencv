@@ -41,6 +41,7 @@
 "test_cast_STRING_to_FLOAT",
 "test_castlike_FLOAT_to_STRING_expanded",
 "test_castlike_STRING_to_FLOAT_expanded",
+"test_cast_DOUBLE_to_FLOAT",
 "test_concat_1d_axis_negative_1",
 "test_conv_with_autopad_same",
 "test_conv_with_strides_and_asymmetric_padding",
@@ -56,6 +57,10 @@
 "test_div_bcast",
 "test_div_uint8",
 "test_dropout_default_ratio",
+"test_einsum_batch_diagonal",
+"test_einsum_batch_matmul",
+"test_einsum_sum",
+"test_einsum_transpose",
 "test_flatten_axis0",
 "test_flatten_axis2",
 "test_flatten_axis3",
@@ -71,23 +76,14 @@
 "test_maxpool_with_argmax_2d_precomputed_pads",
 "test_maxpool_with_argmax_2d_precomputed_strides",
 "test_maxunpool_export_with_output_shape",
+"test_max_float64",
+"test_min_float64",
+"test_mod_mixed_sign_float64",
 "test_mul_bcast",
 "test_mul_uint8",
-"test_reduce_prod_default_axes_keepdims_example", // FP16 only
-"test_reduce_prod_default_axes_keepdims_random", // FP16 only
-"test_reduce_prod_do_not_keepdims_random", // FP16 only
-"test_reduce_prod_keepdims_random", // FP16 only
-"test_reduce_prod_negative_axes_keepdims_random", // FP16 only
-"test_reduce_sum_square_default_axes_keepdims_random", // FP16 only
-"test_reduce_sum_square_do_not_keepdims_random", // FP16 only
-"test_reduce_sum_square_keepdims_random", // FP16 only
-"test_reduce_sum_square_negative_axes_keepdims_random", // FP16 only
 "test_softmax_default_axis",
-"test_softmax_large_number",  // FP16 only
-"test_softmax_large_number_expanded",  // FP16 only
 "test_sub_bcast",
 "test_sub_uint8",
-"test_tan",  // FP16 only
 "test_upsample_nearest",
 "test_scatter_elements_with_axis",
 "test_scatter_elements_with_duplicate_indices",
@@ -102,3 +98,7 @@
 "test_scatternd_max",
 "test_scatternd_min",
 "test_scatternd_multiply",
+"test_dequantizelinear_blocked", // Issue https://github.com/opencv/opencv/issues/25999
+"test_quantizelinear", // Issue https://github.com/opencv/opencv/issues/25999
+"test_quantizelinear_axis", // Issue https://github.com/opencv/opencv/issues/25999
+"test_quantizelinear_blocked", // Issue https://github.com/opencv/opencv/issues/25999

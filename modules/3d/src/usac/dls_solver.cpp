@@ -155,7 +155,12 @@ public:
         const auto &eigen_vectors = eigen_solver.eigenvectors();
         const auto &eigen_values = eigen_solver.eigenvalues();
 #else
+
+#if defined (ACCELERATE_NEW_LAPACK) && defined (ACCELERATE_LAPACK_ILP64)
+        long mat_order = 27, info, lda = 27, ldvl = 1, ldvr = 27, lwork = 500;
+#else
         int mat_order = 27, info, lda = 27, ldvl = 1, ldvr = 27, lwork = 500;
+#endif
         double wr[27], wi[27] = {0}; // 27 = mat_order
         std::vector<double> work(lwork), eig_vecs(729);
         char jobvl = 'N', jobvr = 'V'; // only left eigen vectors are computed
@@ -194,7 +199,7 @@ public:
             // and translation.
             const double qi = s1, qi2 = qi*qi, qj = s2, qj2 = qj*qj, qk = s3, qk2 = qk*qk;
             const double s = 1 / (1 + qi2 + qj2 + qk2);
-            const Matx33d rot_mat (1-2*s*(qj2+qk2), 2*s*(qi*qj+qk), 2*s*(qi*qk-qj),
+            Matx33d rot_mat (1-2*s*(qj2+qk2), 2*s*(qi*qj+qk), 2*s*(qi*qk-qj),
                                    2*s*(qi*qj-qk), 1-2*s*(qi2+qk2), 2*s*(qj*qk+qi),
                                    2*s*(qi*qk+qj), 2*s*(qj*qk-qi), 1-2*s*(qi2+qj2));
             const Matx31d soln_translation = translation_factor * rot_mat.reshape<9,1>();
@@ -212,8 +217,14 @@ public:
             }
 
             if (all_points_in_front_of_camera) {
+                // https://github.com/opencv/opencv/blob/2ba688f23c4e20754f32179d9396ba9b54b3b064/modules/calib3d/src/usac/pnp_solver.cpp#L395
+                // Use directly cv::Rodrigues
+                Matx31d rvec;
+                Rodrigues(rot_mat, rvec);
+                Rodrigues(rvec, rot_mat);
+
                 Mat model;
-                hconcat(Math::rotVec2RotMat(Math::rotMat2RotVec(rot_mat)), soln_translation, model);
+                hconcat(rot_mat, soln_translation, model);
                 models_.emplace_back(K * model);
             }
         }

@@ -43,6 +43,11 @@
 #ifndef __OPENCV_PRECOMP_H__
 #define __OPENCV_PRECOMP_H__
 
+#ifdef _MSC_VER
+#  define _SILENCE_CXX17_C_HEADER_DEPRECATION_WARNING
+#  define _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING
+#endif
+
 #ifdef BUILD_PLUGIN
 #include "opencv2/core/utility.hpp"
 #else  // BUILD_PLUGIN
@@ -51,7 +56,6 @@
 #include "cvconfig.h"
 
 #include "opencv2/core/utility.hpp"
-#include "opencv2/core/core_c.h"
 #include "opencv2/core/cuda.hpp"
 #include "opencv2/core/opengl.hpp"
 #include "opencv2/core/va_intel.hpp"
@@ -86,7 +90,6 @@
 
 #include "opencv2/core/hal/hal.hpp"
 #include "opencv2/core/hal/intrin.hpp"
-#include "opencv2/core/sse_utils.hpp"
 #include "opencv2/core/neon_utils.hpp"
 #include "opencv2/core/vsx_utils.hpp"
 #include "hal_replacement.hpp"
@@ -353,9 +356,6 @@ struct CoreTLSData
 //#endif
         useIPP(-1),
         useIPP_NE(-1)
-#ifdef HAVE_OPENVX
-        ,useOpenVX(-1)
-#endif
     {}
 
     RNG rng;
@@ -366,9 +366,6 @@ struct CoreTLSData
 //#endif
     int useIPP;    // 1 - use, 0 - do not use, -1 - auto/not initialized
     int useIPP_NE; // 1 - use, 0 - do not use, -1 - auto/not initialized
-#ifdef HAVE_OPENVX
-    int useOpenVX; // 1 - use, 0 - do not use, -1 - auto/not initialized
-#endif
 };
 
 CoreTLSData& getCoreTlsData();

@@ -233,8 +233,8 @@ public:
 
         for (size_t i = 0; i < inputs.size(); i++)
         {
-            MatShape inpShape = shape(inputs[i].size);
-            if (isAllOnes(inpShape, 2, inputs[i].dims))
+            MatShape inpShape = inputs[i].shape();
+            if (isAllOnes(inpShape, 2, inpShape.dims))
             {
                 hasVecInput = true;
                 return;
@@ -375,7 +375,7 @@ public:
                                         const std::vector<Ptr<BackendNode> >& nodes) CV_OVERRIDE
     {
         CV_Assert(nodes.size() >= 2);
-        std::vector<ngraph::Output<ngraph::Node>> ieInpNodes(nodes.size());
+        std::vector<ov::Output<ov::Node>> ieInpNodes(nodes.size());
         for (size_t i = 0; i < nodes.size(); i++)
         {
             ieInpNodes[i] = nodes[i].dynamicCast<InfEngineNgraphNode>()->node;
@@ -389,9 +389,9 @@ public:
         for (size_t i = 1; i < ieInpNodes.size(); i++)
         {
             switch (op) {
-                case SUM:  res = std::make_shared<ngraph::op::v1::Add>(res, ieInpNodes[i]); break;
-                case PROD: res = std::make_shared<ngraph::op::v1::Multiply>(res, ieInpNodes[i]); break;
-                case MAX:  res = std::make_shared<ngraph::op::v1::Maximum>(res, ieInpNodes[i]); break;
+                case SUM:  res = std::make_shared<ov::op::v1::Add>(res, ieInpNodes[i]); break;
+                case PROD: res = std::make_shared<ov::op::v1::Multiply>(res, ieInpNodes[i]); break;
+                case MAX:  res = std::make_shared<ov::op::v1::Maximum>(res, ieInpNodes[i]); break;
                 default: CV_Error(Error::StsNotImplemented, "Unsupported eltwise operation");
             }
         }
@@ -679,15 +679,15 @@ public:
         {
             for (size_t i = 0; i < inputs.size(); i++)
             {
-                MatShape inpShape = shape(inputs[i].size);
+                MatShape inpShape = inputs[i].shape();
                 bool allOnes = isAllOnes(inpShape, 2, inputs[i].dims);
 
                 if (allOnes)
                 {
                     Mat tmpInput = inputs[i];
-                    MatShape outShape = shape(outputs[0].size);
+                    MatShape outShape = outputs[0].shape();
                     size_t xSize = outShape[2];
-                    for (size_t j = 3; j < outShape.size(); j++)
+                    for (int j = 3; j < outShape.dims; j++)
                         xSize *= outShape[j];
 
                     int dimVec[3] = {outShape[0], outShape[1], (int) xSize};

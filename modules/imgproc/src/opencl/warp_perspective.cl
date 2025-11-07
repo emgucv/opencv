@@ -65,7 +65,7 @@
 #define ST T
 #endif
 
-#if cn != 3
+#if CN != 3
 #define loadpix(addr)  *(__global const T*)(addr)
 #define storepix(val, addr)  *(__global T*)(addr) = val
 #define scalar scalar_
@@ -92,22 +92,21 @@ __kernel void warpPerspective(__global const uchar * srcptr, int src_step, int s
 
     if (dx < dst_cols && dy < dst_rows)
     {
-        CT X0 = M[0] * dx + M[1] * dy + M[2];
-        CT Y0 = M[3] * dx + M[4] * dy + M[5];
-        CT W = M[6] * dx + M[7] * dy + M[8];
-        W = W != 0.0f ? 1.f / W : 0.0f;
-        short sx = convert_short_sat_rte(X0*W);
-        short sy = convert_short_sat_rte(Y0*W);
+        float W  = fma(M[6], (CT)dx, fma(M[7], (CT)dy, M[8]));
+        float X0 = fma(M[0], (CT)dx, fma(M[1], (CT)dy, M[2])) / W;
+        float Y0 = fma(M[3], (CT)dx, fma(M[4], (CT)dy, M[5])) / W;
 
-        int dst_index = mad24(dy, dst_step, dx * pixsize + dst_offset);
+        int sx = convert_int_sat(rint(X0));
+        int sy = convert_int_sat(rint(Y0));
 
+        T v0 = scalar;
         if (sx >= 0 && sx < src_cols && sy >= 0 && sy < src_rows)
         {
-            int src_index = mad24(sy, src_step, sx * pixsize + src_offset);
-            storepix(loadpix(srcptr + src_index), dstptr + dst_index);
+            v0 = loadpix(srcptr + mad24(sy, src_step, mad24(sx, pixsize, src_offset)));
         }
-        else
-            storepix(scalar, dstptr + dst_index);
+
+        int dst_index = mad24(dy, dst_step, mad24(dx, pixsize, dst_offset));
+        storepix(v0, dstptr + dst_index);
     }
 }
 
@@ -122,44 +121,30 @@ __kernel void warpPerspective(__global const uchar * srcptr, int src_step, int s
 
     if (dx < dst_cols && dy < dst_rows)
     {
-        CT X0 = M[0] * dx + M[1] * dy + M[2];
-        CT Y0 = M[3] * dx + M[4] * dy + M[5];
-        CT W = M[6] * dx + M[7] * dy + M[8];
-        W = W != 0.0f ? INTER_TAB_SIZE / W : 0.0f;
-        int X = rint(X0 * W), Y = rint(Y0 * W);
+        float W = M[6] * dx + M[7] * dy + M[8];
+        float X0 = (M[0] * dx + M[1] * dy + M[2]) / W;
+        float Y0 = (M[3] * dx + M[4] * dy + M[5]) / W;
 
-        short sx = convert_short_sat(X >> INTER_BITS);
-        short sy = convert_short_sat(Y >> INTER_BITS);
-        short ay = (short)(Y & (INTER_TAB_SIZE - 1));
-        short ax = (short)(X & (INTER_TAB_SIZE - 1));
+        int sx = convert_short_rtn(X0);
+        int sy = convert_short_rtn(Y0);
+        float ay = Y0 - (CT)sy;
+        float ax = X0 - (CT)sx;
 
         WT v0 = (sx >= 0 && sx < src_cols && sy >= 0 && sy < src_rows) ?
-            convertToWT(loadpix(srcptr + mad24(sy, src_step, src_offset + sx * pixsize))) : scalar;
+            CONVERT_TO_WT(loadpix(srcptr + mad24(sy, src_step, src_offset + sx * pixsize))) : scalar;
         WT v1 = (sx+1 >= 0 && sx+1 < src_cols && sy >= 0 && sy < src_rows) ?
-            convertToWT(loadpix(srcptr + mad24(sy, src_step, src_offset + (sx+1) * pixsize))) : scalar;
+            CONVERT_TO_WT(loadpix(srcptr + mad24(sy, src_step, src_offset + (sx+1) * pixsize))) : scalar;
         WT v2 = (sx >= 0 && sx < src_cols && sy+1 >= 0 && sy+1 < src_rows) ?
-            convertToWT(loadpix(srcptr + mad24(sy+1, src_step, src_offset + sx * pixsize))) : scalar;
+            CONVERT_TO_WT(loadpix(srcptr + mad24(sy+1, src_step, src_offset + sx * pixsize))) : scalar;
         WT v3 = (sx+1 >= 0 && sx+1 < src_cols && sy+1 >= 0 && sy+1 < src_rows) ?
-            convertToWT(loadpix(srcptr + mad24(sy+1, src_step, src_offset + (sx+1) * pixsize))) : scalar;
-
-        float taby = 1.f/INTER_TAB_SIZE*ay;
-        float tabx = 1.f/INTER_TAB_SIZE*ax;
+            CONVERT_TO_WT(loadpix(srcptr + mad24(sy+1, src_step, src_offset + (sx+1) * pixsize))) : scalar;
 
         int dst_index = mad24(dy, dst_step, dst_offset + dx * pixsize);
 
-#if depth <= 4
-        int itab0 = convert_short_sat_rte( (1.0f-taby)*(1.0f-tabx) * INTER_REMAP_COEF_SCALE );
-        int itab1 = convert_short_sat_rte( (1.0f-taby)*tabx * INTER_REMAP_COEF_SCALE );
-        int itab2 = convert_short_sat_rte( taby*(1.0f-tabx) * INTER_REMAP_COEF_SCALE );
-        int itab3 = convert_short_sat_rte( taby*tabx * INTER_REMAP_COEF_SCALE );
-
-        WT val = v0 * itab0 +  v1 * itab1 + v2 * itab2 + v3 * itab3;
-        storepix(convertToT((val + (1 << (INTER_REMAP_COEF_BITS-1))) >> INTER_REMAP_COEF_BITS), dstptr + dst_index);
-#else
-        float tabx2 = 1.0f - tabx, taby2 = 1.0f - taby;
-        WT val = v0 * tabx2 * taby2 +  v1 * tabx * taby2 + v2 * tabx2 * taby + v3 * tabx * taby;
-        storepix(convertToT(val), dstptr + dst_index);
-#endif
+        v0 = fma(v1 - v0, ax, v0);
+        v2 = fma(v3 - v2, ax, v2);
+        v0 = fma(v2 - v0, ay, v0);
+        storepix(CONVERT_TO_T(v0), dstptr + dst_index);
     }
 }
 
@@ -201,7 +186,7 @@ __kernel void warpPerspective(__global const uchar * srcptr, int src_step, int s
             #pragma unroll
             for (int x = 0; x < 4; x++)
                 v[mad24(y, 4, x)] = (sx+x >= 0 && sx+x < src_cols && sy+y >= 0 && sy+y < src_rows) ?
-                    convertToWT(loadpix(srcptr + mad24(sy+y, src_step, src_offset + (sx+x) * pixsize))) : scalar;
+                    CONVERT_TO_WT(loadpix(srcptr + mad24(sy+y, src_step, src_offset + (sx+x) * pixsize))) : scalar;
 
         float tab1y[4], tab1x[4];
 
@@ -213,7 +198,7 @@ __kernel void warpPerspective(__global const uchar * srcptr, int src_step, int s
         int dst_index = mad24(dy, dst_step, dst_offset + dx * pixsize);
 
         WT sum = (WT)(0);
-#if depth <= 4
+#if SRC_DEPTH <= 4
         int itab[16];
 
         #pragma unroll
@@ -223,12 +208,12 @@ __kernel void warpPerspective(__global const uchar * srcptr, int src_step, int s
         #pragma unroll
         for (int i = 0; i < 16; i++)
             sum += v[i] * itab[i];
-        storepix(convertToT( (sum + (1 << (INTER_REMAP_COEF_BITS-1))) >> INTER_REMAP_COEF_BITS ), dstptr + dst_index);
+        storepix(CONVERT_TO_T( (sum + (1 << (INTER_REMAP_COEF_BITS-1))) >> INTER_REMAP_COEF_BITS ), dstptr + dst_index);
 #else
         #pragma unroll
         for (int i = 0; i < 16; i++)
             sum += v[i] * tab1y[(i>>2)] * tab1x[(i&3)];
-        storepix(convertToT( sum ), dstptr + dst_index);
+        storepix(CONVERT_TO_T( sum ), dstptr + dst_index);
 #endif
     }
 }

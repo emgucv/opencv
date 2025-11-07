@@ -47,6 +47,8 @@ namespace cv
 
 ///////////////////////////// Functions Declaration //////////////////////////////////////
 
+#define CV_RNG_COEFF 4164903690U
+
 /*
    Multiply-with-carry generator is used here:
    temp = ( A*X(n) + carry )
@@ -246,9 +248,9 @@ static void randf_16_or_32f( void* dst, int len_, int cn, uint64* state, const V
     *state = temp;
     hal::addRNGBias32f(arr, &p[0][0], len_, cn+1);
     if (depth == CV_16F)
-        hal::cvt32f16f(fbuf, (float16_t*)dst, len);
+        hal::cvt32f16f(fbuf, (hfloat*)dst, len);
     else if (depth == CV_16BF)
-        hal::cvt32f16bf(fbuf, (bfloat16_t*)dst, len);
+        hal::cvt32f16bf(fbuf, (bfloat*)dst, len);
 }
 
 static void
@@ -271,7 +273,7 @@ randf_64f( double* arr, int len_, int cn, uint64* state, const Vec2d* p, void*, 
 typedef void (*RandFunc)(uchar* arr, int len, int cn, uint64* state,
                          const void* p, void* tempbuf, int flags);
 
-static RandFunc randTab[][16] =
+static RandFunc randTab[CV_DEPTH_MAX][CV_DEPTH_MAX] =
 {
     {
         (RandFunc)randi_8u, (RandFunc)randi_8s, (RandFunc)randi_16u,
@@ -478,9 +480,9 @@ randnScale_16_or_32f(float* fbuf, float* dst, int len, int cn,
         }
     }
     if (depth == CV_16F)
-        hal::cvt32f16f(fbuf, (float16_t*)dst, len);
+        hal::cvt32f16f(fbuf, (hfloat*)dst, len);
     else if (depth == CV_16BF)
-        hal::cvt32f16bf(fbuf, (bfloat16_t*)dst, len);
+        hal::cvt32f16bf(fbuf, (bfloat*)dst, len);
 }
 
 #define DEF_RANDNSCALE_FUNC(suffix, T, PT) \
@@ -502,7 +504,7 @@ DEF_RANDNSCALE_FUNC(64f, double, double)
 typedef void (*RandnScaleFunc)(float* src, void* dst, int len, int cn,
                                const void* mean, const void* stddev, int flags);
 
-static RandnScaleFunc randnScaleTab[] =
+static RandnScaleFunc randnScaleTab[CV_DEPTH_MAX] =
 {
     (RandnScaleFunc)randnScale_8u, (RandnScaleFunc)randnScale_8s, (RandnScaleFunc)randnScale_16u,
     (RandnScaleFunc)randnScale_16s, (RandnScaleFunc)randnScale_32s, (RandnScaleFunc)randnScale_16_or_32f,
@@ -544,7 +546,7 @@ void RNG::fill( InputOutputArray _mat, int disttype,
 
     if( disttype == UNIFORM )
     {
-        _parambuf.allocate((sizeof(DivStruct)+sizeof(double)-1)/sizeof(double) + cn*2 + n1 + n2);
+        _parambuf.allocate(cn*(sizeof(DivStruct)+sizeof(double)-1)/sizeof(double) + cn*4);
         double* parambuf = _parambuf.data();
         double* p1 = _param1.ptr<double>();
         double* p2 = _param2.ptr<double>();
@@ -570,6 +572,7 @@ void RNG::fill( InputOutputArray _mat, int disttype,
         if( CV_IS_INT_TYPE(depth) )
         {
             Vec2l* ip = (Vec2l*)(parambuf + cn*2);
+            CV_DbgCheckLT((size_t)(cn*4 - 1), _parambuf.size(), "");
             for( j = 0, fast_int_mode = true; j < cn; j++ )
             {
                 double a = std::min(p1[j], p2[j]);
@@ -615,6 +618,7 @@ void RNG::fill( InputOutputArray _mat, int disttype,
             if( !fast_int_mode )
             {
                 DivStruct* ds = (DivStruct*)(ip + cn);
+                CV_DbgCheckLE((void*)(ds + cn), (void*)(parambuf + _parambuf.size()), "Last byte check");
                 for( j = 0; j < cn; j++ )
                 {
                     ds[j].delta = ip[j][1];
@@ -645,6 +649,7 @@ void RNG::fill( InputOutputArray _mat, int disttype,
             // so that a signed 32/64-bit integer X is transformed to
             // the range [param1.val[i], param2.val[i]) using
             // dparam[0][i]*X + dparam[1][i]
+            CV_DbgCheckLT((size_t)(cn*4 - 1), _parambuf.size(), "");
             if( depth != CV_64F )
             {
                 Vec2f* fp = (Vec2f*)(parambuf + cn*2);
@@ -670,7 +675,7 @@ void RNG::fill( InputOutputArray _mat, int disttype,
         }
         CV_Assert( func != 0 );
     }
-    else if( disttype == CV_RAND_NORMAL )
+    else if( disttype == RNG::NORMAL )
     {
         _parambuf.allocate(MAX(n1, cn) + MAX(n2, cn));
         double* parambuf = _parambuf.data();
@@ -708,7 +713,7 @@ void RNG::fill( InputOutputArray _mat, int disttype,
         CV_Assert( scaleFunc != 0 );
     }
     else
-        CV_Error( CV_StsBadArg, "Unknown distribution type" );
+        CV_Error( cv::Error::StsBadArg, "Unknown distribution type" );
 
     const Mat* arrays[] = {&mat, 0};
     uchar* ptr = 0;

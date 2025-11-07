@@ -3,6 +3,8 @@
 // of this distribution and at http://opencv.org/license.html.
 
 #include "../precomp.hpp"
+#include "../op_inf_engine.hpp"
+#include "../ie_ngraph.hpp"
 #include "layers_common.hpp"
 
 #include <algorithm> // for std::max & std::min
@@ -42,7 +44,8 @@ public:
 
     virtual bool supportBackend(int backendId) CV_OVERRIDE
     {
-        return backendId == DNN_BACKEND_OPENCV;
+        return backendId == DNN_BACKEND_OPENCV ||
+               (backendId == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH && reduction == REDUCTION::NONE);
     }
 
     virtual bool getMemoryShapes(const std::vector<MatShape> &inputs,
@@ -69,10 +72,28 @@ public:
         return false;
     }
 
+    virtual void getTypes(const std::vector<MatType>& inputs,
+        const int requiredOutputs,
+        const int requiredInternals,
+        std::vector<MatType>& outputs,
+        std::vector<MatType>& internals) const CV_OVERRIDE
+    {
+        CV_CheckEQ(inputs.size(), (size_t)3, "");
+        CV_CheckType(inputs[0], inputs[0] == CV_32F || inputs[0] == CV_32S || inputs[0] == CV_64S || inputs[0] == CV_16F || inputs[0] == CV_8U || inputs[0] == CV_8S || inputs[0] == CV_Bool, "");
+        CV_CheckType(inputs[1], inputs[1] == CV_64S || inputs[1] == CV_32S, "");
+        CV_CheckTypeEQ(inputs[2], inputs[0], "");
+        outputs.assign(1, inputs[0]);
+    }
+
     void forward(InputArrayOfArrays inputs_arr, OutputArrayOfArrays outputs_arr, OutputArrayOfArrays internals_arr) CV_OVERRIDE
     {
         CV_TRACE_FUNCTION();
         CV_TRACE_ARG_VALUE(name, "name", name.c_str());
+
+        if (inputs_arr.depth() == CV_16F) {
+            forward_fallback(inputs_arr, outputs_arr, internals_arr);
+            return;
+        }
 
         std::vector<Mat> inputs, outputs;
         inputs_arr.getMatVector(inputs);
@@ -83,77 +104,113 @@ public:
         const Mat& updates = inputs[2];
         Mat& out = outputs[0];
 
-        typeDispatch(outputs[0].type(), data, indices, updates, out);
+        indexTypeDispatch(outputs[0].type(), indices.type(), data, indices, updates, out);
     }
 
     // NOTE: This impl does not check whether indices have duplicate entries.
     //       The last duplicate entry will overwrite the previous.
-    template<typename T, typename Functor>
-    void forward_impl(const Functor& rd, const Mat& data, const Mat& indices, const Mat& updates, Mat& out)
-    {
-        data.copyTo(out);
+    template<typename T, typename T_INDEX, typename Functor>
+    void forward_impl(const Functor &reduce_operation, const Mat &input_mat, const Mat &indices_mat, const Mat &updates_mat, Mat& output_mat) {
+        input_mat.copyTo(output_mat);
 
-        const int* shape = data.size.p;
-        const size_t* step = data.step.p;
+        const auto &input_mat_shape = shape(input_mat);
+        std::vector<size_t> input_mat_step(input_mat_shape.size());
+        for (int i = 0; i < input_mat.dims; i++) {
+            input_mat_step[i] = static_cast<size_t>(input_mat.step.p[i] / sizeof(T));
+        }
 
-        const int ind_ndims = indices.dims;
-        const int* ind_shape = indices.size.p;
-        const T* p_indices = indices.ptr<const T>();
+        const int indices_mat_ndims = indices_mat.dims;
+        const auto &indices_mat_shape = shape(indices_mat);
 
-        const int upd_ndims = updates.dims;
-        const int* upd_shape = updates.size.p;
-        const T* p_updates = updates.ptr<const T>();
+        const int updates_mat_ndims = updates_mat.dims;
+        const auto &updates_mat_shape = shape(updates_mat);
 
-        T* p_out = out.ptr<T>();
-
-        int k = ind_shape[ind_ndims - 1]; // last dim of indices
-        size_t total = (size_t)(indices.total() / k);
+        int indices_last_dim = indices_mat_shape[indices_mat_ndims - 1]; // last dim of indices
 
         size_t updates_size = 1;
-        for (int i = ind_ndims - 1; i < upd_ndims; i++)
-            updates_size *= upd_shape[i];
+        for (int i = indices_mat_ndims - 1; i < updates_mat_ndims; i++)
+            updates_size *= updates_mat_shape[i];
 
-        size_t inp_start_offset = 0;
-        size_t ind_start_offset = 0;
-        size_t upd_start_offset = 0;
-        for (size_t i = 0; i < total; i++, ind_start_offset += k, upd_start_offset += updates_size)
-        {
-            const T* tmp_p_indices = p_indices + ind_start_offset;
-            inp_start_offset = 0;
-            for (int j = 0; j < k; j++)
-            {
-                CV_Assert(tmp_p_indices[j] < shape[j] && tmp_p_indices[j] > -shape[j]);
-                inp_start_offset += (((int)tmp_p_indices[j] + shape[j]) % shape[j]) * step[j];
+        auto fn = [&](const Range &r) {
+            size_t input_offset = 0,
+                   indices_offset = r.start * indices_last_dim,
+                   updates_offset = r.start * updates_size;
+            for (int i = r.start; i < r.end; i++) {
+                const T_INDEX* indices = indices_mat.ptr<const T_INDEX>();
+                const T* updates = updates_mat.ptr<const T>();
+                T* output = output_mat.ptr<T>();
+
+                input_offset = 0;
+                indices += indices_offset;
+                for (int j = 0; j < indices_last_dim; j++) {
+                    int index = *(indices + j);
+                    index = (index + input_mat_shape[j]) % input_mat_shape[j];
+                    CV_Assert(index < input_mat_shape[j] && index >= 0);
+                    input_offset += index * input_mat_step[j];
+                }
+
+                updates += updates_offset;
+                output += input_offset;
+                for (int j = 0; j < updates_size; j++) {
+                    output[j] = reduce_operation(output[j], updates[j]);
+                }
+
+                indices_offset += indices_last_dim;
+                updates_offset += updates_size;
             }
-            inp_start_offset /= sizeof(T);
+        };
 
-            const T* tmp_p_updates = p_updates + upd_start_offset;
-            T* tmp_p_out = p_out + inp_start_offset;
-            for (int j = 0; j < updates_size; j++)
-                tmp_p_out[j] = rd(tmp_p_out[j], tmp_p_updates[j]);
-        }
+        size_t total = (size_t)(indices_mat.total() / indices_last_dim);
+        double nstripes = (size_t)total * (indices_last_dim + updates_size) * (1 / 1024.0);
+        parallel_for_(Range(0, total), fn, nstripes);
     }
 
     template<typename... Args>
+    inline void indexTypeDispatch(const int type, const int index_type, Args&&... args)
+    {
+        switch (index_type)
+        {
+        case CV_32S:
+            typeDispatch<int32_t>(type, std::forward<Args>(args)...);
+            break;
+        case CV_64S:
+            typeDispatch<int64_t>(type, std::forward<Args>(args)...);
+            break;
+        default:
+            CV_Error(cv::Error::BadDepth, "Unsupported type.");
+        };
+    }
+
+
+    template<typename T_INDEX, typename... Args>
     inline void typeDispatch(const int type, Args&&... args)
     {
         switch (type)
         {
+            case CV_Bool:
+                reductionDispatch<bool, T_INDEX>(std::forward<Args>(args)...);
+                break;
             case CV_8U:
-                reductionDispatch<uint8_t>(std::forward<Args>(args)...);
+                reductionDispatch<uint8_t, T_INDEX>(std::forward<Args>(args)...);
+                break;
+            case CV_8S:
+                reductionDispatch<int8_t, T_INDEX>(std::forward<Args>(args)...);
                 break;
             case CV_32S:
-                reductionDispatch<int32_t>(std::forward<Args>(args)...);
+                reductionDispatch<int32_t, T_INDEX>(std::forward<Args>(args)...);
+                break;
+            case CV_64S:
+                reductionDispatch<int64_t, T_INDEX>(std::forward<Args>(args)...);
                 break;
             case CV_32F:
-                reductionDispatch<float>(std::forward<Args>(args)...);
+                reductionDispatch<float, T_INDEX>(std::forward<Args>(args)...);
                 break;
             default:
                 CV_Error(cv::Error::BadDepth, "Unsupported type.");
         };
     }
 
-    template<typename T, typename... Args>
+    template<typename T, typename T_INDEX, typename... Args>
     inline void reductionDispatch(Args&&... args)
     {
         switch (reduction)
@@ -161,37 +218,49 @@ public:
             case REDUCTION::NONE:
             {
                 auto rd = [](const T& a, const T& b) { return b; }; // a from input data, b from updates
-                forward_impl<T>(rd, std::forward<Args>(args)...);
+                forward_impl<T, T_INDEX>(rd, std::forward<Args>(args)...);
                 break;
             }
             case REDUCTION::ADD:
             {
                 auto rd = [](const T& a, const T& b) { return a + b; };
-                forward_impl<T>(rd, std::forward<Args>(args)...);
+                forward_impl<T, T_INDEX>(rd, std::forward<Args>(args)...);
                 break;
             }
             case REDUCTION::MUL:
             {
                 auto rd = [](const T& a, const T& b) { return a * b; };
-                forward_impl<T>(rd, std::forward<Args>(args)...);
+                forward_impl<T, T_INDEX>(rd, std::forward<Args>(args)...);
                 break;
             }
             case REDUCTION::MAX:
             {
                 auto rd = [](const T& a, const T& b) { return std::max(a, b); };
-                forward_impl<T>(rd, std::forward<Args>(args)...);
+                forward_impl<T, T_INDEX>(rd, std::forward<Args>(args)...);
                 break;
             }
             case REDUCTION::MIN:
             {
                 auto rd = [](const T& a, const T& b) { return std::min(a, b); };
-                forward_impl<T>(rd, std::forward<Args>(args)...);
+                forward_impl<T, T_INDEX>(rd, std::forward<Args>(args)...);
                 break;
             }
             default:
                 CV_Error(Error::StsBadArg, "Unsupported reduction.");
         };
     }
+
+#ifdef HAVE_DNN_NGRAPH
+    virtual Ptr<BackendNode> initNgraph(const std::vector<Ptr<BackendWrapper> >& inputs,
+                                        const std::vector<Ptr<BackendNode> >& nodes) CV_OVERRIDE
+    {
+        auto scatterND = std::make_shared<ov::op::v3::ScatterNDUpdate>(
+            nodes[0].dynamicCast<InfEngineNgraphNode>()->node,
+            nodes[1].dynamicCast<InfEngineNgraphNode>()->node,
+            nodes[2].dynamicCast<InfEngineNgraphNode>()->node);
+        return Ptr<BackendNode>(new InfEngineNgraphNode(scatterND));
+    }
+#endif  // HAVE_DNN_NGRAPH
 };
 
 Ptr<ScatterNDLayer> ScatterNDLayer::create(const LayerParams& params)

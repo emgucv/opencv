@@ -98,6 +98,14 @@ public:
         net.mutable_node()->DeleteSubrange(idx, 1);
     }
 
+    virtual inline bool isCommutativeOp(const std::string& type) const CV_OVERRIDE
+    {
+        return type == "Add" || type == "Sum" ||
+               type == "Mul" || type == "Prod" ||
+               type == "Max" || type == "Maximum" || type == "Minimum" ||
+               type == "Mean" || type == "SquaredDifference";
+    }
+
     tensorflow::GraphDef& net;
 };
 
@@ -282,24 +290,26 @@ public:
     {
         int input = addNodeToMatch("");
         int relu = addNodeToMatch("Relu", input);
-        int maxValue = addNodeToMatch("Const");
+        maxValueId = addNodeToMatch("Const");
         int clipValue = addNodeToMatch("Const");
-        int minimum = addNodeToMatch("Minimum", relu, maxValue);
+        int minimum = addNodeToMatch("Minimum", relu, maxValueId);
         addNodeToMatch("Maximum", minimum, clipValue);
 
         setFusedNode("Relu6", input);
     }
 
     virtual bool match(const Ptr<ImportGraphWrapper>& net, int nodeId,
-                       std::vector<int>& matchedNodesIds,
-                       std::vector<int>& targetNodesIds) CV_OVERRIDE
+                       std::vector<int>& matchedNodesIds) CV_OVERRIDE
     {
-        if (!Subgraph::match(net, nodeId, matchedNodesIds, targetNodesIds))
+        if (!Subgraph::match(net, nodeId, matchedNodesIds))
             return false;
-        tensorflow::NodeDef* node = net->getNode(matchedNodesIds.front() + 1).dynamicCast<TFNodeWrapper>()->node;
+        tensorflow::NodeDef* node = net->getNode(matchedNodesIds[maxValueId]).dynamicCast<TFNodeWrapper>()->node;
         Mat maxValue = getTensorContent(node->attr().at("value").tensor());
         return maxValue.type() == CV_32FC1 && maxValue.total() == 1 && maxValue.at<float>(0) == 6;
     }
+
+private:
+    int maxValueId;
 };
 
 // Keras' reshape stores output shape in separate Const nodes by one value.
@@ -328,15 +338,14 @@ public:
     }
 
     virtual bool match(const Ptr<ImportGraphWrapper>& net, int nodeId,
-                       std::vector<int>& matchedNodesIds,
-                       std::vector<int>& targetNodesIds) CV_OVERRIDE
+                       std::vector<int>& matchedNodesIds) CV_OVERRIDE
     {
         Ptr<ImportNodeWrapper> node = net->getNode(nodeId);
         if (node->getNumInputs() == 0)
             return false;
 
         inpName = node->getInputName(0);
-        return Subgraph::match(net, nodeId, matchedNodesIds, targetNodesIds);
+        return Subgraph::match(net, nodeId, matchedNodesIds);
     }
 
 
@@ -764,7 +773,7 @@ public:
     }
 };
 
-void simplifySubgraphs(tensorflow::GraphDef& net)
+void simplifySubgraphs(tensorflow::GraphDef& net, bool newEngine)
 {
     std::vector<Ptr<Subgraph> > subgraphs;
     subgraphs.push_back(Ptr<Subgraph>(new BatchNormSubgraph()));
@@ -782,13 +791,15 @@ void simplifySubgraphs(tensorflow::GraphDef& net)
     subgraphs.push_back(Ptr<Subgraph>(new UpsamplingKerasSubgraph("ResizeBilinear")));
     subgraphs.push_back(Ptr<Subgraph>(new SoftMaxSlimSubgraph()));
     subgraphs.push_back(Ptr<Subgraph>(new SoftMaxSlimV2Subgraph()));
-    subgraphs.push_back(Ptr<Subgraph>(new ReshapeAsShapeSubgraph()));
     subgraphs.push_back(Ptr<Subgraph>(new KerasMVNSubgraph()));
     subgraphs.push_back(Ptr<Subgraph>(new PReLUSubgraph(true)));
     subgraphs.push_back(Ptr<Subgraph>(new PReLUSubgraph(false)));
     subgraphs.push_back(Ptr<Subgraph>(new FlattenProdSubgraph()));
     subgraphs.push_back(Ptr<Subgraph>(new ResizeBilinearSubgraphDown()));
     subgraphs.push_back(Ptr<Subgraph>(new ClipByValueSubgraph()));
+
+    if (!newEngine)
+        subgraphs.push_back(Ptr<Subgraph>(new ReshapeAsShapeSubgraph()));
 
     for (int i = 0; i < net.node_size(); ++i)
     {
@@ -906,22 +917,22 @@ Mat getTensorContentRef_(const tensorflow::TensorProto& tensor)
         }
         case tensorflow::DT_HALF:
         {
-            Mat halfs;
             if (!content.empty())
             {
                 static const int kHalfSize = 2;
-                halfs = Mat(1, content.size() / kHalfSize, CV_16UC1, (void*)content.c_str());
+                Mat halfs(1, content.size() / kHalfSize, CV_16FC1, (void*)content.c_str());
+                halfs.convertTo(m, CV_32F);
             }
             else
             {
                 const RepeatedField<int32_t>& field = tensor.half_val();
                 CV_Assert(!field.empty());
                 Mat ints(1, field.size(), CV_32SC1, (void*)field.data());
+                Mat halfs;
                 ints.convertTo(halfs, CV_16UC1);
+                Mat halfsSigned(halfs.size(), CV_16FC1, halfs.data);
+                halfsSigned.convertTo(m, CV_32F);
             }
-            // Reinterpret as a signed shorts just for a convertFp16 call.
-            Mat halfsSigned(halfs.size(), CV_16SC1, halfs.data);
-            convertFp16(halfsSigned, m);
             break;
         }
         case tensorflow::DT_QUINT8:

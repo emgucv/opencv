@@ -50,13 +50,8 @@
 
 #ifdef HAVE_DNN_NGRAPH
 #include "../ie_ngraph.hpp"
-#if INF_ENGINE_VER_MAJOR_GT(INF_ENGINE_RELEASE_2020_4)
-#include <ngraph/op/roi_pooling.hpp>
-#include <ngraph/op/psroi_pooling.hpp>
-#else
-#include <ngraph/op/experimental/layers/roi_pooling.hpp>
-#include <ngraph/op/experimental/layers/psroi_pooling.hpp>
-#endif
+#include <openvino/op/roi_pooling.hpp>
+#include <openvino/op/psroi_pooling.hpp>
 #endif
 
 #include "../op_vkcom.hpp"
@@ -278,7 +273,7 @@ public:
         std::vector<UMat> inputs;
         std::vector<UMat> outputs;
 
-        bool use_half = (inps.depth() == CV_16S);
+        bool use_half = (inps.depth() == CV_16F);
         inps.getUMatVector(inputs);
         outs.getUMatVector(outputs);
 
@@ -338,7 +333,7 @@ public:
             CV_OCL_RUN(IS_DNN_OPENCL_TARGET(preferableTarget),
                        forward_ocl(inputs_arr, outputs_arr, internals_arr))
         }
-        if (inputs_arr.depth() == CV_16S)
+        if (inputs_arr.depth() == CV_16F)
         {
             forward_fallback(inputs_arr, outputs_arr, internals_arr);
             return;
@@ -353,8 +348,12 @@ public:
             case MAX:
             {
                 CV_Assert_N(inputs.size() == 1, !computeMaxIdx || outputs.size() == 2);
-                Mat mask = computeMaxIdx ? outputs[1] : Mat();
+                Mat mask;
+                if (computeMaxIdx)
+                    mask.create(shape(outputs[1]), CV_32F);
                 maxPooling(inputs[0], outputs[0], mask);
+                if (computeMaxIdx)
+                    mask.convertTo(outputs[1], CV_64S);
                 break;
             }
             case AVE: case SUM:
@@ -413,7 +412,16 @@ public:
 
             config.input_shape.assign(std::begin(input_shape), std::end(input_shape));
 
-            return make_cuda_node<cuda4dnn::MaxPoolingOp>(preferableTarget, std::move(context->stream), config);
+            int indicesType = outputs[1]->getHostMatDepth();
+            CV_CheckType(indicesType, indicesType == CV_32S || indicesType == CV_64S, "Unsupported indices type");
+
+            if (indicesType == CV_32S)
+                return make_cuda_node_with_indices<cuda4dnn::MaxPoolingOp, int32_t>(preferableTarget, inputs[0]->getHostMatDepth(), std::move(context->stream), config);
+            else if (indicesType == CV_64S)
+                return make_cuda_node_with_indices<cuda4dnn::MaxPoolingOp, int64_t>(preferableTarget, inputs[0]->getHostMatDepth(), std::move(context->stream), config);
+
+            CV_Error(Error::BadDepth, "Unsupported indices type");
+            return Ptr<BackendNode>();
         }
 
         if (input_shape.size() == 3)
@@ -563,20 +571,20 @@ public:
         CV_Assert_N((inputs.size() == 1 && (type == MAX || type == AVE || type == SUM)) || inputs.size() == 2, nodes.size() == inputs.size());
         auto& ieInpNode = nodes[0].dynamicCast<InfEngineNgraphNode>()->node;
 
-        ngraph::op::PadType pad_type = ngraph::op::PadType::EXPLICIT;
+        ov::op::PadType pad_type = ov::op::PadType::EXPLICIT;
         if (!padMode.empty())
-            pad_type = padMode == "VALID" ? ngraph::op::PadType::VALID : ngraph::op::PadType::SAME_UPPER;
+            pad_type = padMode == "VALID" ? ov::op::PadType::VALID : ov::op::PadType::SAME_UPPER;
 
-        auto rounding_type = ceilMode ? ngraph::op::RoundingType::CEIL : ngraph::op::RoundingType::FLOOR;
+        auto rounding_type = ceilMode ? ov::op::RoundingType::CEIL : ov::op::RoundingType::FLOOR;
         if (type == AVE) {
             auto exclude_pad = !avePoolPaddedArea;
-            auto ave_pool = std::make_shared<ngraph::op::v1::AvgPool>(ieInpNode, ngraph::Strides(strides),
-                            ngraph::Shape(pads_begin), ngraph::Shape(pads_end), ngraph::Shape(kernel_size),
+            auto ave_pool = std::make_shared<ov::op::v1::AvgPool>(ieInpNode, ov::Strides(strides),
+                            ov::Shape(pads_begin), ov::Shape(pads_end), ov::Shape(kernel_size),
                             exclude_pad, rounding_type, pad_type);
             return Ptr<BackendNode>(new InfEngineNgraphNode(ave_pool));
         }
         else if (type == SUM) {
-            ngraph::Shape inpShape = ieInpNode.get_shape();
+            ov::Shape inpShape = ieInpNode.get_shape();
             CV_Assert(inpShape.size() == 2 + kernel_size.size());
             std::vector<int64_t> axes;
             for (size_t i = 0; i < kernel_size.size(); i++)
@@ -584,37 +592,33 @@ public:
                 if (inpShape[2 + i] == kernel_size[i])
                     axes.push_back(2 + i);
             }
-            auto reduction_axes = std::make_shared<ngraph::op::Constant>(ngraph::element::i64, ngraph::Shape{axes.size()}, axes);
-            auto reduce_sum = std::make_shared<ngraph::op::v1::ReduceSum>(ieInpNode, reduction_axes, true);
+            auto reduction_axes = std::make_shared<ov::op::v0::Constant>(ov::element::i64, ov::Shape{axes.size()}, axes);
+            auto reduce_sum = std::make_shared<ov::op::v1::ReduceSum>(ieInpNode, reduction_axes, true);
             return Ptr<BackendNode>(new InfEngineNgraphNode(reduce_sum));
         }
         else if (type == MAX) {
-            std::shared_ptr<ngraph::Node> max_pool;
+            std::shared_ptr<ov::Node> max_pool;
             if (computeMaxIdx) {
-#if INF_ENGINE_VER_MAJOR_GE(INF_ENGINE_RELEASE_2022_1)
                 std::vector<size_t> dilations(kernel_size.size(), 1);
-                max_pool = std::make_shared<ngraph::op::v8::MaxPool>(ieInpNode, ngraph::Strides(strides), ngraph::Strides(dilations),
-                                ngraph::Shape(pads_begin), ngraph::Shape(pads_end), ngraph::Shape(kernel_size),
+                max_pool = std::make_shared<ov::op::v8::MaxPool>(ieInpNode, ov::Strides(strides), ov::Strides(dilations),
+                                ov::Shape(pads_begin), ov::Shape(pads_end), ov::Shape(kernel_size),
                                 rounding_type, pad_type);
-#else
-                CV_Error(Error::StsNotImplemented, "OpenVINO MaxPool with indices");
-#endif
             } else {
-                max_pool = std::make_shared<ngraph::op::v1::MaxPool>(ieInpNode, ngraph::Strides(strides),
-                                ngraph::Shape(pads_begin), ngraph::Shape(pads_end), ngraph::Shape(kernel_size),
+                max_pool = std::make_shared<ov::op::v1::MaxPool>(ieInpNode, ov::Strides(strides),
+                                ov::Shape(pads_begin), ov::Shape(pads_end), ov::Shape(kernel_size),
                                 rounding_type, pad_type);
             }
             return Ptr<BackendNode>(new InfEngineNgraphNode(max_pool));
         }
         else if (type == ROI) {
             auto& coords = nodes[1].dynamicCast<InfEngineNgraphNode>()->node;
-            auto roi = std::make_shared<ngraph::op::ROIPooling>(ieInpNode, coords,
-                       ngraph::Shape{(size_t)pooledSize.height, (size_t)pooledSize.width}, spatialScale, "max");
+            auto roi = std::make_shared<ov::op::v0::ROIPooling>(ieInpNode, coords,
+                       ov::Shape{(size_t)pooledSize.height, (size_t)pooledSize.width}, spatialScale, "max");
             return Ptr<BackendNode>(new InfEngineNgraphNode(roi));
         }
         else if (type == PSROI) {
             auto& coords = nodes[1].dynamicCast<InfEngineNgraphNode>()->node;
-            auto psroi = std::make_shared<ngraph::op::PSROIPooling>(ieInpNode, coords,
+            auto psroi = std::make_shared<ov::op::v0::PSROIPooling>(ieInpNode, coords,
                          (size_t)psRoiOutChannels, (size_t)pooledSize.width, spatialScale, 1, 1, "average");
             return Ptr<BackendNode>(new InfEngineNgraphNode(psroi));
         }
@@ -1246,9 +1250,27 @@ public:
         int numOutputs = requiredOutputs ? requiredOutputs : (type == MAX ? 2 : 1);
         CV_Assert(numOutputs == 1 || (numOutputs == 2 && type == MAX));
 
-        outputs.assign(numOutputs, outShape);
+        outputs.assign(numOutputs, MatShape(outShape));
 
         return false;
+    }
+
+    virtual void getTypes(const std::vector<MatType>& inputs,
+        const int requiredOutputs,
+        const int requiredInternals,
+        std::vector<MatType>& outputs,
+        std::vector<MatType>& internals) const CV_OVERRIDE
+    {
+        CV_Assert(inputs.size());
+        if (preferableTarget == DNN_TARGET_OPENCL_FP16)
+            CV_CheckType(inputs[0], inputs[0] == CV_16F, "");
+        else
+            CV_CheckType(inputs[0], inputs[0] == CV_32F, "");
+
+        outputs.push_back(inputs[0]);
+        if (type == MAX && requiredOutputs == 2) {
+            outputs.push_back(CV_64S);
+        }
     }
 
     bool updateMemoryShapes(const std::vector<MatShape> &inputs) CV_OVERRIDE
@@ -1257,23 +1279,6 @@ public:
         CV_Assert(inputs[0][dims - 1] > 0 && inputs[0][dims - 2] > 0);
         shapesInitialized = true;
         return true;
-    }
-
-    virtual bool tryQuantize(const std::vector<std::vector<float> > &scales,
-                             const std::vector<std::vector<int> > &zeropoints, LayerParams& params) CV_OVERRIDE
-    {
-        if (type == MAX && !computeMaxIdx)
-        {
-            return true;
-        }
-        else if (type == AVE || type == SUM)
-        {
-            float multiplier = scales[0][0] / scales[1][0];
-            params.set("multiplier", multiplier);
-            params.set("input_zeropoint", zeropoints[0][0]);
-            return true;
-        }
-        return false;
     }
 
     virtual int64 getFLOPS(const std::vector<MatShape> &inputs,

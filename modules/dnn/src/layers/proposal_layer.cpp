@@ -10,11 +10,7 @@
 
 #ifdef HAVE_DNN_NGRAPH
 #include "../ie_ngraph.hpp"
-#if INF_ENGINE_VER_MAJOR_GT(INF_ENGINE_RELEASE_2020_4)
-#include <ngraph/op/proposal.hpp>
-#else
-#include <ngraph/op/experimental/layers/proposal.hpp>
-#endif
+#include <openvino/op/proposal.hpp>
 #endif
 
 namespace cv { namespace dnn {
@@ -166,16 +162,16 @@ public:
         // Scores permute layer.
         Mat scores = getObjectScores(inputs[0]);
         layerInputs.assign(1, scores);
-        layerOutputs.assign(1, Mat(shape(scores.size[0], scores.size[2],
-                                         scores.size[3], scores.size[1]), CV_32FC1));
+        layerOutputs.assign(1, Mat({scores.size[0], scores.size[2],
+                                    scores.size[3], scores.size[1]}, CV_32FC1));
         scoresPermute->finalize(layerInputs, layerOutputs);
 
         // BBox predictions permute layer.
         const Mat& bboxDeltas = inputs[1];
         CV_Assert(bboxDeltas.dims == 4);
         layerInputs.assign(1, bboxDeltas);
-        layerOutputs.assign(1, Mat(shape(bboxDeltas.size[0], bboxDeltas.size[2],
-                                         bboxDeltas.size[3], bboxDeltas.size[1]), CV_32FC1));
+        layerOutputs.assign(1, Mat({bboxDeltas.size[0], bboxDeltas.size[2],
+                                    bboxDeltas.size[3], bboxDeltas.size[1]}, CV_32FC1));
         deltasPermute->finalize(layerInputs, layerOutputs);
     }
 
@@ -186,7 +182,7 @@ public:
         std::vector<UMat> outputs;
         std::vector<UMat> internals;
 
-        if (inputs_.depth() == CV_16S)
+        if (inputs_.depth() == CV_16F)
             return false;
 
         inputs_.getUMatVector(inputs);
@@ -269,7 +265,7 @@ public:
                    OCL_PERFORMANCE_CHECK(ocl::Device::getDefault().isIntel()),
                    forward_ocl(inputs_arr, outputs_arr, internals_arr))
 
-        if (inputs_arr.depth() == CV_16S)
+        if (inputs_arr.depth() == CV_16F)
         {
             forward_fallback(inputs_arr, outputs_arr, internals_arr);
             return;
@@ -291,9 +287,22 @@ public:
         Mat& detections = internals[3];
 
         CV_Assert(imInfo.total() >= 2);
+        int imInfo0, imInfo1;
+        if (imInfo.type() == CV_32F) {
+            imInfo0 = cvRound(imInfo.at<float>(0));
+            imInfo1 = cvRound(imInfo.at<float>(1));
+        } else if (imInfo.type() == CV_32S) {
+            imInfo0 = imInfo.at<int>(0);
+            imInfo1 = imInfo.at<int>(1);
+        } else if (imInfo.type() == CV_64S) {
+            imInfo0 = (int)imInfo.at<int64_t>(0);
+            imInfo1 = (int)imInfo.at<int64_t>(1);
+        } else {
+            CV_Error(Error::StsBadArg, "unsupported type of input[2]: must be 32f, 32s or 64s");
+        }
         // We've chosen the smallest data type because we need just a shape from it.
         // We don't allocate memory but just need the shape is correct.
-        Mat fakeImageBlob(shape(1, 1, imInfo.at<float>(0), imInfo.at<float>(1)), CV_8UC1, NULL);
+        Mat fakeImageBlob({1, 1, imInfo0, imInfo1}, CV_8UC1, NULL);
 
         // Generate prior boxes.
         std::vector<Mat> layerInputs(2), layerOutputs(1, priorBoxes);
@@ -344,7 +353,7 @@ public:
                                         const std::vector<Ptr<BackendNode> >& nodes) CV_OVERRIDE
     {
         CV_Assert(nodes.size() == 3);
-        ngraph::op::ProposalAttrs attr;
+        ov::op::v0::Proposal::Attributes attr;
         attr.base_size     = baseSize;
         attr.nms_thresh    = nmsThreshold;
         attr.feat_stride   = featStride;
@@ -367,12 +376,12 @@ public:
         auto& image_shape  = nodes[2].dynamicCast<InfEngineNgraphNode>()->node;
 
         CV_Assert_N(image_shape.get_shape().size() == 2, image_shape.get_shape().front() == 1);
-        auto shape   = std::make_shared<ngraph::op::Constant>(ngraph::element::i64,
-                       ngraph::Shape{1},
+        auto shape   = std::make_shared<ov::op::v0::Constant>(ov::element::i64,
+                       ov::Shape{1},
                        std::vector<int64_t>{(int64_t)image_shape.get_shape().back()});
-        auto reshape = std::make_shared<ngraph::op::v1::Reshape>(image_shape, shape, true);
+        auto reshape = std::make_shared<ov::op::v1::Reshape>(image_shape, shape, true);
 
-        auto proposal = std::make_shared<ngraph::op::Proposal>(class_probs, class_logits, reshape, attr);
+        auto proposal = std::make_shared<ov::op::v0::Proposal>(class_probs, class_logits, reshape, attr);
         return Ptr<BackendNode>(new InfEngineNgraphNode(proposal));
     }
 #endif  // HAVE_DNN_NGRAPH

@@ -52,13 +52,13 @@
 
 #ifdef HAVE_OPENCL
 #include "opencl_kernels_dnn.hpp"
+#include "../ocl4dnn/include/common.hpp"
 #endif
 
 #ifdef HAVE_CUDA
 #include "../cuda4dnn/primitives/concat.hpp"
 using namespace cv::dnn::cuda4dnn;
 #endif
-
 namespace cv
 {
 namespace dnn
@@ -109,11 +109,25 @@ public:
                 }
             }
 
-            axisSum += curShape[cAxis];
+            axisSum += curShape.dims >= cAxis ? curShape[cAxis] : 1;
         }
+        outputs[0].dims = std::max(outputs[0].dims, 1);
         outputs[0][cAxis] = axisSum;
         return false;
     }
+
+    virtual  void getTypes(const std::vector<MatType>& inputs,
+        const int requiredOutputs,
+        const int requiredInternals,
+        std::vector<MatType>& outputs,
+        std::vector<MatType>& internals) const CV_OVERRIDE
+    {
+        CV_Assert(inputs.size());
+        for (int i = 1; i < inputs.size(); i++)
+            CV_CheckTypeEQ(inputs[i], inputs[0], "All input types should be equal");
+        outputs.assign(1, inputs[0]);
+    }
+
 
     virtual bool supportBackend(int backendId) CV_OVERRIDE
     {
@@ -163,14 +177,14 @@ public:
             for( i = 0; i < ninputs; i++ )
             {
                 Mat& inp = inputs[i];
-                CV_Assert( inp.isContinuous() && (inp.type() == CV_32F || inp.type() == CV_16S || inp.type() == CV_8S) &&
+                CV_Assert( inp.isContinuous() && (inp.type() == CV_32F || inp.type() == CV_16F || inp.type() == CV_8S) &&
                            inp.dims == 4 && inp.size[0] == output.size[0] &&
                            inp.size[2] == output.size[2] &&
                            inp.size[3] == output.size[3] );
                 nchannels += inp.size[1];
             }
             CV_Assert( nchannels == output.size[1] );
-            CV_Assert( output.isContinuous() && (output.type() == CV_32F || output.type() == CV_16S || output.type() == CV_8S) );
+            CV_Assert( output.isContinuous() && (output.type() == CV_32F || output.type() == CV_16F || output.type() == CV_8S) );
 
             cc.chptrs.resize(nchannels*batchsz);
 
@@ -220,8 +234,6 @@ public:
     {
         std::vector<UMat> inputs;
         std::vector<UMat> outputs;
-
-        bool use_half = (inps.depth() == CV_16S);
         inps.getUMatVector(inputs);
         outs.getUMatVector(outputs);
 
@@ -235,8 +247,9 @@ public:
         int num_concats = total(shape(inputs[0]), 0, cAxis);
         int offset_concat_axis = 0;
         UMat& outMat = outputs[0];
-        String buildopt = format(" -DDtype=%s", (use_half) ? "half" : "float");
-        String kname = format("concat_%s", use_half ? "half" : "float");
+        String matType = matTypeToOclType(inputs[0].type());
+        String buildopt = " -DDtype=" + matType;
+        String kname = "concat_" + matType;
 
         for (size_t i = 0; i < inputs.size(); i++)
         {
@@ -272,8 +285,7 @@ public:
         CV_TRACE_FUNCTION();
         CV_TRACE_ARG_VALUE(name, "name", name.c_str());
 
-        CV_OCL_RUN(IS_DNN_OPENCL_TARGET(preferableTarget) &&
-                   inputs_arr.depth() != CV_8S,
+        CV_OCL_RUN(IS_DNN_OPENCL_TARGET(preferableTarget),
                    forward_ocl(inputs_arr, outputs_arr, internals_arr))
 
         std::vector<Mat> inputs, outputs;
@@ -286,7 +298,7 @@ public:
         if (padding)
             outMat.setTo(paddingValue);
 
-        if( cAxis == 1 && outMat.dims == 4 && !padding)
+        if(cAxis == 1 && outMat.dims == 4 && !padding && (inputs[0].depth() == CV_32F || inputs[0].depth() == CV_8S))
         {
             int nstripes = getNumThreads();
             if (outMat.type() == CV_8S)
@@ -301,6 +313,8 @@ public:
             ranges[cAxis].start = 0;
             for (size_t i = 0; i < inputs.size(); i++)
             {
+                if (inputs[i].empty())
+                    continue;
                 ranges[cAxis].end = ranges[cAxis].start + inputs[i].size[cAxis];
                 for (int j = 0; j < outMat.dims; ++j)
                 {
@@ -325,7 +339,10 @@ public:
 
         auto input_wrapper = inputs[0].dynamicCast<CUDABackendWrapper>();
         auto concat_axis = normalize_axis(axis, input_wrapper->getRank());
-        return make_cuda_node<cuda4dnn::ConcatOp>(preferableTarget, std::move(context->stream), concat_axis, padding);
+        if (inputs[0]->getHostMatDepth() == CV_Bool)
+            return make_cuda_node_bool<cuda4dnn::ConcatOp>(std::move(context->stream), concat_axis, padding);
+        else
+            return make_cuda_node_with_type<cuda4dnn::ConcatOp>(preferableTarget, inputs[0]->getHostMatDepth(), std::move(context->stream), concat_axis, padding);
     }
 #endif
 
@@ -372,7 +389,7 @@ public:
         std::vector<size_t> maxDims(numDims, 0);
 
         CV_Assert(inputs.size() == nodes.size());
-        ngraph::OutputVector inp_nodes;
+        ov::OutputVector inp_nodes;
         for (int i = 0; i < nodes.size(); ++i)
         {
             auto inp = nodes[i].dynamicCast<InfEngineNgraphNode>()->node;
@@ -398,14 +415,14 @@ public:
             }
             if (needPadding)
             {
-                inp_nodes[i] = std::make_shared<ngraph::op::v1::Pad>(
+                inp_nodes[i] = std::make_shared<ov::op::v1::Pad>(
                     inp_nodes[i],
-                    std::make_shared<ngraph::op::Constant>(ngraph::element::i64, ngraph::Shape{begins.size()}, begins.data()),
-                    std::make_shared<ngraph::op::Constant>(ngraph::element::i64, ngraph::Shape{ends.size()}, ends.data()),
-                    ngraph::op::PadMode::CONSTANT);
+                    std::make_shared<ov::op::v0::Constant>(ov::element::i64, ov::Shape{begins.size()}, begins.data()),
+                    std::make_shared<ov::op::v0::Constant>(ov::element::i64, ov::Shape{ends.size()}, ends.data()),
+                    ov::op::PadMode::CONSTANT);
             }
         }
-        auto concat = std::make_shared<ngraph::op::Concat>(inp_nodes, cAxis);
+        auto concat = std::make_shared<ov::op::v0::Concat>(inp_nodes, cAxis);
         return Ptr<BackendNode>(new InfEngineNgraphNode(concat));
     }
 #endif  // HAVE_DNN_NGRAPH
@@ -489,14 +506,6 @@ public:
         return tvBackendNode;
     }
 #endif // HAVE_TIMVX
-
-    virtual bool tryQuantize(const std::vector<std::vector<float> > &scales,
-                             const std::vector<std::vector<int> > &zeropoints, LayerParams& params) CV_OVERRIDE
-    {
-        if (padding)
-            params.set("padding_value", zeropoints[1][0]);
-        return true;
-    }
 
 #ifdef HAVE_WEBNN
     virtual Ptr<BackendNode> initWebnn(const std::vector<Ptr<BackendWrapper> >& inputs, const std::vector<Ptr<BackendNode> >& nodes) CV_OVERRIDE

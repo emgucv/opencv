@@ -53,7 +53,6 @@
 #include "opencv2/core/hal/intrin.hpp"
 #include "opencv2/core/utils/buffer_area.private.hpp"
 
-#include "opencv2/core/openvx/ovx_defs.hpp"
 #include "resize.hpp"
 
 #include "opencv2/core/softfloat.hpp"
@@ -95,6 +94,10 @@ static void hlineResize(ET* src, int cn, int *ofst, FT* m, FT* dst, int dst_min,
             }
         }
     }
+    // Avoid reading a potentially unset ofst, leading to a random memory read.
+    if (i >= dst_width) {
+        return;
+    }
     ET* src_last = src + cn*ofst[dst_width - 1];
     for (; i < dst_width; i++) // Points that fall right from src image so became equal to rightmost src point
     {
@@ -126,6 +129,10 @@ template <typename ET, typename FT> struct hline<ET, FT, 2, true, 1>
             ET* px = src + ofst[i];
             *(dst++) = m[0] * px[0] + m[1] * px[1];
         }
+        // Avoid reading a potentially unset ofst, leading to a random memory read.
+        if (i >= dst_width) {
+            return;
+        }
         src0 = (src + ofst[dst_width - 1])[0];
         for (; i < dst_width; i++) // Points that fall right from src image so became equal to rightmost src point
         {
@@ -149,6 +156,10 @@ template <typename ET, typename FT> struct hline<ET, FT, 2, true, 2>
             ET* px = src + 2*ofst[i];
             *(dst++) = m[0] * px[0] + m[1] * px[2];
             *(dst++) = m[0] * px[1] + m[1] * px[3];
+        }
+        // Avoid reading a potentially unset ofst, leading to a random memory read.
+        if (i >= dst_width) {
+            return;
         }
         src0 = (src + 2*ofst[dst_width - 1])[0];
         src1 = (src + 2*ofst[dst_width - 1])[1];
@@ -177,6 +188,10 @@ template <typename ET, typename FT> struct hline<ET, FT, 2, true, 3>
             *(dst++) = m[0] * px[0] + m[1] * px[3];
             *(dst++) = m[0] * px[1] + m[1] * px[4];
             *(dst++) = m[0] * px[2] + m[1] * px[5];
+        }
+        // Avoid reading a potentially unset ofst, leading to a random memory read.
+        if (i >= dst_width) {
+            return;
         }
         src0 = (src + 3*ofst[dst_width - 1])[0];
         src1 = (src + 3*ofst[dst_width - 1])[1];
@@ -210,6 +225,10 @@ template <typename ET, typename FT> struct hline<ET, FT, 2, true, 4>
             *(dst++) = m[0] * px[2] + m[1] * px[6];
             *(dst++) = m[0] * px[3] + m[1] * px[7];
         }
+        // Avoid reading a potentially unset ofst, leading to a random memory read.
+        if (i >= dst_width) {
+            return;
+        }
         src0 = (src + 4*ofst[dst_width - 1])[0];
         src1 = (src + 4*ofst[dst_width - 1])[1];
         src2 = (src + 4*ofst[dst_width - 1])[2];
@@ -238,6 +257,10 @@ template <typename ET, typename FT> struct hline<ET, FT, 4, true, 1>
             ET* px = src + ofst[i];
             *(dst++) = m[0] * src[0] + m[1] * src[1] + m[2] * src[2] + m[3] * src[3];
         }
+        // Avoid reading a potentially unset ofst, leading to a random memory read.
+        if (i >= dst_width) {
+            return;
+        }
         src0 = (src + ofst[dst_width - 1])[0];
         for (; i < dst_width; i++) // Points that fall right from src image so became equal to rightmost src point
         {
@@ -261,6 +284,10 @@ template <typename ET, typename FT> struct hline<ET, FT, 4, true, 2>
             ET* px = src + 2*ofst[i];
             *(dst++) = m[0] * src[0] + m[1] * src[2] + m[2] * src[4] + m[3] * src[6];
             *(dst++) = m[0] * src[1] + m[1] * src[3] + m[2] * src[5] + m[3] * src[7];
+        }
+        // Avoid reading a potentially unset ofst, leading to a random memory read.
+        if (i >= dst_width) {
+            return;
         }
         src0 = (src + 2*ofst[dst_width - 1])[0];
         src1 = (src + 2*ofst[dst_width - 1])[1];
@@ -289,6 +316,10 @@ template <typename ET, typename FT> struct hline<ET, FT, 4, true, 3>
             *(dst++) = m[0] * src[0] + m[1] * src[3] + m[2] * src[6] + m[3] * src[ 9];
             *(dst++) = m[0] * src[1] + m[1] * src[4] + m[2] * src[7] + m[3] * src[10];
             *(dst++) = m[0] * src[2] + m[1] * src[5] + m[2] * src[8] + m[3] * src[11];
+        }
+        // Avoid reading a potentially unset ofst, leading to a random memory read.
+        if (i >= dst_width) {
+            return;
         }
         src0 = (src + 3*ofst[dst_width - 1])[0];
         src1 = (src + 3*ofst[dst_width - 1])[1];
@@ -321,6 +352,10 @@ template <typename ET, typename FT> struct hline<ET, FT, 4, true, 4>
             *(dst++) = m[0] * src[1] + m[1] * src[5] + m[2] * src[ 9] + m[3] * src[13];
             *(dst++) = m[0] * src[2] + m[1] * src[6] + m[2] * src[10] + m[3] * src[14];
             *(dst++) = m[0] * src[3] + m[1] * src[7] + m[2] * src[11] + m[3] * src[15];
+        }
+        // Avoid reading a potentially unset ofst, leading to a random memory read.
+        if (i >= dst_width) {
+            return;
         }
         src0 = (src + 4*ofst[dst_width - 1])[0];
         src1 = (src + 4*ofst[dst_width - 1])[1];
@@ -383,6 +418,10 @@ void hlineResizeCn<uint8_t, ufixedpoint16, 2, true, 1>(uint8_t* src, int, int *o
         uint8_t* px = src + ofst[i];
         *(dst++) = m[0] * px[0] + m[1] * px[1];
     }
+    // Avoid reading a potentially unset ofst, leading to a random memory read.
+    if (i >= dst_width) {
+        return;
+    }
     src_0 = (src + ofst[dst_width - 1])[0];
 #if (CV_SIMD || CV_SIMD_SCALABLE)
     v_src_0 = vx_setall_u16(*((uint16_t*)&src_0));
@@ -438,6 +477,10 @@ void hlineResizeCn<uint8_t, ufixedpoint16, 2, true, 2>(uint8_t* src, int, int *o
         uint8_t* px = src + 2 * ofst[i];
         *(dst++) = m[0] * px[0] + m[1] * px[2];
         *(dst++) = m[0] * px[1] + m[1] * px[3];
+    }
+    // Avoid reading a potentially unset ofst, leading to a random memory read.
+    if (i >= dst_width) {
+        return;
     }
     ((ufixedpoint16*)(srccn.w))[0] = (src + 2 * ofst[dst_width - 1])[0]; ((ufixedpoint16*)(srccn.w))[1] = (src + 2 * ofst[dst_width - 1])[1];
 #if (CV_SIMD || CV_SIMD_SCALABLE)
@@ -510,6 +553,10 @@ void hlineResizeCn<uint8_t, ufixedpoint16, 2, true, 3>(uint8_t* src, int, int *o
         *(dst++) = m[0] * px[0] + m[1] * px[3];
         *(dst++) = m[0] * px[1] + m[1] * px[4];
         *(dst++) = m[0] * px[2] + m[1] * px[5];
+    }
+    // Avoid reading a potentially unset ofst, leading to a random memory read.
+    if (i >= dst_width) {
+        return;
     }
     ((ufixedpoint16*)(srccn.w))[0] = (src + 3*ofst[dst_width - 1])[0];
     ((ufixedpoint16*)(srccn.w))[1] = (src + 3*ofst[dst_width - 1])[1];
@@ -584,6 +631,10 @@ void hlineResizeCn<uint8_t, ufixedpoint16, 2, true, 4>(uint8_t* src, int, int *o
         *(dst++) = m[0] * px[2] + m[1] * px[6];
         *(dst++) = m[0] * px[3] + m[1] * px[7];
     }
+    // Avoid reading a potentially unset ofst, leading to a random memory read.
+    if (i >= dst_width) {
+        return;
+    }
     ((ufixedpoint16*)(srccn.w))[0] = (src + 4 * ofst[dst_width - 1])[0]; ((ufixedpoint16*)(srccn.w))[1] = (src + 4 * ofst[dst_width - 1])[1];
     ((ufixedpoint16*)(srccn.w))[2] = (src + 4 * ofst[dst_width - 1])[2]; ((ufixedpoint16*)(srccn.w))[3] = (src + 4 * ofst[dst_width - 1])[3];
 #if (CV_SIMD || CV_SIMD_SCALABLE)
@@ -634,6 +685,10 @@ void hlineResizeCn<uint16_t, ufixedpoint32, 2, true, 1>(uint16_t* src, int, int 
     {
         uint16_t* px = src + ofst[i];
         *(dst++) = m[0] * px[0] + m[1] * px[1];
+    }
+    // Avoid reading a potentially unset ofst, leading to a random memory read.
+    if (i >= dst_width) {
+        return;
     }
     src_0 = (src + ofst[dst_width - 1])[0];
 #if (CV_SIMD || CV_SIMD_SCALABLE)
@@ -1269,7 +1324,7 @@ struct VResizeLinearVec_32s8u
                 v_store(dst + x, v_rshr_pack_u<2>(v_add(v_mul_hi(v_pack(v_shr<4>(vx_load(S0 + x)), v_shr<4>(vx_load(S0 + x + VTraits<v_int32>::vlanes()))), b0), v_mul_hi(v_pack(v_shr<4>(vx_load(S1 + x)), v_shr<4>(vx_load(S1 + x + VTraits<v_int32>::vlanes()))), b1)),
                                                   v_add(v_mul_hi(v_pack(v_shr<4>(vx_load(S0 + x + 2 * VTraits<v_int32>::vlanes())), v_shr<4>(vx_load(S0 + x + 3 * VTraits<v_int32>::vlanes()))), b0), v_mul_hi(v_pack(v_shr<4>(vx_load(S1 + x + 2 * VTraits<v_int32>::vlanes())), v_shr<4>(vx_load(S1 + x + 3 * VTraits<v_int32>::vlanes()))), b1))));
 
-        for( ; x < width - VTraits<v_int16>::vlanes(); x += VTraits<v_int16>::vlanes())
+        for( ; x <= width - VTraits<v_int16>::vlanes(); x += VTraits<v_int16>::vlanes())
             v_rshr_pack_u_store<2>(dst + x, v_add(v_mul_hi(v_pack(v_shr<4>(vx_load(S0 + x)), v_shr<4>(vx_load(S0 + x + VTraits<v_int32>::vlanes()))), b0), v_mul_hi(v_pack(v_shr<4>(vx_load(S1 + x)), v_shr<4>(vx_load(S1 + x + VTraits<v_int32>::vlanes()))), b1)));
 
         return x;
@@ -1293,7 +1348,7 @@ struct VResizeLinearVec_32f16u
             for (; x <= width - VTraits<v_uint16>::vlanes(); x += VTraits<v_uint16>::vlanes())
                 v_store(dst + x, v_pack_u(v_round(v_muladd(vx_load(S0 + x                    ), b0, v_mul(vx_load(S1 + x), b1))),
                                           v_round(v_muladd(vx_load(S0 + x + VTraits<v_float32>::vlanes()), b0, v_mul(vx_load(S1 + x + VTraits<v_float32>::vlanes()), b1)))));
-        for( ; x < width - VTraits<v_float32>::vlanes(); x += VTraits<v_float32>::vlanes())
+        for( ; x <= width - VTraits<v_float32>::vlanes(); x += VTraits<v_float32>::vlanes())
         {
             v_int32 t0 = v_round(v_muladd(vx_load(S0 + x), b0, v_mul(vx_load(S1 + x), b1)));
             v_store_low(dst + x, v_pack_u(t0, t0));
@@ -1320,7 +1375,7 @@ struct VResizeLinearVec_32f16s
             for (; x <= width - VTraits<v_int16>::vlanes(); x += VTraits<v_int16>::vlanes())
                 v_store(dst + x, v_pack(v_round(v_muladd(vx_load(S0 + x                    ), b0, v_mul(vx_load(S1 + x), b1))),
                                         v_round(v_muladd(vx_load(S0 + x + VTraits<v_float32>::vlanes()), b0, v_mul(vx_load(S1 + x + VTraits<v_float32>::vlanes()), b1)))));
-        for( ; x < width - VTraits<v_float32>::vlanes(); x += VTraits<v_float32>::vlanes())
+        for( ; x <= width - VTraits<v_float32>::vlanes(); x += VTraits<v_float32>::vlanes())
         {
             v_int32 t0 = v_round(v_muladd(vx_load(S0 + x), b0, v_mul(vx_load(S1 + x), b1)));
             v_store_low(dst + x, v_pack(t0, t0));
@@ -2480,7 +2535,7 @@ public:
 #elif CV_SIMD_WIDTH == 64
                 v_zip(t0, t3, s0, s1); v_zip(t1, t4, s2, s3); v_zip(t2, t5, s4, s5);
                 v_zip(s0, s3, t0, t1); v_zip(s1, s4, t2, t3); v_zip(s2, s5, t4, t5);
-                bl = t0 + t3; gl = t1 + t4; rl = t2 + t5;
+                bl = v_add(t0, t3); gl = v_add(t1, t4); rl = v_add(t2, t5);
 #endif
                 s0 = v_add(vx_load_expand(S0 + 6 * VTraits<v_uint16>::vlanes()), vx_load_expand(S1 + 6 * VTraits<v_uint16>::vlanes()));
                 s1 = v_add(vx_load_expand(S0 + 7 * VTraits<v_uint16>::vlanes()), vx_load_expand(S1 + 7 * VTraits<v_uint16>::vlanes()));
@@ -2500,7 +2555,7 @@ public:
 #elif CV_SIMD_WIDTH == 64
                 v_zip(t0, t3, s0, s1); v_zip(t1, t4, s2, s3); v_zip(t2, t5, s4, s5);
                 v_zip(s0, s3, t0, t1); v_zip(s1, s4, t2, t3); v_zip(s2, s5, t4, t5);
-                bh = t0 + t3; gh = t1 + t4; rh = t2 + t5;
+                bh = v_add(t0, t3); gh = v_add(t1, t4); rh = v_add(t2, t5);
 #endif
                 v_store_interleave(D, v_rshr_pack<2>(bl, bh), v_rshr_pack<2>(gl, gh), v_rshr_pack<2>(rl, rh));
             }
@@ -2562,8 +2617,8 @@ public:
                 v_uint32 r0, r1, r2, r3;
                 v_expand(vx_load(S0), r0, r1);
                 v_expand(vx_load(S1), r2, r3);
-                r0 += r2; r1 += r3;
-                v_rshr_pack_store<2>(D, r0 + v_rotate_left<1>(r1, r0));
+                r0 = v_add(r0, r2); r1 = v_add(r1, r3);
+                v_rshr_pack_store<2>(D, v_add(r0, v_rotate_left<1>(r1, r0)));
             }
 #else
                 v_rshr_pack_store<2>(D, v_add(v_add(v_add(v_load_expand(S0), v_load_expand(S0 + 3)), v_load_expand(S1)), v_load_expand(S1 + 3)));
@@ -2587,7 +2642,7 @@ public:
                 bl = v_add(t0, t3); gl = v_add(t1, t4); rl = v_add(t2, t5);
 #else //CV_SIMD_WIDTH == 64
                 v_zip(t0, t3, s0, s1); v_zip(t1, t4, s2, s3); v_zip(t2, t5, s4, s5);
-                bl = s0 + s3; gl = s1 + s4; rl = s2 + s5;
+                bl = v_add(s0, s3); gl = v_add(s1, s4); rl = v_add(s2, s5);
 #endif
                 s0 = v_add(vx_load_expand(S0 + 6 * VTraits<v_uint32>::vlanes()), vx_load_expand(S1 + 6 * VTraits<v_uint32>::vlanes()));
                 s1 = v_add(vx_load_expand(S0 + 7 * VTraits<v_uint32>::vlanes()), vx_load_expand(S1 + 7 * VTraits<v_uint32>::vlanes()));
@@ -2603,7 +2658,7 @@ public:
                 bh = v_add(t0, t3); gh = v_add(t1, t4); rh = v_add(t2, t5);
 #else //CV_SIMD_WIDTH == 64
                 v_zip(t0, t3, s0, s1); v_zip(t1, t4, s2, s3); v_zip(t2, t5, s4, s5);
-                bh = s0 + s3; gh = s1 + s4; rh = s2 + s5;
+                bh = v_add(s0, s3); gh = v_add(s1, s4); rh = v_add(s2, s5);
 #endif
                 v_store_interleave(D, v_rshr_pack<2>(bl, bh), v_rshr_pack<2>(gl, gh), v_rshr_pack<2>(rl, rh));
             }
@@ -2641,7 +2696,7 @@ public:
                 v_expand(v_reinterpret_as_u16(r01), r01l, r01h);
                 v_expand(v_reinterpret_as_u16(r10), r10l, r10h);
                 v_expand(v_reinterpret_as_u16(r11), r11l, r11h);
-                v_store(D, v_rshr_pack<2>(r00l + r01l + r10l + r11l, r00h + r01h + r10h + r11h));
+                v_store(D, v_rshr_pack<2>(v_add(r00l, r01l, r10l, r11l), v_add(r00h, r01h, r10h, r11h)));
             }
 #else
             for ( ; dx <= w - VTraits<v_uint32>::vlanes(); dx += VTraits<v_uint32>::vlanes(), S0 += VTraits<v_uint16>::vlanes(), S1 += VTraits<v_uint16>::vlanes(), D += VTraits<v_uint32>::vlanes())
@@ -2717,7 +2772,7 @@ public:
                 bl = v_add(t0, t3); gl = v_add(t1, t4); rl = v_add(t2, t5);
 #else //CV_SIMD_WIDTH == 64
                 v_zip(t0, t3, s0, s1); v_zip(t1, t4, s2, s3); v_zip(t2, t5, s4, s5);
-                bl = s0 + s3; gl = s1 + s4; rl = s2 + s5;
+                bl = v_add(s0, s3); gl = v_add(s1, s4); rl = v_add(s2, s5);
 #endif
                 s0 = v_add(vx_load_expand(S0 + 6 * VTraits<v_int32>::vlanes()), vx_load_expand(S1 + 6 * VTraits<v_int32>::vlanes()));
                 s1 = v_add(vx_load_expand(S0 + 7 * VTraits<v_int32>::vlanes()), vx_load_expand(S1 + 7 * VTraits<v_int32>::vlanes()));
@@ -2733,7 +2788,7 @@ public:
                 bh = v_add(t0, t3); gh = v_add(t1, t4); rh = v_add(t2, t5);
 #else //CV_SIMD_WIDTH == 64
                 v_zip(t0, t3, s0, s1); v_zip(t1, t4, s2, s3); v_zip(t2, t5, s4, s5);
-                bh = s0 + s3; gh = s1 + s4; rh = s2 + s5;
+                bh = v_add(s0, s3); gh = v_add(s1, s4); rh = v_add(s2, s5);
 #endif
                 v_store_interleave(D, v_rshr_pack<2>(bl, bh), v_rshr_pack<2>(gl, gh), v_rshr_pack<2>(rl, rh));
             }
@@ -2770,7 +2825,7 @@ public:
                 v_expand(v_reinterpret_as_s16(r01), r01l, r01h);
                 v_expand(v_reinterpret_as_s16(r10), r10l, r10h);
                 v_expand(v_reinterpret_as_s16(r11), r11l, r11h);
-                v_store(D, v_rshr_pack<2>(r00l + r01l + r10l + r11l, r00h + r01h + r10h + r11h));
+                v_store(D, v_rshr_pack<2>(v_add(r00l, r01l, r10l, r11l), v_add(r00h, r01h, r10h, r11h)));
 #else
                 v_int32 r0, r1, r2, r3;
                 r0 = v_add(vx_load_expand(S0), vx_load_expand(S1));
@@ -3396,8 +3451,8 @@ static bool ocl_resize( InputArray _src, OutputArray _dst, Size dsize,
     {
         int wdepth = std::max(depth, CV_32S);
         char buf[2][50];
-        cv::String compileOpts = format("-D USE_SAMPLER -D depth=%d -D T=%s -D T1=%s "
-                        "-D convertToDT=%s -D cn=%d",
+        cv::String compileOpts = format("-D USE_SAMPLER -D SRC_DEPTH=%d -D T=%s -D T1=%s "
+                        "-D CONVERT_TO_DT=%s -D CN=%d",
                         depth, ocl::typeToStr(type), ocl::typeToStr(depth),
                         ocl::convertTypeStr(wdepth, depth, cn, buf[1], sizeof(buf[1])),
                         cn);
@@ -3461,8 +3516,8 @@ static bool ocl_resize( InputArray _src, OutputArray _dst, Size dsize,
             Mat(1, static_cast<int>(_buffer.size()), CV_8UC1, _buffer.data()).copyTo(coeffs);
 
             k.create("resizeLN", ocl::imgproc::resize_oclsrc,
-                     format("-D INTER_LINEAR_INTEGER -D depth=%d -D T=%s -D T1=%s "
-                            "-D WT=%s -D convertToWT=%s -D convertToDT=%s -D cn=%d "
+                     format("-D INTER_LINEAR_INTEGER -D SRC_DEPTH=%d -D T=%s -D T1=%s "
+                            "-D WT=%s -D CONVERT_TO_WT=%s -D CONVERT_TO_DT=%s -D CN=%d "
                             "-D INTER_RESIZE_COEF_BITS=%d",
                             depth, ocl::typeToStr(type), ocl::typeToStr(depth), ocl::typeToStr(wtype),
                             ocl::convertTypeStr(depth, wdepth, cn, buf[0], sizeof(buf[0])),
@@ -3479,8 +3534,8 @@ static bool ocl_resize( InputArray _src, OutputArray _dst, Size dsize,
             int wdepth = depth <= CV_8S ? CV_32S : std::max(depth, CV_32F);
             int wtype = CV_MAKETYPE(wdepth, cn);
             k.create("resizeLN", ocl::imgproc::resize_oclsrc,
-                     format("-D INTER_LINEAR -D depth=%d -D T=%s -D T1=%s "
-                            "-D WT=%s -D convertToWT=%s -D convertToDT=%s -D cn=%d "
+                     format("-D INTER_LINEAR -D SRC_DEPTH=%d -D T=%s -D T1=%s "
+                            "-D WT=%s -D CONVERT_TO_WT=%s -D CONVERT_TO_DT=%s -D CN=%d "
                             "-D INTER_RESIZE_COEF_BITS=%d",
                             depth, ocl::typeToStr(type), ocl::typeToStr(depth), ocl::typeToStr(wtype),
                             ocl::convertTypeStr(depth, wdepth, cn, buf[0], sizeof(buf[0])),
@@ -3496,7 +3551,7 @@ static bool ocl_resize( InputArray _src, OutputArray _dst, Size dsize,
     else if (interpolation == INTER_NEAREST)
     {
         k.create("resizeNN", ocl::imgproc::resize_oclsrc,
-                 format("-D INTER_NEAREST -D T=%s -D T1=%s -D cn=%d",
+                 format("-D INTER_NEAREST -D T=%s -D T1=%s -D CN=%d",
                         ocl::vecopTypeToStr(type), ocl::vecopTypeToStr(depth), cn));
         if (k.empty())
             return false;
@@ -3510,7 +3565,7 @@ static bool ocl_resize( InputArray _src, OutputArray _dst, Size dsize,
         int wtype = CV_MAKE_TYPE(wdepth, cn);
 
         char cvt[2][50];
-        String buildOption = format("-D INTER_AREA -D T=%s -D T1=%s -D WTV=%s -D convertToWTV=%s -D cn=%d",
+        String buildOption = format("-D INTER_AREA -D T=%s -D T1=%s -D WTV=%s -D CONVERT_TO_WTV=%s -D CN=%d",
                                     ocl::typeToStr(type), ocl::typeToStr(depth), ocl::typeToStr(wtype),
                                     ocl::convertTypeStr(depth, wdepth, cn, cvt[0], sizeof(cvt[0])), cn);
 
@@ -3520,7 +3575,7 @@ static bool ocl_resize( InputArray _src, OutputArray _dst, Size dsize,
         if (is_area_fast)
         {
             int wdepth2 = std::max(CV_32F, depth), wtype2 = CV_MAKE_TYPE(wdepth2, cn);
-            buildOption = buildOption + format(" -D convertToT=%s -D WT2V=%s -D convertToWT2V=%s -D INTER_AREA_FAST"
+            buildOption = buildOption + format(" -D CONVERT_TO_T=%s -D WT2V=%s -D CONVERT_TO_WT2V=%s -D INTER_AREA_FAST"
                                                 " -D XSCALE=%d -D YSCALE=%d -D SCALE=%ff",
                                                 ocl::convertTypeStr(wdepth2, depth, cn, cvt[0], sizeof(cvt[0])),
                                                 ocl::typeToStr(wtype2), ocl::convertTypeStr(wdepth, wdepth2, cn, cvt[1], sizeof(cvt[1])),
@@ -3532,7 +3587,7 @@ static bool ocl_resize( InputArray _src, OutputArray _dst, Size dsize,
         }
         else
         {
-            buildOption = buildOption + format(" -D convertToT=%s", ocl::convertTypeStr(wdepth, depth, cn, cvt[0], sizeof(cvt[0])));
+            buildOption = buildOption + format(" -D CONVERT_TO_T=%s", ocl::convertTypeStr(wdepth, depth, cn, cvt[0], sizeof(cvt[0])));
             k.create("resizeAREA", ocl::imgproc::resize_oclsrc, buildOption);
             if (k.empty())
                 return false;
@@ -3790,7 +3845,7 @@ void resize(int src_type,
 
     CV_IPP_RUN_FAST(ipp_resize(src_data, src_step, src_width, src_height, dst_data, dst_step, dsize.width, dsize.height, inv_scale_x, inv_scale_y, depth, cn, interpolation))
 
-    static ResizeFunc linear_tab[] =
+    static ResizeFunc linear_tab[CV_DEPTH_MAX] =
     {
         resizeGeneric_<
             HResizeLinear<uchar, int, short,
@@ -3824,7 +3879,7 @@ void resize(int src_type,
         0
     };
 
-    static ResizeFunc cubic_tab[] =
+    static ResizeFunc cubic_tab[CV_DEPTH_MAX] =
     {
         resizeGeneric_<
             HResizeCubic<uchar, int, short>,
@@ -3852,7 +3907,7 @@ void resize(int src_type,
         0
     };
 
-    static ResizeFunc lanczos4_tab[] =
+    static ResizeFunc lanczos4_tab[CV_DEPTH_MAX] =
     {
         resizeGeneric_<HResizeLanczos4<uchar, int, short>,
             VResizeLanczos4<uchar, int, short,
@@ -3875,7 +3930,7 @@ void resize(int src_type,
         0
     };
 
-    static ResizeAreaFastFunc areafast_tab[] =
+    static ResizeAreaFastFunc areafast_tab[CV_DEPTH_MAX] =
     {
         resizeAreaFast_<uchar, int, ResizeAreaFastVec<uchar, ResizeAreaFastVec_SIMD_8u> >,
         0,
@@ -3887,14 +3942,14 @@ void resize(int src_type,
         0
     };
 
-    static ResizeAreaFunc area_tab[] =
+    static ResizeAreaFunc area_tab[CV_DEPTH_MAX] =
     {
         resizeArea_<uchar, float>, 0, resizeArea_<ushort, float>,
         resizeArea_<short, float>, 0, resizeArea_<float, float>,
         resizeArea_<double, double>, 0
     };
 
-    static be_resize_func linear_exact_tab[] =
+    static be_resize_func linear_exact_tab[CV_DEPTH_MAX] =
     {
         resize_bitExact<uchar, interpolationLinear<uchar> >,
         resize_bitExact<schar, interpolationLinear<schar> >,
@@ -4024,7 +4079,7 @@ void resize(int src_type,
     else if( interpolation == INTER_LINEAR || interpolation == INTER_AREA )
         ksize = 2, func = linear_tab[depth];
     else
-        CV_Error( CV_StsBadArg, "Unknown interpolation method" );
+        CV_Error( cv::Error::StsBadArg, "Unknown interpolation method" );
     ksize2 = ksize/2;
 
     CV_Assert( func != 0 );

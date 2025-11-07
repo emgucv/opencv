@@ -84,15 +84,11 @@ if(NOT ${found})
                         "Consider providing the '${executable}' variable via CMake command line or environment variables\n")
       endif()
       ocv_clear_vars(PYTHONINTERP_FOUND PYTHON_EXECUTABLE PYTHON_VERSION_STRING PYTHON_VERSION_MAJOR PYTHON_VERSION_MINOR PYTHON_VERSION_PATCH)
-      if(NOT CMAKE_VERSION VERSION_LESS "3.12")
-        set(__PYTHON_PREFIX Python3)
-        find_host_package(${__PYTHON_PREFIX} "${preferred_version}" COMPONENTS Interpreter)
-        if(${__PYTHON_PREFIX}_EXECUTABLE)
-          set(PYTHON_EXECUTABLE "${${__PYTHON_PREFIX}_EXECUTABLE}")
-          find_host_package(PythonInterp "${preferred_version}")  # Populate other variables
-        endif()
-      else()
-        message(STATUS "Consider using CMake 3.12+ for better Python support")
+      set(__PYTHON_PREFIX Python3)
+      find_host_package(${__PYTHON_PREFIX} "${preferred_version}" COMPONENTS Interpreter)
+      if(${__PYTHON_PREFIX}_EXECUTABLE)
+        set(PYTHON_EXECUTABLE "${${__PYTHON_PREFIX}_EXECUTABLE}")
+        find_host_package(PythonInterp "${preferred_version}")  # Populate other variables
       endif()
     endif()
     if(PYTHONINTERP_FOUND AND "${_python_version_major}" STREQUAL "${PYTHON_VERSION_MAJOR}")
@@ -126,6 +122,23 @@ if(NOT ${found})
       endif()
       if(NOT ${${include_dir_env}} STREQUAL "")
           set(PYTHON_INCLUDE_DIR "${${include_dir_env}}")
+      endif()
+      if (APPLE AND NOT CMAKE_CROSSCOMPILING)
+          if (NOT PYTHON_LIBRARY AND NOT PYTHON_INCLUDE_DIR)
+              execute_process(COMMAND ${_executable} -c "from sysconfig import *; print(get_config_var('INCLUDEPY'))"
+                              RESULT_VARIABLE _cvpy_process
+                              OUTPUT_VARIABLE _include_dir
+                              OUTPUT_STRIP_TRAILING_WHITESPACE)
+              execute_process(COMMAND ${_executable} -c "from sysconfig import *; print('%s/%s' % (get_config_var('LIBDIR'), get_config_var('LIBRARY').replace('.a', '.dylib' if get_platform().startswith('macos') else '.so')))"
+                              RESULT_VARIABLE _cvpy_process
+                              OUTPUT_VARIABLE _library
+                              OUTPUT_STRIP_TRAILING_WHITESPACE)
+              if (_include_dir AND _library AND EXISTS "${_include_dir}/Python.h" AND EXISTS "${_library}")
+                  set(PYTHON_INCLUDE_PATH "${_include_dir}")
+                  set(PYTHON_INCLUDE_DIR "${_include_dir}")
+                  set(PYTHON_LIBRARY "${_library}")
+              endif()
+          endif()
       endif()
 
       # not using _version_string here, because it might not conform to the CMake version format
@@ -171,7 +184,7 @@ if(NOT ${found})
       endif()
     endif()
 
-    if(NOT ANDROID AND NOT IOS)
+    if(NOT ANDROID AND NOT IOS AND NOT XROS)
       if(CMAKE_HOST_UNIX)
         execute_process(COMMAND ${_executable} -c "from sysconfig import *; print(get_path('purelib'))"
                         RESULT_VARIABLE _cvpy_process
@@ -233,7 +246,7 @@ if(NOT ${found})
                           OUTPUT_STRIP_TRAILING_WHITESPACE)
         endif()
       endif()
-    endif(NOT ANDROID AND NOT IOS)
+    endif(NOT ANDROID AND NOT IOS AND NOT XROS)
   endif()
 
   # Export return values
@@ -269,6 +282,18 @@ find_python("${OPENCV_PYTHON3_VERSION}" "${MIN_VER_PYTHON3}" PYTHON3_LIBRARY PYT
     PYTHON3_DEBUG_LIBRARIES PYTHON3_LIBRARY_DEBUG PYTHON3_INCLUDE_PATH
     PYTHON3_INCLUDE_DIR PYTHON3_INCLUDE_DIR2 PYTHON3_PACKAGES_PATH
     PYTHON3_NUMPY_INCLUDE_DIRS PYTHON3_NUMPY_VERSION)
+
+# Problem in numpy >=1.15 <1.17
+OCV_OPTION(PYTHON3_LIMITED_API "Build with Python Limited API (not available with numpy >=1.15 <1.17)" NO
+           VISIBLE_IF PYTHON3_NUMPY_VERSION VERSION_LESS "1.15" OR NOT PYTHON3_NUMPY_VERSION VERSION_LESS "1.17")
+if(PYTHON3_LIMITED_API)
+  set(_default_ver "0x03060000")
+  if(PYTHON3_VERSION_STRING VERSION_LESS "3.6")
+    # fix for older pythons
+    set(_default_ver "0x030${PYTHON3_VERSION_MINOR}0000")
+  endif()
+  set(PYTHON3_LIMITED_API_VERSION ${_default_ver} CACHE STRING "Minimal Python version for Limited API")
+endif()
 
 if(PYTHON_DEFAULT_EXECUTABLE)
     set(PYTHON_DEFAULT_AVAILABLE "TRUE")

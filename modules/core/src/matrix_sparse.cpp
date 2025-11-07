@@ -4,7 +4,6 @@
 
 #include "precomp.hpp"
 #include "opencv2/core/mat.hpp"
-#include "opencv2/core/types_c.h"
 
 namespace cv {
 
@@ -37,7 +36,7 @@ typedef void (*ConvertScaleData)(const void* from, void* to, int cn, double alph
 
 static ConvertData getConvertElem(int fromType, int toType)
 {
-    static ConvertData tab[][8] =
+    static ConvertData tab[CV_DEPTH_MAX][CV_DEPTH_MAX] =
     {{ convertData_<uchar, uchar>, convertData_<uchar, schar>,
       convertData_<uchar, ushort>, convertData_<uchar, short>,
       convertData_<uchar, int>, convertData_<uchar, float>,
@@ -82,7 +81,7 @@ static ConvertData getConvertElem(int fromType, int toType)
 
 static ConvertScaleData getConvertScaleElem(int fromType, int toType)
 {
-    static ConvertScaleData tab[][8] =
+    static ConvertScaleData tab[CV_DEPTH_MAX][CV_DEPTH_MAX] =
     {{ convertScaleData_<uchar, uchar>, convertScaleData_<uchar, schar>,
       convertScaleData_<uchar, ushort>, convertScaleData_<uchar, short>,
       convertScaleData_<uchar, int>, convertScaleData_<uchar, float>,
@@ -171,7 +170,14 @@ void SparseMat::Hdr::clear()
     hashtab.clear();
     hashtab.resize(HASH_SIZE0);
     pool.clear();
+#if defined(__GNUC__)  && (__GNUC__ == 13) && !defined(__clang__) && (__cplusplus >= 202002L)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+#endif
     pool.resize(nodeSize);
+#if defined(__GNUC__)  && (__GNUC__ == 13) && !defined(__clang__) && (__cplusplus >= 202002L)
+#pragma GCC diagnostic pop
+#endif
     nodeCount = freeList = 0;
 }
 
@@ -267,7 +273,7 @@ size_t SparseMat::hash(const int* idx) const
 SparseMat::SparseMat(const Mat& m)
 : flags(MAGIC_VAL), hdr(0)
 {
-    create( m.dims, m.size, m.type() );
+    create( m.dims, m.size.p, m.type() );
 
     int i, idx[CV_MAX_DIM] = {0}, d = m.dims, lastSize = m.size[d - 1];
     size_t esz = m.elemSize();
@@ -389,6 +395,7 @@ void SparseMat::convertTo( SparseMat& m, int rtype, double alpha ) const
     if( alpha == 1 )
     {
         ConvertData cvtfunc = getConvertElem(type(), rtype);
+        CV_Assert(cvtfunc);
         for( size_t i = 0; i < N; i++, ++from )
         {
             const Node* n = from.node();
@@ -399,6 +406,7 @@ void SparseMat::convertTo( SparseMat& m, int rtype, double alpha ) const
     else
     {
         ConvertScaleData cvtfunc = getConvertScaleElem(type(), rtype);
+        CV_Assert(cvtfunc);
         for( size_t i = 0; i < N; i++, ++from )
         {
             const Node* n = from.node();
@@ -758,7 +766,7 @@ double norm( const SparseMat& src, int normType )
             }
     }
     else
-        CV_Error( CV_StsUnsupportedFormat, "Only 32f and 64f are supported" );
+        CV_Error( cv::Error::StsUnsupportedFormat, "Only 32f and 64f are supported" );
 
     if( normType == NORM_L2 )
         result = std::sqrt(result);
@@ -821,7 +829,7 @@ void minMaxLoc( const SparseMat& src, double* _minval, double* _maxval, int* _mi
             *_maxval = maxval;
     }
     else
-        CV_Error( CV_StsUnsupportedFormat, "Only 32f and 64f are supported" );
+        CV_Error( cv::Error::StsUnsupportedFormat, "Only 32f and 64f are supported" );
 
     if( _minidx && minidx )
         for( i = 0; i < d; i++ )
@@ -837,53 +845,15 @@ void normalize( const SparseMat& src, SparseMat& dst, double a, int norm_type )
     CV_INSTRUMENT_REGION();
 
     double scale = 1;
-    if( norm_type == CV_L2 || norm_type == CV_L1 || norm_type == CV_C )
+    if( norm_type == NORM_L2 || norm_type == NORM_L1 || norm_type == NORM_INF )
     {
         scale = norm( src, norm_type );
         scale = scale > DBL_EPSILON ? a/scale : 0.;
     }
     else
-        CV_Error( CV_StsBadArg, "Unknown/unsupported norm type" );
+        CV_Error( cv::Error::StsBadArg, "Unknown/unsupported norm type" );
 
     src.convertTo( dst, -1, scale );
 }
 
 } // cv::
-
-//
-// C-API glue
-//
-CvSparseMat* cvCreateSparseMat(const cv::SparseMat& sm)
-{
-    if( !sm.hdr || sm.hdr->dims > (int)cv::SparseMat::MAX_DIM)
-        return 0;
-
-    CvSparseMat* m = cvCreateSparseMat(sm.hdr->dims, sm.hdr->size, sm.type());
-
-    cv::SparseMatConstIterator from = sm.begin();
-    size_t i, N = sm.nzcount(), esz = sm.elemSize();
-
-    for( i = 0; i < N; i++, ++from )
-    {
-        const cv::SparseMat::Node* n = from.node();
-        uchar* to = cvPtrND(m, n->idx, 0, -2, 0);
-        cv::copyElem(from.ptr, to, esz);
-    }
-    return m;
-}
-
-void CvSparseMat::copyToSparseMat(cv::SparseMat& m) const
-{
-    m.create( dims, &size[0], type );
-
-    CvSparseMatIterator it;
-    CvSparseNode* n = cvInitSparseMatIterator(this, &it);
-    size_t esz = m.elemSize();
-
-    for( ; n != 0; n = cvGetNextSparseNode(&it) )
-    {
-        const int* idx = CV_NODE_IDX(this, n);
-        uchar* to = m.newNode(idx, m.hash(idx));
-        cv::copyElem((const uchar*)CV_NODE_VAL(this, n), to, esz);
-    }
-}

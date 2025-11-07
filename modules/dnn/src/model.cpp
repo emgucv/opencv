@@ -37,6 +37,7 @@ public:
 
     virtual void setPreferableBackend(Backend backendId) { net.setPreferableBackend(backendId); }
     virtual void setPreferableTarget(Target targetId) { net.setPreferableTarget(targetId); }
+    virtual void enableWinograd(bool useWinograd) { net.enableWinograd(useWinograd); }
 
     virtual
     void initNet(const Net& network)
@@ -45,9 +46,19 @@ public:
         net = network;
 
         outNames = net.getUnconnectedOutLayersNames();
+
+        Ptr<Graph> graph = net.getMainGraph();
         std::vector<MatShape> inLayerShapes;
-        std::vector<MatShape> outLayerShapes;
-        net.getLayerShapes(MatShape(), 0, inLayerShapes, outLayerShapes);
+
+        if (graph) {
+            const std::vector<Arg>& inputs = graph->inputs();
+            for (auto inp: inputs) {
+                inLayerShapes.push_back(net.argData(inp).shape);
+            }
+        } else {
+            std::vector<MatShape> outLayerShapes;
+            net.getLayerShapes(MatShape(), CV_32F, 0, inLayerShapes, outLayerShapes);
+        }
         if (!inLayerShapes.empty() && inLayerShapes[0].size() == 4)
             size = Size(inLayerShapes[0][3], inLayerShapes[0][2]);
         else
@@ -89,6 +100,11 @@ public:
     {
         swapRB = swapRB_;
     }
+    /*virtual*/
+    void setOutputNames(const std::vector<String>& outNames_)
+    {
+        outNames = outNames_;
+    }
 
     /*virtual*/
     void processFrame(InputArray frame, OutputArrayOfArrays outs)
@@ -108,13 +124,17 @@ public:
         }
         Mat blob = dnn::blobFromImageWithParams(frame, param); // [1, 10, 10, 4]
 
-        net.setInput(blob);
-
         // Faster-RCNN or R-FCN
-        if (net.getLayer(0)->outputNameToIndex("im_info") != -1)
+        if ((net.getMainGraph() && net.haveArg("im_info") && net.argKind(net.getArg("im_info")) == DNN_ARG_INPUT) ||
+            (!net.getMainGraph() && net.getLayer(0)->outputNameToIndex("im_info") != -1))
         {
+            net.setInput(blob, "data");
             Mat imInfo(Matx13f(size.height, size.width, 1.6f));
             net.setInput(imInfo, "im_info");
+        }
+        else
+        {
+            net.setInput(blob);
         }
 
         net.forward(outs, outNames);
@@ -151,10 +171,18 @@ Model& Model::setPreferableBackend(Backend backendId)
     impl->setPreferableBackend(backendId);
     return *this;
 }
+
 Model& Model::setPreferableTarget(Target targetId)
 {
     CV_DbgAssert(impl);
     impl->setPreferableTarget(targetId);
+    return *this;
+}
+
+Model& Model::enableWinograd(bool useWinograd)
+{
+    CV_DbgAssert(impl);
+    impl->enableWinograd(useWinograd);
     return *this;
 }
 
@@ -192,6 +220,13 @@ Model& Model::setInputSwapRB(bool swapRB)
 {
     CV_DbgAssert(impl);
     impl->setInputSwapRB(swapRB);
+    return *this;
+}
+
+Model& Model::setOutputNames(const std::vector<String>& outNames)
+{
+    CV_DbgAssert(impl);
+    impl->setOutputNames(outNames);
     return *this;
 }
 
@@ -372,7 +407,9 @@ void SegmentationModel::segment(InputArray frame, OutputArray mask)
 {
     std::vector<Mat> outs;
     impl->processFrame(frame, outs);
-    CV_Assert(outs.size() == 1);
+    // default output is the first one
+    if(outs.size() > 1)
+        outs.resize(1);
     Mat score = outs[0];
 
     const int chns = score.size[1];
@@ -484,7 +521,12 @@ void DetectionModel::detect(InputArray frame, CV_OUT std::vector<int>& classIds,
 
     int frameWidth  = frame.cols();
     int frameHeight = frame.rows();
-    if (getNetwork_().getLayer(0)->outputNameToIndex("im_info") != -1)
+    if ((getNetwork_().getMainGraph() &&
+         getNetwork_().haveArg("im_info") &&
+         getNetwork_().argKind(getNetwork_().getArg("im_info")) == DNN_ARG_INPUT)
+        ||
+        (!getNetwork_().getMainGraph() &&
+         getNetwork_().getLayer(0)->outputNameToIndex("im_info") != -1))
     {
         frameWidth = impl->size.width;
         frameHeight = impl->size.height;
@@ -1150,6 +1192,11 @@ struct TextDetectionModel_EAST_Impl : public TextDetectionModel_Impl
         CV_CheckEQ(geometry.dims, 4, "");
         CV_CheckEQ(scoreMap.size[0], 1, "");
         CV_CheckEQ(geometry.size[0], 1, "");
+
+        if (geometry.size[1] == 1 && scoreMap.size[1] == 5) {
+            std::swap(geometry, scoreMap);
+        }
+
         CV_CheckEQ(scoreMap.size[1], 1, "");
         CV_CheckEQ(geometry.size[1], 5, "");
         CV_CheckEQ(scoreMap.size[2], geometry.size[2], "");

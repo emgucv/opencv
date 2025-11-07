@@ -60,6 +60,14 @@ namespace cv
 #undef USE_IPP_DFT
 #endif
 
+#if defined USE_IPP_DFT
+#if IPP_VERSION_X100 >= 202220
+#define IPP_DISABLE_DFT32F ((depth == CV_32F) && (ippCPUID_AVX512F&cv::ipp::getIppFeatures()))
+#else
+#define IPP_DISABLE_DFT32F false
+#endif
+#endif
+
 /****************************************************************************************\
                                Discrete Fourier Transform
 \****************************************************************************************/
@@ -843,6 +851,17 @@ DFT(const OcvDftOptions & c, const Complex<T>* src, Complex<T>* dst)
     int i, j, k;
     Complex<T> t;
     T scale = (T)c.scale;
+
+    if(typeid(T) == typeid(float))
+    {
+        CALL_HAL(dft, cv_hal_dft, reinterpret_cast<const uchar*>(src), reinterpret_cast<uchar*>(dst), CV_32F,
+                 c.nf, c.factors, c.scale, c.itab, c.wave, c.tab_size, c.n, c.isInverse, c.noPermute);
+    }
+    if(typeid(T) == typeid(double))
+    {
+        CALL_HAL(dft, cv_hal_dft, reinterpret_cast<const uchar*>(src), reinterpret_cast<uchar*>(dst), CV_64F,
+                 c.nf, c.factors, c.scale, c.itab, c.wave, c.tab_size, c.n, c.isInverse, c.noPermute);
+    }
 
     if( c.useIpp )
     {
@@ -2370,7 +2389,7 @@ static bool ocl_dft(InputArray _src, OutputArray _dst, int flags, int nonzero_ro
         else
         {
             _dst.createSameSize(src, CV_MAKETYPE(depth, 1));
-            output.create(src.dims, src.size, CV_MAKETYPE(depth, 2));
+            output.create(src.size, CV_MAKETYPE(depth, 2));
         }
     }
 
@@ -3247,7 +3266,7 @@ public:
         opt.ipp_spec = 0;
         opt.ipp_work = 0;
 
-        if( CV_IPP_CHECK_COND && (opt.n*count >= 64) ) // use IPP DFT if available
+        if( CV_IPP_CHECK_COND && (opt.n*count >= 64) && !IPP_DISABLE_DFT32F) // use IPP DFT if available
         {
             int ipp_norm_flag = (flags & CV_HAL_DFT_SCALE) == 0 ? 8 : opt.isInverse ? 2 : 1;
             int specsize=0, initsize=0, worksize=0;
@@ -3469,7 +3488,7 @@ Ptr<DFT2D> DFT2D::create(int width, int height, int depth,
     {
         if(width == 1 && nonzero_rows > 0 )
         {
-            CV_Error( CV_StsNotImplemented,
+            CV_Error( cv::Error::StsNotImplemented,
             "This mode (using nonzero_rows with a single-column matrix) breaks the function's logic, so it is prohibited.\n"
             "For fast convolution/correlation use 2-column matrix or single-row matrix instead" );
         }
@@ -4317,7 +4336,7 @@ public:
             if( len != prev_len )
             {
                 if( len > 1 && (len & 1) )
-                    CV_Error( CV_StsNotImplemented, "Odd-size DCT\'s are not implemented" );
+                    CV_Error( cv::Error::StsNotImplemented, "Odd-size DCT\'s are not implemented" );
 
                 opt.nf = DFTFactorize( len, opt.factors );
                 bool inplace_transform = opt.factors[0] == opt.factors[opt.nf-1];
@@ -4363,7 +4382,7 @@ struct ReplacementDCT2D : public hal::DCT2D
     ReplacementDCT2D() : context(0), isInitialized(false) {}
     bool init(int width, int height, int depth, int flags)
     {
-        int res = hal_ni_dctInit2D(&context, width, height, depth, flags);
+        int res = cv_hal_dctInit2D(&context, width, height, depth, flags);
         isInitialized = (res == CV_HAL_ERROR_OK);
         return isInitialized;
     }
@@ -4639,64 +4658,4 @@ int cv::getOptimalDFTSize( int size0 )
 
     return optimalDFTSizeTab[b];
 }
-
-
-#ifndef OPENCV_EXCLUDE_C_API
-
-CV_IMPL void
-cvDFT( const CvArr* srcarr, CvArr* dstarr, int flags, int nonzero_rows )
-{
-    cv::Mat src = cv::cvarrToMat(srcarr), dst0 = cv::cvarrToMat(dstarr), dst = dst0;
-    int _flags = ((flags & CV_DXT_INVERSE) ? cv::DFT_INVERSE : 0) |
-        ((flags & CV_DXT_SCALE) ? cv::DFT_SCALE : 0) |
-        ((flags & CV_DXT_ROWS) ? cv::DFT_ROWS : 0);
-
-    CV_Assert( src.size == dst.size );
-
-    if( src.type() != dst.type() )
-    {
-        if( dst.channels() == 2 )
-            _flags |= cv::DFT_COMPLEX_OUTPUT;
-        else
-            _flags |= cv::DFT_REAL_OUTPUT;
-    }
-
-    cv::dft( src, dst, _flags, nonzero_rows );
-    CV_Assert( dst.data == dst0.data ); // otherwise it means that the destination size or type was incorrect
-}
-
-
-CV_IMPL void
-cvMulSpectrums( const CvArr* srcAarr, const CvArr* srcBarr,
-                CvArr* dstarr, int flags )
-{
-    cv::Mat srcA = cv::cvarrToMat(srcAarr),
-        srcB = cv::cvarrToMat(srcBarr),
-        dst = cv::cvarrToMat(dstarr);
-    CV_Assert( srcA.size == dst.size && srcA.type() == dst.type() );
-
-    cv::mulSpectrums(srcA, srcB, dst,
-        (flags & CV_DXT_ROWS) ? cv::DFT_ROWS : 0,
-        (flags & CV_DXT_MUL_CONJ) != 0 );
-}
-
-
-CV_IMPL void
-cvDCT( const CvArr* srcarr, CvArr* dstarr, int flags )
-{
-    cv::Mat src = cv::cvarrToMat(srcarr), dst = cv::cvarrToMat(dstarr);
-    CV_Assert( src.size == dst.size && src.type() == dst.type() );
-    int _flags = ((flags & CV_DXT_INVERSE) ? cv::DCT_INVERSE : 0) |
-            ((flags & CV_DXT_ROWS) ? cv::DCT_ROWS : 0);
-    cv::dct( src, dst, _flags );
-}
-
-
-CV_IMPL int
-cvGetOptimalDFTSize( int size0 )
-{
-    return cv::getOptimalDFTSize(size0);
-}
-
-#endif  // OPENCV_EXCLUDE_C_API
 /* End of file. */

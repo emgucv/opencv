@@ -69,6 +69,8 @@ public:
 
     void write( const String& key, int value );
 
+    void write( const String& key, int64_t value );
+
     void write( const String& key, double value );
 
     void write( const String& key, const String& value );
@@ -148,6 +150,8 @@ public:
         ushort getUInt16();
 
         int getInt32();
+
+        int64_t getInt64();
 
         double getFloat64();
 

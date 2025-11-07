@@ -24,9 +24,8 @@ For headless WEC2013, this configuration may not be limited to but is known to w
 -DBUILD_opencv_apps=OFF `
 -DBUILD_opencv_3d=OFF `
 -DBUILD_opencv_highgui=OFF `
--DBUILD_opencv_features2d=OFF `
+-DBUILD_opencv_features=OFF `
 -DBUILD_opencv_flann=OFF `
--DBUILD_opencv_ml=OFF `
 -DBUILD_opencv_objdetect=OFF `
 -DBUILD_opencv_photo=OFF `
 -DBUILD_opencv_shape=OFF `
@@ -47,7 +46,6 @@ For headless WEC2013, this configuration may not be limited to but is known to w
 -DHAVE_OPENCL=OFF `
 -DWITH_QT=OFF `
 -DWITH_GTK=OFF `
--DWITH_QUIRC=OFF `
 -DWITH_JASPER=OFF `
 -DWITH_WEBP=OFF `
 -DWITH_PROTOBUF=OFF `

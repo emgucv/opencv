@@ -593,6 +593,41 @@ int _InputArray::sizend(int* arrsz, int i) const
     return d;
 }
 
+bool _InputArray::empty(int i) const
+{
+    _InputArray::KindFlag k = kind();
+    if (i >= 0) {
+        if (k == STD_VECTOR_MAT) {
+            auto mv = reinterpret_cast<const std::vector<Mat>*>(obj);
+            CV_Assert((size_t)i < mv->size());
+            return mv->at(i).empty();
+        }
+        else if (k == STD_VECTOR_MAT) {
+            auto umv = reinterpret_cast<const std::vector<UMat>*>(obj);
+            CV_Assert((size_t)i < umv->size());
+            return umv->at(i).empty();
+        }
+        else if (k == STD_VECTOR_VECTOR) {
+            auto vv = reinterpret_cast<const std::vector<std::vector<int> >*>(obj);
+            CV_Assert((size_t)i < vv->size());
+            return vv->at(i).empty();
+        } else {
+            CV_Error(Error::StsNotImplemented, "");
+        }
+    }
+    return empty();
+}
+
+MatShape _InputArray::shape(int i) const
+{
+    int sizes[CV_MAX_DIM];
+    int dims = sizend(sizes, i);
+
+    if (dims == 0 && empty(i))
+        return MatShape();
+    return MatShape(dims, sizes);
+}
+
 bool _InputArray::sameSize(const _InputArray& arr) const
 {
     _InputArray::KindFlag k1 = kind(), k2 = arr.kind();
@@ -964,7 +999,7 @@ bool _InputArray::isContinuous(int i) const
     if( k == CUDA_GPU_MAT )
       return i < 0 ? ((const cuda::GpuMat*)obj)->isContinuous() : true;
 
-    CV_Error(CV_StsNotImplemented, "Unknown/unsupported array type");
+    CV_Error(cv::Error::StsNotImplemented, "Unknown/unsupported array type");
 }
 
 bool _InputArray::isSubmatrix(int i) const
@@ -1002,7 +1037,7 @@ bool _InputArray::isSubmatrix(int i) const
         return vv[i].isSubmatrix();
     }
 
-    CV_Error(CV_StsNotImplemented, "");
+    CV_Error(cv::Error::StsNotImplemented, "");
 }
 
 size_t _InputArray::offset(int i) const
@@ -1303,7 +1338,7 @@ void _OutputArray::create(int d, const int* sizes, int mtype, int i,
 
         if(fixedType())
         {
-            if(CV_MAT_CN(mtype) == m.channels() && ((1 << CV_MAT_TYPE(flags)) & fixedDepthMask) != 0 )
+            if(CV_MAT_CN(mtype) == m.channels() && ((1 << CV_MAT_DEPTH(flags)) & fixedDepthMask) != 0 )
                 mtype = m.type();
             else
                 CV_CheckTypeEQ(m.type(), CV_MAT_TYPE(mtype), "Can't reallocate Mat with locked type (probably due to misused 'const' modifier)");
@@ -1475,14 +1510,14 @@ void _OutputArray::create(int d, const int* sizes, int mtype, int i,
             ((std::vector<Vec<int, 128> >*)v)->resize(len);
             break;
         default:
-            CV_Error_(CV_StsBadArg, ("Vectors with element size %d are not supported. Please, modify OutputArray::create()\n", esz));
+            CV_Error_(cv::Error::StsBadArg, ("Vectors with element size %d are not supported. Please, modify OutputArray::create()\n", esz));
         }
         return;
     }
 
     if( k == NONE )
     {
-        CV_Error(CV_StsNullPtr, "create() called for the missing output array" );
+        CV_Error(cv::Error::StsNullPtr, "create() called for the missing output array" );
     }
 
     if( k == STD_VECTOR_MAT )
@@ -1673,10 +1708,108 @@ void _OutputArray::create(int d, const int* sizes, int mtype, int i,
     CV_Error(Error::StsNotImplemented, "Unknown/unsupported array type");
 }
 
+void _OutputArray::create(const MatShape& shape, int mtype, int i,
+                          bool allowTransposed, _OutputArray::DepthMask fixedDepthMask) const
+{
+    if (shape.dims < 0) {
+        release();
+    } else {
+        create(shape.dims, shape.p, mtype, i, allowTransposed, fixedDepthMask);
+    }
+}
+
+Mat _OutputArray::reinterpret(int mtype) const
+{
+    mtype = CV_MAT_TYPE(mtype);
+    return getMat().reinterpret(mtype);
+}
+
 void _OutputArray::createSameSize(const _InputArray& arr, int mtype) const
 {
     int arrsz[CV_MAX_DIM], d = arr.sizend(arrsz);
     create(d, arrsz, mtype);
+}
+
+void _OutputArray::fit(int d, const int* sizes, int mtype, int i,
+                       bool allowTransposed, _OutputArray::DepthMask fixedDepthMask) const
+{
+    int size0 = d > 0 ? sizes[0] : 1, size1 = d > 1 ? sizes[1] : 1;
+    _InputArray::KindFlag k = kind();
+    mtype = CV_MAT_TYPE(mtype);
+
+    if( (k == MAT && i < 0) || (k == STD_VECTOR_MAT && i >= 0) )
+    {
+        Mat* m;
+        if (k == MAT)
+            m = (Mat*)obj;
+        else {
+            std::vector<Mat>& v = *(std::vector<Mat>*)obj;
+            CV_Assert((size_t)i < v.size());
+            m = &v[i];
+        }
+        CV_Assert(!(m->empty() && fixedType() && fixedSize()) && "Can't reallocate empty Mat with locked layout (probably due to misused 'const' modifier)");
+        if (!m->empty() && d <= 2 && m->dims <= 2 &&
+            m->type() == mtype &&
+            ((m->rows == size0 && m->cols == size1) ||
+             (allowTransposed && m->rows == size1 && m->cols == size0 && m->isContinuous())))
+        {
+            return;
+        }
+
+        if(fixedType())
+        {
+            if(CV_MAT_CN(mtype) == m->channels() && ((1 << CV_MAT_DEPTH(flags)) & fixedDepthMask) != 0 )
+                mtype = m->type();
+            else
+                CV_CheckTypeEQ(m->type(), CV_MAT_TYPE(mtype), "Can't reallocate Mat with locked type (probably due to misused 'const' modifier)");
+        }
+        if(fixedSize())
+        {
+            CV_CheckEQ(m->dims, d, "Can't reallocate Mat with locked size (probably due to misused 'const' modifier)");
+            for(int j = 0; j < d; ++j)
+                CV_CheckEQ(m->size[j], sizes[j], "Can't reallocate Mat with locked size (probably due to misused 'const' modifier)");
+        }
+        m->fit(d, sizes, mtype);
+        return;
+    }
+
+    if( (k == UMAT && i < 0) || (k == STD_VECTOR_UMAT && i >= 0) )
+    {
+        UMat* m;
+        if (k == UMAT)
+            m = (UMat*)obj;
+        else {
+            std::vector<UMat>& v = *(std::vector<UMat>*)obj;
+            CV_Assert((size_t)i < v.size());
+            m = &v[i];
+        }
+        CV_Assert(!(m->empty() && fixedType() && fixedSize()) && "Can't reallocate empty Mat with locked layout (probably due to misused 'const' modifier)");
+        if (!m->empty() && d <= 2 && m->dims <= 2 &&
+            m->type() == mtype &&
+            ((m->rows == size0 && m->cols == size1) ||
+             (allowTransposed && m->rows == size1 && m->cols == size0 && m->isContinuous())))
+        {
+            return;
+        }
+
+        if(fixedType())
+        {
+            if(CV_MAT_CN(mtype) == m->channels() && ((1 << CV_MAT_DEPTH(flags)) & fixedDepthMask) != 0 )
+                mtype = m->type();
+            else
+                CV_CheckTypeEQ(m->type(), CV_MAT_TYPE(mtype), "Can't reallocate Mat with locked type (probably due to misused 'const' modifier)");
+        }
+        if(fixedSize())
+        {
+            CV_CheckEQ(m->dims, d, "Can't reallocate Mat with locked size (probably due to misused 'const' modifier)");
+            for(int j = 0; j < d; ++j)
+                CV_CheckEQ(m->size[j], sizes[j], "Can't reallocate Mat with locked size (probably due to misused 'const' modifier)");
+        }
+        m->fit(d, sizes, mtype);
+        return;
+    }
+
+    create(d, sizes, mtype, i, allowTransposed, fixedDepthMask);
 }
 
 void _OutputArray::release() const
@@ -1952,12 +2085,7 @@ void _OutputArray::move(UMat& u) const
     int k = kind();
     if (k == UMAT)
     {
-#ifdef CV_CXX11
         *(UMat*)obj = std::move(u);
-#else
-        *(UMat*)obj = u;
-        u.release();
-#endif
     }
     else if (k == MAT)
     {
@@ -1992,12 +2120,7 @@ void _OutputArray::move(Mat& m) const
     }
     else if (k == MAT)
     {
-#ifdef CV_CXX11
         *(Mat*)obj = std::move(m);
-#else
-        *(Mat*)obj = m;
-        m.release();
-#endif
     }
     else if (k == MATX)
     {

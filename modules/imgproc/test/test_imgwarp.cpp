@@ -39,6 +39,8 @@
 //
 //M*/
 
+#include "opencv2/ts/ocl_test.hpp"
+#include "opencv2/ts/ts_gtest.h"
 #include "test_precomp.hpp"
 
 namespace opencv_test { namespace {
@@ -359,8 +361,8 @@ void CV_RemapTest::fill_array( int test_case_idx, int i, int j, Mat& arr )
 
 void CV_RemapTest::run_func()
 {
-    remap( cvarrToMat( test_array[INPUT][0] ), cvarrToMat( test_array[INPUT_OUTPUT][0] ),
-             cvarrToMat( test_array[INPUT][1] ), cvarrToMat( test_array[INPUT][2] ), interpolation );
+    cv::remap(test_mat[INPUT][0], test_mat[INPUT_OUTPUT][0],
+              test_mat[INPUT][1], test_mat[INPUT][2], interpolation );
 }
 
 
@@ -464,7 +466,7 @@ protected:
     double get_success_error_level( int test_case_idx, int i, int j );
     void fill_array( int test_case_idx, int i, int j, Mat& arr );
 
-    CvPoint2D32f center;
+    Point2f center;
     bool test_cpp;
 };
 
@@ -516,8 +518,8 @@ void CV_GetRectSubPixTest::fill_array( int test_case_idx, int i, int j, Mat& arr
 
 void CV_GetRectSubPixTest::run_func()
 {
-    cv::Mat _out = cv::cvarrToMat(test_array[INPUT_OUTPUT][0]);
-    cv::getRectSubPix( cv::cvarrToMat(test_array[INPUT][0]), _out.size(), center, _out, _out.type());
+    cv::Mat _out = test_mat[INPUT_OUTPUT][0];
+    cv::getRectSubPix(test_mat[INPUT][0], _out.size(), center, _out, _out.type());
 }
 
 
@@ -751,6 +753,73 @@ TEST(Imgproc_resize_area, regression_quarter_round)
     check_resize_area<uchar>(expected, actual, 0.5);
 }
 
+typedef tuple<int, int, int, int, bool> RemapRelativeParam;
+typedef testing::TestWithParam<RemapRelativeParam> Imgproc_RemapRelative;
+
+TEST_P(Imgproc_RemapRelative, validity)
+{
+    int srcType = CV_MAKE_TYPE(get<0>(GetParam()), get<1>(GetParam()));
+    int interpolation = get<2>(GetParam());
+    int borderType = get<3>(GetParam());
+    bool useFixedPoint = get<4>(GetParam());
+
+    const int nChannels = CV_MAT_CN(srcType);
+    const cv::Size size(127, 61);
+    cv::Mat data64FC1(1, size.area()*nChannels, CV_64FC1);
+    data64FC1.forEach<double>([&](double& pixel, const int* position) {pixel = static_cast<double>(position[1]);});
+
+    cv::Mat src;
+    data64FC1.reshape(nChannels, size.height).convertTo(src, srcType);
+
+    cv::Mat mapRelativeX32F(size, CV_32FC1);
+    mapRelativeX32F.setTo(cv::Scalar::all(-0.25));
+
+    cv::Mat mapRelativeY32F(size, CV_32FC1);
+    mapRelativeY32F.setTo(cv::Scalar::all(-0.25));
+
+    cv::Mat mapAbsoluteX32F = mapRelativeX32F.clone();
+    mapAbsoluteX32F.forEach<float>([&](float& pixel, const int* position) {
+        pixel += static_cast<float>(position[1]);
+        });
+
+    cv::Mat mapAbsoluteY32F = mapRelativeY32F.clone();
+    mapAbsoluteY32F.forEach<float>([&](float& pixel, const int* position) {
+        pixel += static_cast<float>(position[0]);
+        });
+
+    cv::Mat mapAbsoluteX16S;
+    cv::Mat mapAbsoluteY16S;
+    cv::Mat mapRelativeX16S;
+    cv::Mat mapRelativeY16S;
+    if (useFixedPoint)
+    {
+        const bool nninterpolation = (interpolation == cv::INTER_NEAREST) || (interpolation == cv::INTER_NEAREST_EXACT);
+        cv::convertMaps(mapAbsoluteX32F, mapAbsoluteY32F, mapAbsoluteX16S, mapAbsoluteY16S, CV_16SC2, nninterpolation);
+        cv::convertMaps(mapRelativeX32F, mapRelativeY32F, mapRelativeX16S, mapRelativeY16S, CV_16SC2, nninterpolation);
+    }
+
+    cv::Mat dstAbsolute;
+    cv::Mat dstRelative;
+    if (useFixedPoint)
+    {
+        cv::remap(src, dstAbsolute, mapAbsoluteX16S, mapAbsoluteY16S, interpolation, borderType);
+        cv::remap(src, dstRelative, mapRelativeX16S, mapRelativeY16S, interpolation | WARP_RELATIVE_MAP, borderType);
+    }
+    else
+    {
+        cv::remap(src, dstAbsolute, mapAbsoluteX32F, mapAbsoluteY32F, interpolation, borderType);
+        cv::remap(src, dstRelative, mapRelativeX32F, mapRelativeY32F, interpolation | WARP_RELATIVE_MAP, borderType);
+    }
+
+    EXPECT_LE(cvtest::norm(dstAbsolute, dstRelative, NORM_INF), 1);
+};
+
+INSTANTIATE_TEST_CASE_P(ImgProc, Imgproc_RemapRelative, testing::Combine(
+    testing::Values(CV_8U, CV_16U, CV_32F, CV_64F),
+    testing::Values(1, 3, 4),
+    testing::Values((int)INTER_NEAREST, (int)INTER_LINEAR, (int)INTER_CUBIC, (int)INTER_LANCZOS4),
+    testing::Values((int)BORDER_CONSTANT, (int)BORDER_REPLICATE, (int)BORDER_WRAP, (int)BORDER_REFLECT, (int)BORDER_REFLECT_101),
+    testing::Values(false, true)));
 
 //////////////////////////////////////////////////////////////////////////
 
@@ -965,87 +1034,6 @@ TEST(Imgproc_Remap, DISABLED_memleak)
     }
 }
 
-//** @deprecated */
-TEST(Imgproc_linearPolar, identity)
-{
-    const int N = 33;
-    Mat in(N, N, CV_8UC3, Scalar(255, 0, 0));
-    in(cv::Rect(N/3, N/3, N/3, N/3)).setTo(Scalar::all(255));
-    cv::blur(in, in, Size(5, 5));
-    cv::blur(in, in, Size(5, 5));
-
-    Mat src = in.clone();
-    Mat dst;
-
-    Rect roi = Rect(0, 0, in.cols - ((N+19)/20), in.rows);
-
-    for (int i = 1; i <= 5; i++)
-    {
-        linearPolar(src, dst,
-            Point2f((N-1) * 0.5f, (N-1) * 0.5f), N * 0.5f,
-            cv::WARP_FILL_OUTLIERS | cv::INTER_LINEAR | cv::WARP_INVERSE_MAP);
-
-        linearPolar(dst, src,
-            Point2f((N-1) * 0.5f, (N-1) * 0.5f), N * 0.5f,
-            cv::WARP_FILL_OUTLIERS | cv::INTER_LINEAR);
-
-        double psnr = cvtest::PSNR(in(roi), src(roi));
-        EXPECT_LE(25, psnr) << "iteration=" << i;
-    }
-
-#if 0
-    Mat all(N*2+2,N*2+2, src.type(), Scalar(0,0,255));
-    in.copyTo(all(Rect(0,0,N,N)));
-    src.copyTo(all(Rect(0,N+1,N,N)));
-    src.copyTo(all(Rect(N+1,0,N,N)));
-    dst.copyTo(all(Rect(N+1,N+1,N,N)));
-    imwrite("linearPolar.png", all);
-    imshow("input", in); imshow("result", dst); imshow("restore", src); imshow("all", all);
-    cv::waitKey();
-#endif
-}
-
-//** @deprecated */
-TEST(Imgproc_logPolar, identity)
-{
-    const int N = 33;
-    Mat in(N, N, CV_8UC3, Scalar(255, 0, 0));
-    in(cv::Rect(N/3, N/3, N/3, N/3)).setTo(Scalar::all(255));
-    cv::blur(in, in, Size(5, 5));
-    cv::blur(in, in, Size(5, 5));
-
-    Mat src = in.clone();
-    Mat dst;
-
-    Rect roi = Rect(0, 0, in.cols - ((N+19)/20), in.rows);
-
-    double M = N/log(N * 0.5f);
-    for (int i = 1; i <= 5; i++)
-    {
-        logPolar(src, dst,
-            Point2f((N-1) * 0.5f, (N-1) * 0.5f), M,
-            WARP_FILL_OUTLIERS | INTER_LINEAR | WARP_INVERSE_MAP);
-
-        logPolar(dst, src,
-            Point2f((N-1) * 0.5f, (N-1) * 0.5f), M,
-            WARP_FILL_OUTLIERS | INTER_LINEAR);
-
-        double psnr = cvtest::PSNR(in(roi), src(roi));
-        EXPECT_LE(25, psnr) << "iteration=" << i;
-    }
-
-#if 0
-    Mat all(N*2+2,N*2+2, src.type(), Scalar(0,0,255));
-    in.copyTo(all(Rect(0,0,N,N)));
-    src.copyTo(all(Rect(0,N+1,N,N)));
-    src.copyTo(all(Rect(N+1,0,N,N)));
-    dst.copyTo(all(Rect(N+1,N+1,N,N)));
-    imwrite("logPolar.png", all);
-    imshow("input", in); imshow("result", dst); imshow("restore", src); imshow("all", all);
-    cv::waitKey();
-#endif
-}
-
 TEST(Imgproc_warpPolar, identity)
 {
     const int N = 33;
@@ -1129,6 +1117,53 @@ TEST(Imgproc_Remap, issue_23562)
         remap(src, dst, mapx, mapy, INTER_LINEAR, BORDER_TRANSPARENT);
         ASSERT_EQ(0.0, cvtest::norm(ref, dst, NORM_INF)) << "channels=" << cn;
     }
+}
+
+TEST(Imgproc_Resize, issue_26497)
+{
+    std::vector<float> vec = {0.f, 1.f, 2.f, 3.f};
+    Mat A(vec), B;
+    resize(A, B, Size(2,2), 0, 0, INTER_LINEAR);
+    double minv = 0, maxv = 0;
+    cvtest::minMaxIdx(B, &minv, &maxv, nullptr, nullptr, noArray());
+    EXPECT_EQ(B.size(), Size(2, 2));
+    EXPECT_LE(0., minv);
+    EXPECT_LE(maxv, 3.);
+}
+
+TEST(Imgproc_getPerspectiveTransform, issue_26916)
+{
+    double src_data[] = {320, 512, 960, 512, 0, 1024, 1280, 1024};
+    const Mat src_points(4, 2, CV_64FC1, src_data);
+
+    double dst_data[] = {0, 0, 1280, 0, 0, 1024, 1280, 1024};
+    const Mat dst_points(4, 2, CV_64FC1, dst_data);
+
+    Mat src_points_f;
+    src_points.convertTo(src_points_f, CV_32FC1);
+
+    Mat dst_points_f;
+    dst_points.convertTo(dst_points_f, CV_32FC1);
+
+    Mat perspective_transform = getPerspectiveTransform(src_points_f, dst_points_f);
+    EXPECT_NEAR(perspective_transform.at<double>(2, 2), 0, 1e-16);
+    EXPECT_NEAR(cv::norm(perspective_transform), 1, 1e-14);
+
+    const Mat ones = Mat::ones(4, 1, CV_64FC1);
+
+    Mat homogeneous_src_points;
+    hconcat(src_points, ones, homogeneous_src_points);
+
+    Mat obtained_homogeneous_dst_points = (perspective_transform * homogeneous_src_points.t()).t();
+    for (int row = 0; row < 4; ++row)
+    {
+        obtained_homogeneous_dst_points.row(row) /= obtained_homogeneous_dst_points.at<double>(row, 2);
+    }
+
+    Mat expected_homogeneous_dst_points;
+    hconcat(dst_points, ones, expected_homogeneous_dst_points);
+
+    EXPECT_MAT_NEAR(obtained_homogeneous_dst_points, expected_homogeneous_dst_points, 1e-10);
 }
 
 }} // namespace

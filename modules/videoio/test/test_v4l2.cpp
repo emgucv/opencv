@@ -17,6 +17,8 @@
 
 #ifdef HAVE_CAMV4L2
 
+// #define DUMP_CAMERA_FRAME
+
 #include "test_precomp.hpp"
 #include <opencv2/core/utils/configuration.private.hpp>
 #include <linux/videodev2.h>
@@ -70,6 +72,7 @@ TEST_P(videoio_v4l2, formats)
     const string device = devs[0];
     const Size sz(640, 480);
     const Format_Channels_Depth params = GetParam();
+    const Size esz(sz.width * params.mul_width, sz.height * params.mul_height);
 
     {
         // Case with RAW output
@@ -83,7 +86,17 @@ TEST_P(videoio_v4l2, formats)
             Mat img;
             EXPECT_TRUE(cap.grab());
             EXPECT_TRUE(cap.retrieve(img));
-            EXPECT_EQ(Size(sz.width * params.mul_width, sz.height * params.mul_height), img.size());
+            if (params.pixel_format == V4L2_PIX_FMT_SRGGB8 ||
+                params.pixel_format == V4L2_PIX_FMT_SBGGR8 ||
+                params.pixel_format == V4L2_PIX_FMT_SGBRG8 ||
+                params.pixel_format == V4L2_PIX_FMT_SGRBG8)
+            {
+                EXPECT_EQ((size_t)esz.area(), img.total());
+            }
+            else
+            {
+                EXPECT_EQ(esz, img.size());
+            }
             EXPECT_EQ(params.channels, img.channels());
             EXPECT_EQ(params.depth, img.depth());
         }
@@ -102,6 +115,13 @@ TEST_P(videoio_v4l2, formats)
             EXPECT_EQ(sz, img.size());
             EXPECT_EQ(3, img.channels());
             EXPECT_EQ(CV_8U, img.depth());
+#ifdef DUMP_CAMERA_FRAME
+            std::string img_name = "frame_" + fourccToStringSafe(params.pixel_format);
+            // V4L2 flag for big-endian formats
+            if(params.pixel_format & (1 << 31))
+                img_name += "-BE";
+            cv::imwrite(img_name + ".png", img);
+#endif
         }
     }
 }
@@ -116,17 +136,19 @@ vector<Format_Channels_Depth> all_params = {
 //    { V4L2_PIX_FMT_JPEG, 1, CV_8U, 1.f, 1.f },
     { V4L2_PIX_FMT_YUYV, 2, CV_8U, 1.f, 1.f },
     { V4L2_PIX_FMT_UYVY, 2, CV_8U, 1.f, 1.f },
-//    { V4L2_PIX_FMT_SBGGR8, 1, CV_8U, 1.f, 1.f },
-//    { V4L2_PIX_FMT_SN9C10X, 3, CV_8U, 1.f, 1.f },
-//    { V4L2_PIX_FMT_SGBRG8, 1, CV_8U, 1.f, 1.f },
+    { V4L2_PIX_FMT_SN9C10X, 3, CV_8U, 1.f, 1.f },
+    { V4L2_PIX_FMT_SRGGB8, 1, CV_8U, 1.f, 1.f },
+    { V4L2_PIX_FMT_SBGGR8, 1, CV_8U, 1.f, 1.f },
+    { V4L2_PIX_FMT_SGBRG8, 1, CV_8U, 1.f, 1.f },
+    { V4L2_PIX_FMT_SGRBG8, 1, CV_8U, 1.f, 1.f },
     { V4L2_PIX_FMT_RGB24, 3, CV_8U, 1.f, 1.f },
     { V4L2_PIX_FMT_Y16, 1, CV_16U, 1.f, 1.f },
     { V4L2_PIX_FMT_Y16_BE, 1, CV_16U, 1.f, 1.f },
     { V4L2_PIX_FMT_Y10, 1, CV_16U, 1.f, 1.f },
     { V4L2_PIX_FMT_GREY, 1, CV_8U, 1.f, 1.f },
     { V4L2_PIX_FMT_BGR24, 3, CV_8U, 1.f, 1.f },
-    { V4L2_PIX_FMT_XBGR32, 3, CV_8U, 1.f, 1.f },
-    { V4L2_PIX_FMT_ABGR32, 3, CV_8U, 1.f, 1.f },
+    { V4L2_PIX_FMT_XBGR32, 4, CV_8U, 1.f, 1.f },
+    { V4L2_PIX_FMT_ABGR32, 4, CV_8U, 1.f, 1.f },
 };
 
 inline static std::string param_printer(const testing::TestParamInfo<videoio_v4l2::ParamType>& info)
@@ -135,6 +157,20 @@ inline static std::string param_printer(const testing::TestParamInfo<videoio_v4l
 }
 
 INSTANTIATE_TEST_CASE_P(/*videoio_v4l2*/, videoio_v4l2, ValuesIn(all_params), param_printer);
+
+TEST(videoio_ffmpeg, camera_index)
+{
+    utils::Paths devs = utils::getConfigurationParameterPaths("OPENCV_TEST_V4L2_VIVID_DEVICE");
+    if (devs.size() != 1)
+    {
+        throw SkipTestException("OPENCV_TEST_V4L2_VIVID_DEVICE is not set");
+    }
+    VideoCapture cap;
+    ASSERT_TRUE(cap.open(0, CAP_FFMPEG));
+    Mat frame;
+    ASSERT_TRUE(cap.read(frame));
+    ASSERT_FALSE(frame.empty());
+}
 
 }} // opencv_test::<anonymous>::
 

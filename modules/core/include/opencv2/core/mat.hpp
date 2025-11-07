@@ -53,6 +53,7 @@
 
 #include "opencv2/core/bufferpool.hpp"
 
+#include <array>
 #include <type_traits>
 
 namespace cv
@@ -66,6 +67,114 @@ enum AccessFlag { ACCESS_READ=1<<24, ACCESS_WRITE=1<<25,
 CV_ENUM_FLAGS(AccessFlag)
 __CV_ENUM_FLAGS_BITWISE_AND(AccessFlag, int, AccessFlag)
 
+/**
+ * @brief Enum of data layout for model inference.
+ * @see Image2BlobParams
+ */
+enum DataLayout
+{
+    DATA_LAYOUT_UNKNOWN = 0,
+    DATA_LAYOUT_ND = 1,        //!< OpenCV data layout for 2D data.
+    DATA_LAYOUT_NCHW = 2,      //!< OpenCV data layout for 4D data.
+    DATA_LAYOUT_NCDHW = 3,     //!< OpenCV data layout for 5D data.
+    DATA_LAYOUT_NHWC = 4,      //!< Tensorflow-like data layout for 4D data.
+    DATA_LAYOUT_NDHWC = 5,     //!< Tensorflow-like data layout for 5D data.
+    DATA_LAYOUT_PLANAR = 6,    //!< Tensorflow-like data layout, it should only be used at tf or tflite model parsing.
+    DATA_LAYOUT_BLOCK = 7,     //!< Block layout (also referred to as 'NC1HWC0'), which some accelerators need and even on CPU a better performance may be achieved.
+
+    // for compatibility with the old code in DNN
+    DNN_LAYOUT_UNKNOWN = 0,
+    DNN_LAYOUT_ND = 1,        //!< OpenCV data layout for 2D data.
+    DNN_LAYOUT_NCHW = 2,      //!< OpenCV data layout for 4D data.
+    DNN_LAYOUT_NCDHW = 3,     //!< OpenCV data layout for 5D data.
+    DNN_LAYOUT_NHWC = 4,      //!< Tensorflow-like data layout for 4D data.
+    DNN_LAYOUT_NDHWC = 5,     //!< Tensorflow-like data layout for 5D data.
+    DNN_LAYOUT_PLANAR = 6,    //!< Tensorflow-like data layout, it should only be used at tf or tflite model parsing.
+    DNN_LAYOUT_BLOCK = 7,     //!< Block layout (also referred to as 'NC1HWC0'), which some accelerators need and even on CPU a better performance may be achieved.
+};
+
+CV_EXPORTS std::string layoutToString(DataLayout layout);
+
+/**
+ * @brief Represents shape of a matrix/tensor.
+ *   Previously, MatShape was defined as an alias of std::vector<int>,
+ *   but now we use a special structure that provides a few extra benefits:
+ *   1. avoids any heap operations, since the shape is stored in a plain array. This reduces overhead of shape inference etc.
+ *   2. includes information about the layout, including the actual number of channels ('C') in the case of block layout.
+ *   3. distinguishes between empty shape (total() == 0) and 0-dimensional shape (dims == 0, but total() == 1).
+ */
+struct CV_EXPORTS_W_SIMPLE MatShape
+{
+    enum {MAX_DIMS=10};
+
+    MatShape();
+    explicit MatShape(size_t dims, const int* sizes=nullptr, DataLayout layout=DATA_LAYOUT_UNKNOWN, int C=0);
+    explicit MatShape(size_t dims, int value, DataLayout layout=DATA_LAYOUT_UNKNOWN);
+    explicit MatShape(int dims, int value, DataLayout layout=DATA_LAYOUT_UNKNOWN);
+    explicit MatShape(const std::vector<int>& shape, DataLayout layout=DATA_LAYOUT_UNKNOWN, int C=0);
+    explicit MatShape(const int* begin, const int* end, DataLayout layout=DATA_LAYOUT_UNKNOWN, int C=0);
+    explicit MatShape(std::initializer_list<int> shape);
+    MatShape(const MatShape& shape);
+    MatShape& operator = (const MatShape& shape);
+    static MatShape scalar();
+    template<class _It> MatShape(_It begin, _It end);
+
+    // try to mimic basic std::vector<int> functionality
+    size_t size() const; // returns 0 in the case of scalar tensor. So, please don't use 'size()==0' to check for an empty shape. Use empty() instead.
+    CV_WRAP bool empty() const; // equivalent to total()==0, but may be slightly faster.
+    CV_WRAP bool isScalar() const; // dims==0
+    CV_WRAP void clear();
+    void resize(size_t newSize, int value=0);
+    void reserve(size_t maxSize);
+    void assign(size_t newSize, int value);
+    void assign(int newSize, int value);
+    void assign(const int* begin, const int* end);
+    void assign_(const int* begin, const int* end);
+    template<class _It> void assign(_It begin, _It end);
+    void insert(int* where, int value);
+    void insert(int* where, const int* begin, const int* end);
+    void insert_(int* where, const int* begin, const int* end);
+    void insert(int* where, size_t count, int value);
+    void insert(int* where, int count, int value);
+    template<class _It> void insert(int* where, _It begin, _It end);
+    CV_WRAP void erase(int* where);
+    int* data();
+    const int* data() const;
+    int* begin();
+    const int* begin() const;
+    int* end();
+    const int* end() const;
+    int& back();
+    const int& back() const;
+    void push_back(int value);
+    void emplace_back(int value);
+    const int& operator [](size_t idx) const;
+    int& operator [](size_t idx);
+    Size operator()() const; // for compatibility with MatSize
+
+    CV_WRAP bool hasSymbols() const; // negative elements in the shape may denote 'symbols' instead of actual values.
+
+    // compute shape of the result with possible broadcasting
+    CV_WRAP MatShape expand(const MatShape& another) const;
+
+    // convert shape to/from block layout
+    CV_WRAP MatShape toBlock(int C0) const;
+    CV_WRAP MatShape fromBlock(DataLayout newLayout) const;
+
+    size_t total() const; // returns the total number of elements in the tensor (including padding elements, i.e. the method ignores 'C' in the case of block layout). Returns 1 for scalar tensors. Returns 0 for empty shapes.
+
+    std::vector<int> vec() const;
+    std::string str() const;
+
+    int dims;
+    DataLayout layout;
+    int C;
+    int p[MAX_DIMS];
+};
+
+CV_EXPORTS bool operator == (const MatShape& shape1, const MatShape& shape2);
+CV_EXPORTS bool operator != (const MatShape& shape1, const MatShape& shape2);
+
 CV__DEBUG_NS_BEGIN
 
 class CV_EXPORTS _OutputArray;
@@ -78,9 +187,10 @@ It is defined as:
 @code
     typedef const _InputArray& InputArray;
 @endcode
-where _InputArray is a class that can be constructed from `Mat`, `Mat_<T>`, `Matx<T, m, n>`,
-`std::vector<T>`, `std::vector<std::vector<T> >`, `std::vector<Mat>`, `std::vector<Mat_<T> >`,
-`UMat`, `std::vector<UMat>` or `double`. It can also be constructed from a matrix expression.
+where \ref cv::_InputArray is a class that can be constructed from \ref cv::Mat, \ref cv::Mat_<T>,
+\ref cv::Matx<T, m, n>, std::vector<T>, std::vector<std::vector<T>>, std::vector<Mat>,
+std::vector<Mat_<T>>, \ref cv::UMat, std::vector<UMat> or `double`. It can also be constructed from
+a matrix expression.
 
 Since this is mostly implementation-level class, and its interface may change in future versions, we
 do not describe it in details. There are a few key things, though, that should be kept in mind:
@@ -226,6 +336,7 @@ public:
     int cols(int i=-1) const;
     int rows(int i=-1) const;
     Size size(int i=-1) const;
+    MatShape shape(int i=-1) const;
     int sizend(int* sz, int i=-1) const;
     bool sameSize(const _InputArray& arr) const;
     size_t total(int i=-1) const;
@@ -235,6 +346,7 @@ public:
     bool isContinuous(int i=-1) const;
     bool isSubmatrix(int i=-1) const;
     bool empty() const;
+    bool empty(int i) const;
     void copyTo(const _OutputArray& arr) const;
     void copyTo(const _OutputArray& arr, const _InputArray & mask) const;
     size_t offset(int i=-1) const;
@@ -299,6 +411,11 @@ public:
         DEPTH_MASK_32F = 1 << CV_32F,
         DEPTH_MASK_64F = 1 << CV_64F,
         DEPTH_MASK_16F = 1 << CV_16F,
+        DEPTH_MASK_16BF = 1 << CV_16BF,
+        DEPTH_MASK_BOOL = 1 << CV_Bool,
+        DEPTH_MASK_64U = 1 << CV_64U,
+        DEPTH_MASK_64S = 1 << CV_64S,
+        DEPTH_MASK_32U = 1 << CV_32U,
         DEPTH_MASK_ALL = (1 << CV_DEPTH_CURR_MAX)-1,
         DEPTH_MASK_ALL_BUT_8S = DEPTH_MASK_ALL & ~DEPTH_MASK_8S,
         DEPTH_MASK_ALL_16F = DEPTH_MASK_ALL,
@@ -361,14 +478,24 @@ public:
     template<typename _Tp> std::vector<std::vector<_Tp> >& getVecVecRef() const;
     ogl::Buffer& getOGlBufferRef() const;
     cuda::HostMem& getHostMemRef() const;
+
     void create(Size sz, int type, int i=-1, bool allowTransposed=false, _OutputArray::DepthMask fixedDepthMask=static_cast<_OutputArray::DepthMask>(0)) const;
     void create(int rows, int cols, int type, int i=-1, bool allowTransposed=false, _OutputArray::DepthMask fixedDepthMask=static_cast<_OutputArray::DepthMask>(0)) const;
     void create(int dims, const int* size, int type, int i=-1, bool allowTransposed=false, _OutputArray::DepthMask fixedDepthMask=static_cast<_OutputArray::DepthMask>(0)) const;
+    void create(const MatShape& shape, int type, int i=-1, bool allowTransposed=false, _OutputArray::DepthMask fixedDepthMask=static_cast<_OutputArray::DepthMask>(0)) const;
     void createSameSize(const _InputArray& arr, int mtype) const;
+
+    void fit(Size sz, int type, int i=-1, bool allowTransposed=false, _OutputArray::DepthMask fixedDepthMask=static_cast<_OutputArray::DepthMask>(0)) const;
+    void fit(int rows, int cols, int type, int i=-1, bool allowTransposed=false, _OutputArray::DepthMask fixedDepthMask=static_cast<_OutputArray::DepthMask>(0)) const;
+    void fit(int dims, const int* size, int type, int i=-1, bool allowTransposed=false, _OutputArray::DepthMask fixedDepthMask=static_cast<_OutputArray::DepthMask>(0)) const;
+    void fit(const MatShape& shape, int type, int i=-1, bool allowTransposed=false, _OutputArray::DepthMask fixedDepthMask=static_cast<_OutputArray::DepthMask>(0)) const;
+    void fitSameSize(const _InputArray& arr, int mtype) const;
+
     void release() const;
     void clear() const;
     void setTo(const _InputArray& value, const _InputArray & mask = _InputArray()) const;
     void setZero() const;
+    Mat reinterpret( int type ) const;
 
     void assign(const UMat& u) const;
     void assign(const Mat& m) const;
@@ -444,6 +571,22 @@ typedef OutputArray OutputArrayOfArrays;
 typedef const _InputOutputArray& InputOutputArray;
 typedef InputOutputArray InputOutputArrayOfArrays;
 
+/** @brief Returns an empty InputArray or OutputArray.
+
+ This function is used to provide an "empty" or "null" array when certain functions
+ take optional input or output arrays that you don't want to provide.
+
+ Many OpenCV functions accept optional arguments as `cv::InputArray` or `cv::OutputArray`.
+ When you don't want to pass any data for these optional parameters, you can use `cv::noArray()`
+ to indicate that you are omitting them.
+
+ @return An empty `cv::InputArray` or `cv::OutputArray` that can be used as a placeholder.
+
+ @note This is often used when a function has optional arrays, and you do not want to
+ provide a specific input or output array.
+
+ @see cv::InputArray, cv::OutputArray
+ */
 CV_EXPORTS InputOutputArray noArray();
 
 /////////////////////////////////// MatAllocator //////////////////////////////////////
@@ -581,20 +724,7 @@ struct CV_EXPORTS UMatData
 };
 CV_ENUM_FLAGS(UMatData::MemoryFlag)
 
-
-struct CV_EXPORTS MatSize
-{
-    explicit MatSize(int* _p) CV_NOEXCEPT;
-    int dims() const CV_NOEXCEPT;
-    Size operator()() const;
-    const int& operator[](int i) const;
-    int& operator[](int i);
-    operator const int*() const CV_NOEXCEPT;  // TODO OpenCV 4.0: drop this
-    bool operator == (const MatSize& sz) const CV_NOEXCEPT;
-    bool operator != (const MatSize& sz) const CV_NOEXCEPT;
-
-    int* p;
-};
+typedef MatShape MatSize;
 
 struct CV_EXPORTS MatStep
 {
@@ -604,11 +734,9 @@ struct CV_EXPORTS MatStep
     size_t& operator[](int i) CV_NOEXCEPT;
     operator size_t() const;
     MatStep& operator = (size_t s);
+    void clear();
 
-    size_t* p;
-    size_t buf[3];
-protected:
-    MatStep& operator = (const MatStep&);
+    size_t p[MatShape::MAX_DIMS];
 };
 
 /** @example samples/cpp/cout_mat.cpp
@@ -871,6 +999,20 @@ public:
     Mat(const std::vector<int>& sizes, int type);
 
     /** @overload
+    @param shape Array shape.
+    @param type Array type. Use CV_8UC1, ..., CV_64FC4 to create 1-4 channel matrices, or
+    CV_8UC(n), ..., CV_64FC(n) to create multi-channel (up to CV_CN_MAX channels) matrices.
+    */
+    Mat(const MatShape& shape, int type);
+
+    /** @overload
+    @param shape Array shape.
+    @param type Array type. Use CV_8UC1, ..., CV_64FC4 to create 1-4 channel matrices, or
+    CV_8UC(n), ..., CV_64FC(n) to create multi-channel (up to CV_CN_MAX channels) matrices.
+    */
+    Mat(std::initializer_list<int> shape, int type);
+
+    /** @overload
     @param ndims Array dimensionality.
     @param sizes Array of integers specifying an n-dimensional array shape.
     @param type Array type. Use CV_8UC1, ..., CV_64FC4 to create 1-4 channel matrices, or
@@ -891,6 +1033,25 @@ public:
     */
     Mat(const std::vector<int>& sizes, int type, const Scalar& s);
 
+    /** @overload
+    @param shape Array shape.
+    @param type Array type. Use CV_8UC1, ..., CV_64FC4 to create 1-4 channel matrices, or
+    CV_8UC(n), ..., CV_64FC(n) to create multi-channel (up to CV_CN_MAX channels) matrices.
+    @param s An optional value to initialize each matrix element with. To set all the matrix elements to
+    the particular value after the construction, use the assignment operator
+    Mat::operator=(const Scalar& value) .
+    */
+    Mat(const MatShape& shape, int type, const Scalar& s);
+
+    /** @overload
+    @param shape Array shape.
+    @param type Array type. Use CV_8UC1, ..., CV_64FC4 to create 1-4 channel matrices, or
+    CV_8UC(n), ..., CV_64FC(n) to create multi-channel (up to CV_CN_MAX channels) matrices.
+    @param s An optional value to initialize each matrix element with. To set all the matrix elements to
+     the particular value after the construction, use the assignment operator
+    Mat::operator=(const Scalar& value) .
+    */
+    Mat(std::initializer_list<int> shape, int type, const Scalar& s);
 
     /** @overload
     @param m Array that (as a whole or partly) is assigned to the constructed matrix. No data is copied
@@ -961,6 +1122,34 @@ public:
     set to the element size). If not specified, the matrix is assumed to be continuous.
     */
     Mat(const std::vector<int>& sizes, int type, void* data, const size_t* steps=0);
+
+    /** @overload
+    @param shape Array shape.
+    @param type Array type. Use CV_8UC1, ..., CV_64FC4 to create 1-4 channel matrices, or
+    CV_8UC(n), ..., CV_64FC(n) to create multi-channel (up to CV_CN_MAX channels) matrices.
+    @param data Pointer to the user data. Matrix constructors that take data and step parameters do not
+    allocate matrix data. Instead, they just initialize the matrix header that points to the specified
+    data, which means that no data is copied. This operation is very efficient and can be used to
+    process external data using OpenCV functions. The external data is not automatically deallocated, so
+    you should take care of it.
+    @param steps Array of ndims-1 steps in case of a multi-dimensional array (the last step is always
+    set to the element size). If not specified, the matrix is assumed to be continuous.
+    */
+    Mat(const MatShape& shape, int type, void* data, const size_t* steps=0);
+
+    /** @overload
+    @param shape Array shape.
+    @param type Array type. Use CV_8UC1, ..., CV_64FC4 to create 1-4 channel matrices, or
+    CV_8UC(n), ..., CV_64FC(n) to create multi-channel (up to CV_CN_MAX channels) matrices.
+    @param data Pointer to the user data. Matrix constructors that take data and step parameters do not
+    allocate matrix data. Instead, they just initialize the matrix header that points to the specified
+    data, which means that no data is copied. This operation is very efficient and can be used to
+    process external data using OpenCV functions. The external data is not automatically deallocated, so
+    you should take care of it.
+    @param steps Array of ndims-1 steps in case of a multi-dimensional array (the last step is always
+    set to the element size). If not specified, the matrix is assumed to be continuous.
+    */
+    Mat(std::initializer_list<int> shape, int type, void* data, const size_t* steps=0);
 
     /** @overload
     @param m Array that (as a whole or partly) is assigned to the constructed matrix. No data is copied
@@ -1226,7 +1415,8 @@ public:
     @param m Destination matrix. If it does not have a proper size or type before the operation, it is
     reallocated.
     @param mask Operation mask of the same size as \*this. Its non-zero elements indicate which matrix
-    elements need to be copied. The mask has to be of type CV_8U and can have 1 or multiple channels.
+    elements need to be copied. The mask has to be of type CV_8U, CV_8S or CV_Bool and can have 1 or
+    multiple channels.
     */
     void copyTo( OutputArray m, InputArray mask ) const;
 
@@ -1263,7 +1453,8 @@ public:
     This is an advanced variant of the Mat::operator=(const Scalar& s) operator.
     @param value Assigned scalar converted to the actual array type.
     @param mask Operation mask of the same size as \*this. Its non-zero elements indicate which matrix
-    elements need to be copied. The mask has to be of type CV_8U and can have 1 or multiple channels
+    elements need to be copied. The mask has to be of type CV_8U, CV_8S or CV_Bool and can have 1 or
+    multiple channels.
      */
     Mat& setTo(InputArray value, InputArray mask=noArray());
 
@@ -1323,6 +1514,27 @@ public:
      * the original sizes in those dimensions are presumed.
      */
     Mat reshape(int cn, const std::vector<int>& newshape) const;
+
+    /** @overload
+     * @param cn New number of channels. If the parameter is 0, the number of channels remains the same.
+     * @param newshape New shape in the form of MatShape.
+     */
+    Mat reshape(int cn, const MatShape& newshape) const;
+
+    /** @overload
+     * @param cn New number of channels. If the parameter is 0, the number of channels remains the same.
+     * @param newshape New shape in the form of initializer list.
+     */
+    Mat reshape(int cn, std::initializer_list<int> newshape) const;
+
+    /** @brief Reset the type of matrix.
+
+    The methods reset the data type of matrix. If the new type and the old type of the matrix
+    have the same element size, the current buffer can be reused. The method needs to consider whether the
+    current mat is a submatrix or has any references.
+    @param type New data type.
+     */
+    Mat reinterpret( int type ) const;
 
     /** @brief Transposes a matrix.
 
@@ -1407,6 +1619,12 @@ public:
     */
     CV_NODISCARD_STD static MatExpr zeros(int ndims, const int* sz, int type);
 
+    /** @overload
+    @param shape Array shape.
+    @param type Created matrix type.
+    */
+    CV_NODISCARD_STD static MatExpr zeros(const MatShape& shape, int type);
+
     /** @brief Returns an array of all 1's of the specified size and type.
 
     The method returns a Matlab-style 1's array initializer, similarly to Mat::zeros. Note that using
@@ -1437,6 +1655,12 @@ public:
     @param type Created matrix type.
     */
     CV_NODISCARD_STD static MatExpr ones(int ndims, const int* sz, int type);
+
+    /** @overload
+    @param shape Array shape.
+    @param type Created matrix type.
+    */
+    CV_NODISCARD_STD static MatExpr ones(const MatShape& shape, int type);
 
     /** @brief Returns an identity matrix of the specified size and type.
 
@@ -1514,6 +1738,18 @@ public:
     */
     void create(const std::vector<int>& sizes, int type);
 
+    /** @overload
+    @param shape The new shape.
+    @param type New matrix type.
+    */
+    void create(const MatShape& shape, int type);
+
+    /** @overload
+    @param shape The new shape.
+    @param type New matrix type.
+    */
+    void create(std::initializer_list<int> shape, int type);
+
     /** @brief Creates the matrix of the same size as another array.
 
     The method is similar to _OutputArray::createSameSize(arr, type),
@@ -1522,6 +1758,50 @@ public:
     @param type New matrix type.
     */
     void createSameSize(InputArray arr, int type);
+
+    /** @brief Similar to create(rows, cols, type), but only reallocates memory if the existing buffer size is not enough.
+     @param rows New number of rows.
+     @param cols New number of columns.
+     @param type New matrix type.
+    */
+    void fit(int rows, int cols, int type);
+
+    /** @overload
+    @param size Alternative new matrix size specification: Size(cols, rows)
+    @param type New matrix type.
+    */
+    void fit(Size size, int type);
+
+    /** @overload
+    @param ndims New array dimensionality.
+    @param sizes Array of integers specifying a new array shape.
+    @param type New matrix type.
+    */
+    void fit(int ndims, const int* sizes, int type);
+
+    /** @overload
+    @param sizes Array of integers specifying a new array shape.
+    @param type New matrix type.
+    */
+    void fit(const std::vector<int>& sizes, int type);
+
+    /** @overload
+    @param shape The new shape.
+    @param type New matrix type.
+    */
+    void fit(const MatShape& shape, int type);
+
+    /** @overload
+    @param shape The new shape.
+    @param type New matrix type.
+    */
+    void fit(std::initializer_list<int> shape, int type);
+
+    /** @brief Similar to createSameSize(arr, type), but only reallocates memory if the existing buffer is not enough.
+    @param arr The other array.
+    @param type New matrix type.
+    */
+    void fitSameSize(InputArray arr, int type);
 
     /** @brief Increments the reference counter.
 
@@ -1824,6 +2104,10 @@ public:
     arbitrary matrix element.
      */
     size_t step1(int i=0) const;
+
+    /** @brief Returns the shape.
+    */
+    MatShape shape() const;
 
     /** @brief Returns true if the array has no elements.
 
@@ -2130,7 +2414,7 @@ public:
     /** @overload */
     template<typename _Tp, typename Functor> void forEach(const Functor& operation) const;
 
-    Mat(Mat&& m);
+    Mat(Mat&& m) CV_NOEXCEPT;
     Mat& operator = (Mat&& m);
 
     enum { MAGIC_VAL  = 0x42FF0000, AUTO_STEP = 0, CONTINUOUS_FLAG = CV_MAT_CONT_FLAG, SUBMATRIX_FLAG = CV_SUBMAT_FLAG };
@@ -2278,7 +2562,9 @@ public:
     Mat_(const Mat_& m, const std::vector<Range>& ranges);
     //! from a matrix expression
     explicit Mat_(const MatExpr& e);
-    //! makes a matrix out of Vec, std::vector, Point_ or Point3_. The matrix will have a single column
+    //! makes a matrix out of Vec, std::vector, Point_ or Point3_.
+    //! In OpenCV 5.x, from std::vector, creates a matrix with a single row (cols = vector size).
+    //! (Previous versions: the matrix had a single column.)
     explicit Mat_(const std::vector<_Tp>& vec, bool copyData=false);
     template<int n> explicit Mat_(const Vec<typename DataType<_Tp>::channel_type, n>& vec, bool copyData=true);
     template<int m, int n> explicit Mat_(const Matx<typename DataType<_Tp>::channel_type, m, n>& mtx, bool copyData=true);
@@ -2459,6 +2745,8 @@ public:
     //! constructs n-dimensional matrix
     UMat(int ndims, const int* sizes, int type, UMatUsageFlags usageFlags = USAGE_DEFAULT);
     UMat(int ndims, const int* sizes, int type, const Scalar& s, UMatUsageFlags usageFlags = USAGE_DEFAULT);
+    UMat(const MatShape& shape, int type, UMatUsageFlags usageFlags = USAGE_DEFAULT);
+    UMat(const MatShape& shape, int type, const Scalar& s, UMatUsageFlags usageFlags = USAGE_DEFAULT);
 
     //! copy constructor
     UMat(const UMat& m);
@@ -2514,6 +2802,7 @@ public:
     // number of channels and/or different number of rows. see cvReshape.
     UMat reshape(int cn, int rows=0) const;
     UMat reshape(int cn, int newndims, const int* newsz) const;
+    UMat reshape(int cn, const MatShape& shape) const;
 
     //! matrix transposition by means of matrix expressions
     UMat t() const;
@@ -2529,9 +2818,11 @@ public:
     CV_NODISCARD_STD static UMat zeros(int rows, int cols, int type, UMatUsageFlags usageFlags = USAGE_DEFAULT);
     CV_NODISCARD_STD static UMat zeros(Size size, int type, UMatUsageFlags usageFlags = USAGE_DEFAULT);
     CV_NODISCARD_STD static UMat zeros(int ndims, const int* sz, int type, UMatUsageFlags usageFlags = USAGE_DEFAULT);
+    CV_NODISCARD_STD static UMat zeros(const MatShape& shape, int type, UMatUsageFlags usageFlags = USAGE_DEFAULT);
     CV_NODISCARD_STD static UMat ones(int rows, int cols, int type, UMatUsageFlags usageFlags = USAGE_DEFAULT);
     CV_NODISCARD_STD static UMat ones(Size size, int type, UMatUsageFlags usageFlags = USAGE_DEFAULT);
     CV_NODISCARD_STD static UMat ones(int ndims, const int* sz, int type, UMatUsageFlags usageFlags = USAGE_DEFAULT);
+    CV_NODISCARD_STD static UMat ones(const MatShape& shape, int type, UMatUsageFlags usageFlags = USAGE_DEFAULT);
     CV_NODISCARD_STD static UMat eye(int rows, int cols, int type, UMatUsageFlags usageFlags = USAGE_DEFAULT);
     CV_NODISCARD_STD static UMat eye(Size size, int type, UMatUsageFlags usageFlags = USAGE_DEFAULT);
 
@@ -2541,10 +2832,20 @@ public:
     void create(Size size, int type, UMatUsageFlags usageFlags = USAGE_DEFAULT);
     void create(int ndims, const int* sizes, int type, UMatUsageFlags usageFlags = USAGE_DEFAULT);
     void create(const std::vector<int>& sizes, int type, UMatUsageFlags usageFlags = USAGE_DEFAULT);
+    void create(const MatShape& shape, int type, UMatUsageFlags usageFlags = USAGE_DEFAULT);
+
+    //! fits the new shape into existing data buffer if possible, otherwise reallocates data.
+    void fit(int rows, int cols, int type, UMatUsageFlags usageFlags = USAGE_DEFAULT);
+    void fit(Size size, int type, UMatUsageFlags usageFlags = USAGE_DEFAULT);
+    void fit(int ndims, const int* sizes, int type, UMatUsageFlags usageFlags = USAGE_DEFAULT);
+    void fit(const std::vector<int>& sizes, int type, UMatUsageFlags usageFlags = USAGE_DEFAULT);
+    void fit(const MatShape& shape, int type, UMatUsageFlags usageFlags = USAGE_DEFAULT);
 
     //! allocates new matrix data unless the matrix already has specified size and type.
     // the size is taken from the specified array.
     void createSameSize(InputArray arr, int type, UMatUsageFlags usageFlags = USAGE_DEFAULT);
+
+    void fitSameSize(InputArray arr, int type, UMatUsageFlags usageFlags = USAGE_DEFAULT);
 
     //! increases the reference counter; use with care to avoid memleaks
     void addref();
@@ -2593,6 +2894,10 @@ public:
     bool empty() const;
     //! returns the total number of matrix elements
     size_t total() const;
+
+    /** @brief Returns the shape.
+    */
+    MatShape shape() const;
 
     //! returns N if the matrix is 1-channel (N x ptdim) or ptdim-channel (1 x N) or (N x 1); negative number otherwise
     int checkVector(int elemChannels, int depth=-1, bool requireContinuous=true) const;
@@ -3545,7 +3850,7 @@ public:
 /** @brief Matrix expression representation
 @anchor MatrixExpressions
 This is a list of implemented matrix operations that can be combined in arbitrary complex
-expressions (here A, B stand for matrices ( Mat ), s for a scalar ( Scalar ), alpha for a
+expressions (here A, B stand for matrices ( cv::Mat ), s for a cv::Scalar, alpha for a
 real-valued scalar ( double )):
 -   Addition, subtraction, negation: `A+B`, `A-B`, `A+s`, `A-s`, `s+A`, `s-A`, `-A`
 -   Scaling: `A*alpha`
@@ -3560,13 +3865,13 @@ real-valued scalar ( double )):
     0.
 -   Bitwise logical operations: `A logicop B`, `A logicop s`, `s logicop A`, `~A`, where *logicop* is one of
   `&`, `|`, `^`.
--   Element-wise minimum and maximum: `min(A, B)`, `min(A, alpha)`, `max(A, B)`, `max(A, alpha)`
--   Element-wise absolute value: `abs(A)`
+-   Element-wise minimum and maximum: cv::min(A, B), cv::min(A, alpha), cv::max(A, B), cv::max(A, alpha)
+-   Element-wise absolute value: cv::abs(A)
 -   Cross-product, dot-product: `A.cross(B)`, `A.dot(B)`
--   Any function of matrix or matrices and scalars that returns a matrix or a scalar, such as norm,
-    mean, sum, countNonZero, trace, determinant, repeat, and others.
+-   Any function of matrix or matrices and scalars that returns a matrix or a scalar, such as cv::norm,
+    cv::mean, cv::sum, cv::countNonZero, cv::trace, cv::determinant, cv::repeat, and others.
 -   Matrix initializers ( Mat::eye(), Mat::zeros(), Mat::ones() ), matrix comma-separated
-    initializers, matrix constructors and operators that extract sub-matrices (see Mat description).
+    initializers, matrix constructors and operators that extract sub-matrices (see cv::Mat description).
 -   Mat_<destination_type>() constructors to cast the result to the proper type.
 @note Comma-separated initializers and probably some other operations may require additional
 explicit Mat() or Mat_<T>() constructor calls to resolve a possible ambiguity.

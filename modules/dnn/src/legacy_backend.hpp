@@ -191,7 +191,7 @@ public:
             std::map<LayerPin, int>::const_iterator refIt;
 
             const int targetTotal = total(shape);
-            int bestBlobTotal = INT_MAX;
+            size_t bestBlobTotal = INT_MAX;
 
             for (hostIt = memHosts.begin(); hostIt != memHosts.end(); ++hostIt)
             {
@@ -213,6 +213,7 @@ public:
             {
                 reuse(bestBlobPin, lp);
                 dst = bestBlob.reshape(1, 1).colRange(0, targetTotal).reshape(1, shape);
+                dst.size.dims = dst.dims = shape.size();
                 return;
             }
         }
@@ -237,6 +238,10 @@ public:
 
         const ShapesVec &outShapes = layerShapes.out,
                         internalShapes = layerShapes.internal;
+        const TypesVec &outTypes = layerShapes.outTypes,
+                       &internalTypes = layerShapes.internalTypes;
+        CV_CheckEQ(outShapes.size(), outTypes.size(), "Numbers shapes and types shoud be equal");
+        CV_CheckEQ(internalShapes.size(), internalTypes.size(), "Numbers shapes and types shoud be equal");
 
         outputBlobs.resize(std::max((size_t)1, outShapes.size()));  // layer produce at least one output blob
         internalBlobs.resize(internalShapes.size());
@@ -257,7 +262,9 @@ public:
         }
 
         ShapesVec shapes(outShapes);
+        TypesVec types(outTypes);
         shapes.insert(shapes.end(), internalShapes.begin(), internalShapes.end());
+        types.insert(types.end(), internalTypes.begin(), internalTypes.end());
         std::vector<Mat*> blobs;
         for (int i = 0; i < outputBlobs.size(); i++)
         {
@@ -292,12 +299,13 @@ public:
                     LayerPin blobPin(ld.id, index);
                     if (index < outShapes.size() && inPlace)
                     {
-                        CV_Assert(ld.inputBlobs[0]->total() == total(shapes[index]));
+                        CV_CheckEQ((int)ld.inputBlobs[0]->total(), total(shapes[index]), "");
+                        CV_CheckTypeEQ(ld.inputBlobs[0]->type(), types[index], "blob can't be reused if it has different type");
                         ld.outputBlobs[index] = ld.inputBlobs[0]->reshape(1, shapes[index]);
                         reuse(ld.inputBlobsId[0], blobPin);
                     }
                     else
-                        reuseOrCreate(shapes[index], blobPin, *blobs[index], ld.dtype);
+                        reuseOrCreate(shapes[index], blobPin, *blobs[index], types[index]);
                 }
             }
         }
