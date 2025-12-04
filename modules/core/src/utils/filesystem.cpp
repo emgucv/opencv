@@ -290,8 +290,8 @@ struct FileLock::Impl
 {
     Impl(const char* fname)
     {
-#if defined(WINAPI)
-		cv::error(cv::Exception(CV_StsAssert, "Opening lock file is not implemented on WINAPI", __FUNCTION__, __FILE__, __LINE__));
+#if defined(WINRT)
+		cv::error(cv::Exception(cv::Error::StsAssert, "Opening lock file is not implemented on WINRT", __FUNCTION__, __FILE__, __LINE__));
 		//CV_ErrorNoReturn_(Error::StsAssert, ("Opening lock file %s is not implemented on WINAPI", fname));
 #else
         // http://support.microsoft.com/kb/316609
