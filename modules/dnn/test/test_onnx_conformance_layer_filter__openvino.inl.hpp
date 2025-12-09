@@ -109,6 +109,14 @@ CASE(test_add_uint8)
 #if SKIP_SET_1
     SKIP;
 #endif
+CASE(test_affine_grid_3d)
+    SKIP;
+CASE(test_affine_grid_3d_align_corners)
+    SKIP;
+CASE(test_affine_grid_2d)
+    SKIP;
+CASE(test_affine_grid_2d_align_corners)
+    SKIP;
 CASE(test_and2d)
     // no filter
 CASE(test_and3d)
@@ -593,6 +601,16 @@ CASE(test_dequantizelinear_blocked)
 CASE(test_det_2d)
     SKIP;
 CASE(test_det_nd)
+    SKIP;
+CASE(test_dft)
+    SKIP;
+CASE(test_dft_axis_opset19)
+    SKIP;
+CASE(test_dft_inverse)
+    SKIP;
+CASE(test_dft_inverse_opset19)
+    SKIP;
+CASE(test_dft_opset19)
     SKIP;
 CASE(test_div)
     // no filter
@@ -2714,6 +2732,38 @@ CASE(test_unsqueeze_two_axes)
 CASE(test_unsqueeze_unsorted_axes)
     SKIP;
 CASE(test_upsample_nearest)
+CASE(test_rotary_embedding)
+    SKIP;
+CASE(test_rotary_embedding_3d_input)
+    SKIP;
+CASE(test_rotary_embedding_3d_input_expanded)
+    SKIP;
+CASE(test_rotary_embedding_expanded)
+    SKIP;
+CASE(test_rotary_embedding_interleaved)
+    SKIP;
+CASE(test_rotary_embedding_interleaved_expanded)
+    SKIP;
+CASE(test_rotary_embedding_no_position_ids)
+    SKIP;
+CASE(test_rotary_embedding_no_position_ids_expanded)
+    SKIP;
+CASE(test_rotary_embedding_no_position_ids_interleaved)
+    SKIP;
+CASE(test_rotary_embedding_no_position_ids_interleaved_expanded)
+    SKIP;
+CASE(test_rotary_embedding_no_position_ids_rotary_dim)
+    SKIP;
+CASE(test_rotary_embedding_no_position_ids_rotary_dim_expanded)
+    SKIP;
+CASE(test_rotary_embedding_with_interleaved_rotary_dim)
+    SKIP;
+CASE(test_rotary_embedding_with_interleaved_rotary_dim_expanded)
+    SKIP;
+CASE(test_rotary_embedding_with_rotary_dim)
+    SKIP;
+CASE(test_rotary_embedding_with_rotary_dim_expanded)
+    SKIP;
 #if SKIP_SET_1
     SKIP;
 #endif

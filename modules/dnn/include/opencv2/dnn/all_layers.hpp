@@ -563,6 +563,13 @@ CV__DNN_INLINE_NS_BEGIN
         static Ptr<OneHotLayer> create(const LayerParams& params);
     };
 
+    class CV_EXPORTS AffineGridLayer : public Layer
+    {
+    public:
+        bool align_corners;
+        static Ptr<AffineGridLayer> create(const LayerParams& params);
+    };
+
     class CV_EXPORTS FlattenLayer : public Layer
     {
     public:
@@ -1318,6 +1325,16 @@ CV__DNN_INLINE_NS_BEGIN
         static Ptr<CenterCropPadLayer> create(const LayerParams& params);
     };
 
+    class CV_EXPORTS DFTLayer : public Layer
+    {
+    public:
+        bool inverse;
+        bool onesided;
+        int axis_attr;
+        std::vector<int> axes;
+        static Ptr<DFTLayer> create(const LayerParams &params);
+    };
+
     class CV_EXPORTS Resize2Layer : public Layer
     {
     public:
@@ -1466,6 +1483,11 @@ CV__DNN_INLINE_NS_BEGIN
     class CV_EXPORTS AttentionLayer : public Layer {
      public:
         static Ptr<AttentionLayer> create(const LayerParams &params);
+    };
+
+    class CV_EXPORTS RotaryEmbeddingLayer : public Layer {
+     public:
+        static Ptr<RotaryEmbeddingLayer> create(const LayerParams &params);
     };
 
     class CV_EXPORTS GroupNormLayer : public Layer {

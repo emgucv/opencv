@@ -45,7 +45,6 @@
 namespace cv {
 
 int validateToInt(size_t step);
-int64_t validateToInt64(ptrdiff_t step);
 
 template <typename _Tp> static inline
 size_t safeCastToSizeT(const _Tp v_origin, const char* msg)
@@ -125,9 +124,9 @@ void  FillGrayPalette( PaletteEntry* palette, int bpp, bool negative = false );
 bool  IsColorPalette( PaletteEntry* palette, int bpp );
 void  CvtPaletteToGray( const PaletteEntry* palette, uchar* grayPalette, int entries );
 uchar* FillUniColor( uchar* data, uchar*& line_end, int step, int width3,
-                     int& y, int height, int count3, PaletteEntry clr );
+                     int& y, int height, ptrdiff_t count3, PaletteEntry clr );
 uchar* FillUniGray( uchar* data, uchar*& line_end, int step, int width3,
-                     int& y, int height, int count3, uchar clr );
+                     int& y, int height, ptrdiff_t count3, uchar clr );
 
 uchar* FillColorRow8( uchar* data, uchar* indices, int len, PaletteEntry* palette );
 uchar* FillGrayRow8( uchar* data, uchar* indices, int len, uchar* palette );

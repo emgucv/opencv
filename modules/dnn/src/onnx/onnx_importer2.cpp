@@ -166,8 +166,8 @@ protected:
     DomainDispatchMap domain_dispatch_map;
     std::string getLayerTypeDomain(const opencv_onnx::NodeProto& node_proto);
     const DispatchMap& getDispatchMap(const opencv_onnx::NodeProto& node_proto);
-    void buildDispatchMap_ONNX_AI(int opset_version);
-    void buildDispatchMap_COM_MICROSOFT(int opset_version);
+    void buildDispatchMap_ONNX_AI();
+    void buildDispatchMap_COM_MICROSOFT();
 
     // Domain: 'ai.onnx' (default)
     // URL: https://github.com/onnx/onnx/blob/master/docs/Operators.md
@@ -218,11 +218,13 @@ protected:
     void parseIsNaN                (LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto);
     void parseIsInf                (LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto);
     void parseOneHot               (LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto);
+    void parseDFT                  (LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto);
     void parseDet                  (LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto);
     void parseCenterCropPad        (LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto);
     void parseGridSample           (LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto);
     void parseNegativeLogLikelihoodLoss(LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto);
     void parseSoftmaxCrossEntropyLoss  (LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto);
+    void parseAffineGrid           (LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto);
     void parseResize               (LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto);
     void parseSize                 (LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto);
     void parseUnique               (LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto);
@@ -245,7 +247,7 @@ protected:
     void parseBitShift             (LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto);
     void parseBitwise              (LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto);
     void parseBitwiseNot           (LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto);
-
+    void parseRotaryEmbedding      (LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto);
     // Domain: com.microsoft
     // URL: https://github.com/microsoft/onnxruntime/blob/master/docs/ContribOperators.md
     void parseAttention            (LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto);
@@ -262,11 +264,11 @@ protected:
     //void parseQSigmoid             (LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto);
     //void parseQSoftmax             (LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto);
 
-    int onnx_opset;  // OperatorSetIdProto for 'onnx' domain
     std::map<std::string, int> onnx_opset_map;  // map from OperatorSetIdProto
     void parseOperatorSet();
 
     const std::string str_domain_ai_onnx = "ai.onnx";
+    const std::string str_domain_com_microsoft = "com.microsoft";
 
     bool useLegacyNames;
     bool getParamUseLegacyNames()
@@ -279,7 +281,6 @@ protected:
 };
 
 ONNXImporter2::ONNXImporter2() :
-    onnx_opset(0),
     useLegacyNames(getParamUseLegacyNames())
 {
     netimpl = net.getImpl();
@@ -475,19 +476,28 @@ LayerParams ONNXImporter2::getLayerParams(const opencv_onnx::NodeProto& node_pro
             else if (attribute_proto.has_f())
             {
                 lp.set(attribute_name, attribute_proto.f());
+                if (node_proto.op_type() == "Constant")
+                    lp.set("value_float", attribute_proto.f());
             }
             else if (attribute_proto.has_s())
             {
                 lp.set(attribute_name, attribute_proto.s());
+                if (node_proto.op_type() == "Constant")
+                    lp.set("value_string", attribute_proto.s());
             }
             else if (attribute_proto.floats_size() > 0)
             {
                 lp.set(attribute_name, DictValue::arrayReal(
                     attribute_proto.floats().data(), attribute_proto.floats_size()));
+                if (node_proto.op_type() == "Constant")
+                    lp.set("value_floats", DictValue::arrayReal(
+                        attribute_proto.floats().data(), attribute_proto.floats_size()));
             }
             else if (attribute_proto.ints_size() > 0)
             {
                 lp.set(attribute_name, parse(attribute_proto.ints()));
+                if (node_proto.op_type() == "Constant")
+                    lp.set("value_ints", parse(attribute_proto.ints()));
             }
             else if (attribute_proto.has_t())
             {
@@ -565,37 +575,24 @@ void ONNXImporter2::parseOperatorSet()
         const ::opencv_onnx::OperatorSetIdProto& opset_entry = model_proto.opset_import(i);
         const std::string& domain = opset_entry.has_domain() ? opset_entry.domain() : std::string();
         int version = opset_entry.has_version() ? opset_entry.version() : -1;
-        if (domain.empty() || domain == str_domain_ai_onnx)
-        {
-            // ONNX opset covered by specification: https://github.com/onnx/onnx/blob/master/docs/Operators.md
-            onnx_opset = std::max(onnx_opset, version);
-            onnx_opset_map[str_domain_ai_onnx] = onnx_opset;
-        }
+        const std::string domain_key = domain.empty() ? str_domain_ai_onnx : domain;
+
+        if (onnx_opset_map.find(domain_key) == onnx_opset_map.end())
+            onnx_opset_map[domain_key] = version;
         else
+            onnx_opset_map[domain_key] = std::max(
+                onnx_opset_map[domain_key], version);
+
+        if (
+            domain_key != str_domain_ai_onnx &&
+            domain_key != str_domain_com_microsoft)
         {
-            CV_LOG_DEBUG(NULL, "DNN/ONNX: using non-standard ONNX opset[" << i << "]: domain='" << domain << "' version=" << version);
-            onnx_opset_map[domain] = onnx_opset;
+            CV_LOG_INFO(NULL, "DNN/ONNX: found opset[" << i << "]: domain='" << domain_key << "' version=" << version);
         }
     }
+    buildDispatchMap_ONNX_AI();
+    buildDispatchMap_COM_MICROSOFT();
 
-    CV_LOG_INFO(NULL, "DNN/ONNX: ONNX opset version = " << onnx_opset);
-
-    buildDispatchMap_ONNX_AI(onnx_opset);
-    for (const auto& pair : onnx_opset_map)
-    {
-        if (pair.first == str_domain_ai_onnx)
-        {
-            continue;  // done above
-        }
-        else if (pair.first == "com.microsoft")
-        {
-            buildDispatchMap_COM_MICROSOFT(pair.second);
-        }
-        else
-        {
-            CV_LOG_INFO(NULL, "DNN/ONNX: unknown domain='" << pair.first << "' version=" << pair.second << ". No dispatch map, you may need to register 'custom' layers.");
-        }
-    }
 }
 
 /*static bool ifInt8Output(const String& layerType)
@@ -671,7 +668,7 @@ Net ONNXImporter2::parseModel()
     netimpl->mainGraph = mainGraph;
     netimpl->modelFormat = DNN_MODEL_ONNX;
     netimpl->originalLayout = DATA_LAYOUT_NCHW;
-    netimpl->onnx_opset = onnx_opset;
+    // netimpl->onnx_opset = onnx_opset;
 
     if (have_errors) {
         std::stringstream sstrm;
@@ -1769,9 +1766,20 @@ void ONNXImporter2::parseDet(LayerParams& layerParams, const opencv_onnx::NodePr
     addLayer(layerParams, node_proto);
 }
 
+void ONNXImporter2::parseDFT(LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto)
+{
+    layerParams.type = "DFT";
+    addLayer(layerParams, node_proto);
+}
 void ONNXImporter2::parseGridSample(LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto)
 {
     layerParams.type = "GridSample";
+    addLayer(layerParams, node_proto);
+}
+
+void ONNXImporter2::parseAffineGrid(LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto)
+{
+    layerParams.type = "AffineGrid";
     addLayer(layerParams, node_proto);
 }
 
@@ -1858,7 +1866,12 @@ void ONNXImporter2::parseSoftMax(LayerParams& layerParams, const opencv_onnx::No
 {
     const std::string& layer_type = node_proto.op_type();
     int axis;
-    if (onnx_opset != 0 && onnx_opset <= 11) {
+    if (onnx_opset_map.find(str_domain_ai_onnx) == onnx_opset_map.end()) {
+        CV_Error(Error::StsParseError , "ONNX/Softmax: opset for ai.onnx domain is not found");
+    }
+    const int opset_onnx_ai = onnx_opset_map[str_domain_ai_onnx];
+
+    if (opset_onnx_ai != 0 && opset_onnx_ai <= 11) {
         axis = layerParams.get<int>("axis", 1);
     } else {
         axis = layerParams.get<int>("axis", -1);
@@ -2554,6 +2567,26 @@ void ONNXImporter2::parseQSoftmax(LayerParams& layerParams, const opencv_onnx::N
     addLayer(layerParams, node_proto);
 }*/
 
+
+void ONNXImporter2::parseRotaryEmbedding(LayerParams& params, const opencv_onnx::NodeProto& node_proto) {
+    int i, n_inputs = node_proto.input_size();
+
+    for (i = 1; i < n_inputs; i++) {
+        if (!net.isConstArg(node_inputs[i]))
+            break;
+    }
+
+    if (i == n_inputs) {
+        for (i = 1; i < n_inputs; i++) {
+            Mat blob = net.argTensor(node_inputs[i]);
+            params.blobs.push_back(blob);
+        }
+        n_inputs = 1;
+    }
+
+    addLayer(params, node_proto, n_inputs);
+}
+
 void ONNXImporter2::parseAttention(LayerParams& params, const opencv_onnx::NodeProto& node_proto) {
     int i, n_inputs = node_proto.input_size();
     CV_CheckTrue(params.has("num_heads"), "ONNXImporter2/parseAttention: num_heads is required but missing");
@@ -2580,9 +2613,8 @@ void ONNXImporter2::parseAttention(LayerParams& params, const opencv_onnx::NodeP
 
 // Domain: ai.onnx (default)
 // URL: https://github.com/onnx/onnx/blob/master/docs/Operators.md
-void ONNXImporter2::buildDispatchMap_ONNX_AI(int opset_version)
+void ONNXImporter2::buildDispatchMap_ONNX_AI()
 {
-    CV_UNUSED(opset_version);
     DispatchMap dispatch;
 
     dispatch["ArgMax"] = dispatch["ArgMin"] = &ONNXImporter2::parseArgMinMax;
@@ -2638,8 +2670,10 @@ void ONNXImporter2::buildDispatchMap_ONNX_AI(int opset_version)
     dispatch["IsInf"] = &ONNXImporter2::parseIsInf;
     dispatch["CenterCropPad"] = &ONNXImporter2::parseCenterCropPad;
     dispatch["OneHot"] = &ONNXImporter2::parseOneHot;
+    dispatch["DFT"] = &ONNXImporter2::parseDFT;
     dispatch["Det"] = &ONNXImporter2::parseDet;
     dispatch["GridSample"] = &ONNXImporter2::parseGridSample;
+    dispatch["AffineGrid"] = &ONNXImporter2::parseAffineGrid;
     dispatch["Upsample"] = &ONNXImporter2::parseUpsample;
     dispatch["BitShift"] = &ONNXImporter2::parseBitShift;
     dispatch["BitwiseAnd"] = &ONNXImporter2::parseBitwise;
@@ -2697,9 +2731,8 @@ void ONNXImporter2::buildDispatchMap_ONNX_AI(int opset_version)
 
 // Domain: com.microsoft
 // URL: https://github.com/microsoft/onnxruntime/blob/master/docs/ContribOperators.md
-void ONNXImporter2::buildDispatchMap_COM_MICROSOFT(int opset_version)
+void ONNXImporter2::buildDispatchMap_COM_MICROSOFT()
 {
-    CV_UNUSED(opset_version);
     DispatchMap dispatch;
 
     // BUG: https://github.com/opencv/opencv/issues/26310
@@ -2712,7 +2745,7 @@ void ONNXImporter2::buildDispatchMap_COM_MICROSOFT(int opset_version)
     //dispatch["QLinearSoftmax"] = &ONNXImporter2::parseQSoftmax;
     dispatch["Attention"] = &ONNXImporter2::parseAttention;
 
-    domain_dispatch_map["com.microsoft"] = dispatch;
+    domain_dispatch_map[str_domain_com_microsoft] = dispatch;
 }
 
 

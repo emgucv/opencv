@@ -4,12 +4,8 @@
 "test_adagrad_multiple",  // ---- same as above ---
 "test_adam",  // Issues::Layer::Can't create layer "onnx_node_output_0!X1_new" of type "ai.onnx.preview.training.Adam" in function 'getLayerInstance'
 "test_adam_multiple",  // ---- same as above ---
-"test_affine_grid_2d",
-"test_affine_grid_2d_align_corners",
 "test_affine_grid_2d_align_corners_expanded",
 "test_affine_grid_2d_expanded",
-"test_affine_grid_3d",
-"test_affine_grid_3d_align_corners",
 "test_affine_grid_3d_align_corners_expanded",
 "test_affine_grid_3d_expanded",
 "test_ai_onnx_ml_array_feature_extractor",
@@ -328,12 +324,7 @@
 "test_dequantizelinear_int4",
 "test_dequantizelinear_uint16",
 "test_dequantizelinear_uint4",
-"test_dft",
 "test_dft_axis",
-"test_dft_axis_opset19",
-"test_dft_inverse",
-"test_dft_inverse_opset19",
-"test_dft_opset19",
 "test_dropout_default_mask",  // Issue::cvtest::norm::wrong data type
 "test_dropout_default_mask_ratio",  // ---- same as above ---
 "test_dynamicquantizelinear",  // Issue:: Unkonwn error
@@ -585,22 +576,22 @@
 "test_roialign_aligned_false",  // Issue:: Parser: Layer does not exist (RoiAlign)
 "test_roialign_aligned_true",  // ---- same as above ---
 "test_roialign_mode_max",
-"test_rotary_embedding", //type mismatch
-"test_rotary_embedding_3d_input",
-"test_rotary_embedding_3d_input_expanded",
-"test_rotary_embedding_expanded",
-"test_rotary_embedding_interleaved",
-"test_rotary_embedding_interleaved_expanded",
-"test_rotary_embedding_no_position_ids",
-"test_rotary_embedding_no_position_ids_expanded",
-"test_rotary_embedding_no_position_ids_interleaved",
-"test_rotary_embedding_no_position_ids_interleaved_expanded",
-"test_rotary_embedding_no_position_ids_rotary_dim",
-"test_rotary_embedding_no_position_ids_rotary_dim_expanded",
-"test_rotary_embedding_with_interleaved_rotary_dim",
-"test_rotary_embedding_with_interleaved_rotary_dim_expanded",
-"test_rotary_embedding_with_rotary_dim",
-"test_rotary_embedding_with_rotary_dim_expanded",
+// "test_rotary_embedding", //type mismatch
+// "test_rotary_embedding_3d_input",
+// "test_rotary_embedding_3d_input_expanded",
+// "test_rotary_embedding_expanded",
+// "test_rotary_embedding_interleaved",
+// "test_rotary_embedding_interleaved_expanded",
+// "test_rotary_embedding_no_position_ids",
+// "test_rotary_embedding_no_position_ids_expanded",
+// "test_rotary_embedding_no_position_ids_interleaved",
+// "test_rotary_embedding_no_position_ids_interleaved_expanded",
+// "test_rotary_embedding_no_position_ids_rotary_dim",
+// "test_rotary_embedding_no_position_ids_rotary_dim_expanded",
+// "test_rotary_embedding_with_interleaved_rotary_dim",
+// "test_rotary_embedding_with_interleaved_rotary_dim_expanded",
+// "test_rotary_embedding_with_rotary_dim",
+// "test_rotary_embedding_with_rotary_dim_expanded",
 "test_scan9_sum",  // Issue:: Parser: 'Graph' is not supported in function 'getLayerParams'
 "test_scan_sum", // ---- same as above ---
 "test_sequence_insert_at_back",  // Issue:: Parser:  typeProto.has_tensor_type() in function 'populateNet'
