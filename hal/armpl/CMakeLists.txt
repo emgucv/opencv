@@ -8,7 +8,7 @@ if(HAVE_ARMPL)
   file(GLOB ARMPL_HAL_FILES "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
   add_library(armpl_hal STATIC ${OPENCV_3RDPARTY_EXCLUDE_FROM_ALL} ${ARMPL_HAL_FILES})
   target_include_directories(armpl_hal PRIVATE
-    ${CMAKE_SOURCE_DIR}/modules/core/include
+    ${OpenCV_SOURCE_DIR}/modules/core/include
     ${CMAKE_BINARY_DIR}
     ${ARMPL_HAL_INCLUDE_DIRS}
     ${ARMPL_INCLUDE_PATH})

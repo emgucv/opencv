@@ -12,8 +12,8 @@ if(HAVE_FASTCV)
   add_library(fastcv_hal STATIC ${OPENCV_3RDPARTY_EXCLUDE_FROM_ALL} ${FASTCV_HAL_FILES})
 
   target_include_directories(fastcv_hal PRIVATE
-    ${CMAKE_SOURCE_DIR}/modules/core/include
-    ${CMAKE_SOURCE_DIR}/modules/imgproc/include
+    ${OpenCV_SOURCE_DIR}/modules/core/include
+    ${OpenCV_SOURCE_DIR}/modules/imgproc/include
     ${FASTCV_HAL_INCLUDE_DIRS} ${FastCV_INCLUDE_PATH})
 
   target_link_libraries(fastcv_hal PUBLIC ${FASTCV_LIBRARY})

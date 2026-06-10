@@ -22,7 +22,7 @@ set(MLAS_INC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/inc)
 # Hardware-agnostic core: SGEMM dispatch + softmax/exp kernels + flash-attention.
 set(mlas_common_srcs
   ${MLAS_SRC_DIR}/platform.cpp
-  ${CMAKE_SOURCE_DIR}/modules/dnn/src/layers/cpu_kernels/mlas_threading.cpp
+  ${OpenCV_SOURCE_DIR}/modules/dnn/src/layers/cpu_kernels/mlas_threading.cpp
   ${MLAS_SRC_DIR}/sgemm.cpp
   ${MLAS_SRC_DIR}/compute.cpp
   ${MLAS_SRC_DIR}/flashattn.cpp
@@ -234,7 +234,7 @@ add_library(opencv_dnn_mlas OBJECT ${mlas_common_srcs} ${mlas_platform_srcs})
 set_target_properties(opencv_dnn_mlas PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(opencv_dnn_mlas PUBLIC  ${MLAS_INC_DIR})
 target_include_directories(opencv_dnn_mlas PRIVATE ${MLAS_SRC_DIR})
-target_include_directories(opencv_dnn_mlas PRIVATE ${CMAKE_SOURCE_DIR}/modules/core/include)
+target_include_directories(opencv_dnn_mlas PRIVATE ${OpenCV_SOURCE_DIR}/modules/core/include)
 
 target_compile_definitions(opencv_dnn_mlas PRIVATE
   BUILD_MLAS_NO_ONNXRUNTIME=1
