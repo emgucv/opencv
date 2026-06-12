@@ -227,7 +227,10 @@ void cv::cuda::GpuMat::upload(InputArray arr)
 
     create(mat.size(), mat.type());
 
-    CV_CUDEV_SAFE_CALL( cudaMemcpy2D(data, step, mat.data, mat.step, cols * elemSize(), rows, cudaMemcpyHostToDevice) );
+    size_t widthBytes = cols * elemSize();
+    size_t sstep = mat.rows > 1 ? (size_t)mat.step : widthBytes;
+
+    CV_CUDEV_SAFE_CALL( cudaMemcpy2D(data, step, mat.data, sstep, widthBytes, rows, cudaMemcpyHostToDevice) );
 }
 
 void cv::cuda::GpuMat::upload(InputArray arr, Stream& _stream)
@@ -238,8 +241,11 @@ void cv::cuda::GpuMat::upload(InputArray arr, Stream& _stream)
 
     create(mat.size(), mat.type());
 
+    size_t widthBytes = cols * elemSize();
+    size_t sstep = mat.rows > 1 ? (size_t)mat.step : widthBytes;
+
     cudaStream_t stream = StreamAccessor::getStream(_stream);
-    CV_CUDEV_SAFE_CALL( cudaMemcpy2DAsync(data, step, mat.data, mat.step, cols * elemSize(), rows, cudaMemcpyHostToDevice, stream) );
+    CV_CUDEV_SAFE_CALL( cudaMemcpy2DAsync(data, step, mat.data, sstep, widthBytes, rows, cudaMemcpyHostToDevice, stream) );
 }
 
 /////////////////////////////////////////////////////
@@ -263,9 +269,11 @@ void cv::cuda::GpuMat::download(OutputArray _dst, Stream& _stream) const
 
     _dst.create(size(), type());
     Mat dst = _dst.getMat();
+    size_t widthBytes = cols * elemSize();
+    size_t dstep = rows > 1 ? (size_t)dst.step : widthBytes;
 
     cudaStream_t stream = StreamAccessor::getStream(_stream);
-    CV_CUDEV_SAFE_CALL( cudaMemcpy2DAsync(dst.data, dst.step, data, step, cols * elemSize(), rows, cudaMemcpyDeviceToHost, stream) );
+    CV_CUDEV_SAFE_CALL( cudaMemcpy2DAsync(dst.data, dstep, data, step, widthBytes, rows, cudaMemcpyDeviceToHost, stream) );
 }
 
 /////////////////////////////////////////////////////
