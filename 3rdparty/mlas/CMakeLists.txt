@@ -151,6 +151,16 @@ if(MLAS_ARM64)
     ${MLAS_SRC_DIR}/aarch64/SgemmKernelNeon.S
     ${MLAS_SRC_DIR}/aarch64/SgemvKernelNeon.S
   )
+  # MacCatalyst: ASM files use C flags (not C++), so they don't inherit the
+  # -target arm64-apple-ios<ver>-macabi flag set in CMAKE_CXX_FLAGS.
+  # Set it explicitly to avoid objects being tagged as macOS (platform 1).
+  if(MAC_CATALYST AND IPHONEOS_DEPLOYMENT_TARGET)
+    set_source_files_properties(
+      ${MLAS_SRC_DIR}/aarch64/SgemmKernelNeon.S
+      ${MLAS_SRC_DIR}/aarch64/SgemvKernelNeon.S
+      PROPERTIES COMPILE_FLAGS "-target arm64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET}-macabi"
+    )
+  endif()
 endif()
 
 # POWER (ppc64le / AIX). Always compile the base SgemmKernelPower; opt-in
