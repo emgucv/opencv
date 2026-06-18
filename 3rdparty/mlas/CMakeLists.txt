@@ -141,6 +141,20 @@ endif()
 
 # ARM 32-bit: pure C++ sgemmc (no .S kernels).
 if(MLAS_ARM)
+  if(NOT ANDROID)
+    # Non-Android 32-bit ARM (e.g. Raspberry Pi): GCC 14 tightened always_inline
+    # enforcement so that arm_neon.h intrinsics (e.g. vdupq_n_f32) require the
+    # caller to carry an explicit target("neon") attribute as well as the global
+    # -mfpu=neon flag.  mlasi.h's MlasBroadcastFloat32x4 does not have that
+    # attribute, so the build fails.  Disable MLAS here; the DNN module falls
+    # back to its built-in SGEMM just as it does on WASM / unknown arches.
+    set(OPENCV_DNN_MLAS_SKIP_REASON
+      "32-bit ARM (non-Android): GCC 14 always_inline target-attribute mismatch"
+      CACHE INTERNAL "" FORCE)
+    message(STATUS "MLAS: disabled on 32-bit ARM (non-Android) — "
+                   "GCC 14 always_inline incompatibility; DNN uses built-in SGEMM")
+    return()
+  endif()
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mfpu=neon")
   list(APPEND mlas_platform_srcs ${MLAS_SRC_DIR}/arm/sgemmc.cpp)
 endif()
