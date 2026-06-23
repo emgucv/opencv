@@ -61,6 +61,26 @@ elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^s390x$")
   set(MLAS_S390X TRUE CACHE INTERNAL "" FORCE)
 endif()
 
+# Compiler probe: correct MLAS_ARM / MLAS_ARM64 when the kernel is 64-bit but
+# the userspace compiler targets arm32 (e.g. Raspberry Pi OS 32-bit on Pi 4/5
+# hardware with a 64-bit kernel).  In that case uname -m returns "aarch64" so
+# CMAKE_SYSTEM_PROCESSOR = "aarch64" and the block above sets MLAS_ARM64=TRUE /
+# MLAS_ARM=FALSE.  But the native compiler defines __arm__ (not __aarch64__),
+# arm_neon.h uses always_inline intrinsics that need -mfpu=neon, and GCC 14
+# rejects them.  Override the detection so the arm32 guard below fires.
+if(NOT MLAS_ARM)
+  include(CheckCXXSourceCompiles)
+  check_cxx_source_compiles([=[
+    #if !defined(__arm__) || defined(__aarch64__)
+    #error not arm32
+    #endif
+    int main(){return 0;}]=] _MLAS_COMPILER_IS_ARM32)
+  if(_MLAS_COMPILER_IS_ARM32)
+    set(MLAS_ARM   TRUE  CACHE INTERNAL "" FORCE)
+    set(MLAS_ARM64 FALSE CACHE INTERNAL "" FORCE)
+  endif()
+endif()
+
 set(mlas_platform_srcs)
 
 # State flags consumed by the top-level config summary's PNG-style chain:
