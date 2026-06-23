@@ -49,6 +49,12 @@ function(ocv_create_builtin_dnn_plugin name target)
     ocv_target_include_directories(${name} "${OPENCV_MODULE_${mod}_LOCATION}/include")
   endforeach()
 
+  if(BUILD_PROTOBUF)
+    ocv_target_include_directories(${name} "${OpenCV_SOURCE_DIR}/3rdparty/protobuf/src")
+  else()
+    ocv_target_include_directories(${name} "${Protobuf_INCLUDE_DIRS}")
+  endif()
+
   if(WIN32)
     add_definitions(-D_USE_MATH_DEFINES)
     set(OPENCV_PLUGIN_VERSION "${OPENCV_DLLVERSION}" CACHE STRING "")
