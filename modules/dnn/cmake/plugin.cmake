@@ -43,11 +43,17 @@ function(ocv_create_builtin_dnn_plugin name target)
   foreach(mod opencv_dnn
       opencv_core
       opencv_imgproc
+      opencv_geometry
       opencv_dnn
   )
     ocv_target_link_libraries(${name} LINK_PRIVATE ${mod})
     ocv_target_include_directories(${name} "${OPENCV_MODULE_${mod}_LOCATION}/include")
   endforeach()
+
+  # Add dnn private include dirs needed by plugin sources (misc protobuf headers, etc.)
+  ocv_target_include_directories(${name} "${OPENCV_MODULE_opencv_dnn_LOCATION}/misc/onnx")
+  ocv_target_include_directories(${name} "${OPENCV_MODULE_opencv_dnn_LOCATION}/misc/caffe")
+  ocv_target_include_directories(${name} "${OPENCV_MODULE_opencv_dnn_LOCATION}/misc/tensorflow")
 
   if(BUILD_PROTOBUF)
     ocv_target_include_directories(${name} "${OpenCV_SOURCE_DIR}/3rdparty/protobuf/src")
