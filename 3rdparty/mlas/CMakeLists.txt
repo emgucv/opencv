@@ -147,7 +147,11 @@ if(MLAS_X86_64)
 endif()
 
 # i386 / 32-bit x86 SGEMM kernels.
-if(MLAS_X86)
+# The .S files use GNU assembler syntax (-msse2/-mavx flags). The Visual Studio
+# generator cannot compile .S files (it supports .asm/MASM only), so on MSVC
+# the kernels are silently absent but still referenced at link time, causing
+# LNK1181. Skip the .S kernels on MSVC x86; the scalar C++ fallback is used.
+if(MLAS_X86 AND NOT MSVC)
   list(APPEND mlas_platform_srcs
     ${MLAS_SRC_DIR}/x86/SgemmKernelSse2.S
     ${MLAS_SRC_DIR}/x86/SgemmKernelAvx.S
