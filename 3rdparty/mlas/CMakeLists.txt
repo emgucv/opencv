@@ -121,7 +121,11 @@ endif()
 
 # x86_64 SGEMM kernels: MlasGemmFloatKernelSse / Avx / Fma3 / Avx512F
 # plus the M=1 fast paths and B-packing helpers.
-if(MLAS_X86_64)
+# MSVC (Visual Studio generator) cannot compile GNU .S files; skip them and
+# fall back to the scalar C++ SGEMM. This also covers Win32 (-A Win32) builds
+# where CMAKE_SYSTEM_PROCESSOR stays "AMD64" (the host) so MLAS_X86_64=TRUE
+# even though the target is 32-bit x86.
+if(MLAS_X86_64 AND NOT MSVC)
   list(APPEND mlas_platform_srcs
     ${MLAS_SRC_DIR}/x86_64/SgemmKernelSse2.S
     ${MLAS_SRC_DIR}/x86_64/SgemmTransposePackB16x4Sse2.S
