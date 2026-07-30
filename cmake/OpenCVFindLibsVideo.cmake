@@ -1,6 +1,10 @@
 # --- Extra HighGUI and VideoIO libs on Windows ---
 if(WIN32)
-  list(APPEND HIGHGUI_LIBRARIES comctl32 gdi32 ole32 setupapi ws2_32)
+  if(MSVC)
+    list(APPEND HIGHGUI_LIBRARIES comctl32.lib gdi32.lib ole32.lib setupapi.lib ws2_32.lib)
+  else()
+    list(APPEND HIGHGUI_LIBRARIES comctl32 gdi32 ole32 setupapi ws2_32)
+  endif()
 endif(WIN32)
 
 if(WITH_VA)
