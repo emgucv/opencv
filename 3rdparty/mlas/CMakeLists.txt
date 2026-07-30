@@ -83,16 +83,14 @@ endif()
 
 set(mlas_platform_srcs)
 
-# On MSVC targeting Win32 (-A Win32), CMAKE_SYSTEM_PROCESSOR reports the HOST
-# ("AMD64") so MLAS_X86_64=TRUE above. But the actual target is 32-bit x86:
-# the compiler defines _M_IX86 (not _M_AMD64), so platform.cpp initializes the
-# x86 SIMD kernel pointers (MlasGemmFloatKernelSse/Avx). Those symbols come
-# from x86/*.S files which MSVC cannot compile (no GNU assembler support).
-# Disable MLAS here so DNN uses its built-in SGEMM fallback.
-if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4)
-  set(OPENCV_DNN_MLAS_SKIP_REASON "MSVC Win32: x86 ASM kernels require GNU assembler (not available with MSVC)"
+# MSVC (Visual Studio generator) cannot compile GNU .S files for x86 or x86_64
+# SIMD kernels. platform.cpp references those symbols unconditionally, causing
+# LNK2019 unresolved externals at link time. Disable MLAS on all MSVC targets;
+# DNN uses its built-in SGEMM fallback instead.
+if(MSVC)
+  set(OPENCV_DNN_MLAS_SKIP_REASON "MSVC: x86/x86_64 .S kernels require GNU assembler"
       CACHE INTERNAL "" FORCE)
-  message(STATUS "MLAS: disabled on MSVC Win32 — x86 .S kernels require GNU assembler; DNN uses built-in SGEMM")
+  message(STATUS "MLAS: disabled on MSVC — .S kernels require GNU assembler; DNN uses built-in SGEMM")
   return()
 endif()
 
