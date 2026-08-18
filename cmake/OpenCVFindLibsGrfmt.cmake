@@ -82,7 +82,21 @@ if(WITH_JPEG)
     endif()
   endif()
 
-  if(NOT JPEG_FOUND)
+  if("${CMAKE_SYSTEM_NAME}" STREQUAL "Emscripten")
+    # libjpeg-turbo's setjmp-based error handling crashes wasm-ld's
+    # SelectionDAG instruction selector at final link time when combined
+    # with this project's -fwasm-exceptions build (see
+    # platforms/emscripten/JPEG_WASM_CRASH.md). grfmt_jpeg.cpp uses the
+    # header-only stb_image/stb_image_write libraries instead on this
+    # platform -- they use plain return-code error handling (no
+    # setjmp/longjmp), so they don't hit that interaction. No library to
+    # build or link: just point at the vendored headers.
+    ocv_clear_vars(JPEG_FOUND JPEG_LIBRARY JPEG_INCLUDE_DIR)
+    set(JPEG_LIBRARIES "")
+    set(JPEG_INCLUDE_DIR "${OpenCV_SOURCE_DIR}/3rdparty/stb" CACHE INTERNAL "")
+    set(JPEG_INCLUDE_DIRS "${JPEG_INCLUDE_DIR}")
+    set(JPEG_LIB_VERSION "stb_image")
+  elseif(NOT JPEG_FOUND)
     ocv_clear_vars(JPEG_LIBRARY JPEG_INCLUDE_DIR)
 
     set(JPEG_LIBRARY libjpeg-turbo CACHE INTERNAL "")
