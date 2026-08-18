@@ -46,6 +46,268 @@
 
 #include <opencv2/core/utils/logger.hpp>
 
+#if defined(__EMSCRIPTEN__)
+
+// ---------------------------------------------------------------------
+// WASM build: backed by stb_image/stb_image_write instead of
+// libjpeg-turbo. libjpeg-turbo's setjmp-based error handling crashes
+// LLVM's wasm-ld SelectionDAG instruction selector at final link time
+// when combined with this project's -fwasm-exceptions build (see
+// platforms/emscripten/JPEG_WASM_CRASH.md for the full investigation).
+// stb_image's decoder/encoder use plain return-code error handling, with
+// no setjmp/longjmp anywhere, so they don't hit that interaction.
+//
+// This is a reduced-feature JPEG codec compared to the libjpeg-turbo path
+// below: only IMWRITE_JPEG_QUALITY is honored on encode (no progressive,
+// optimize, RST interval, luma/chroma quality, or custom sampling
+// factor), and there's no EXIF/XMP/ICC metadata read/write support.
+// Every other platform keeps using the full libjpeg-turbo implementation
+// unchanged (see the #else branch further down).
+// ---------------------------------------------------------------------
+
+#define STBI_ONLY_JPEG
+#define STBI_NO_STDIO
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
+#define STBI_WRITE_NO_STDIO
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+
+namespace cv
+{
+
+/////////////////////// JpegDecoder ///////////////////
+
+JpegDecoder::JpegDecoder()
+{
+    m_signature = "\xFF\xD8\xFF";
+    m_state = 0;
+    m_f = 0;
+    m_buf_supported = true;
+}
+
+JpegDecoder::~JpegDecoder()
+{
+    close();
+}
+
+void JpegDecoder::close()
+{
+    if( m_state )
+    {
+        delete (std::vector<uchar>*)m_state;
+        m_state = 0;
+    }
+
+    m_width = m_height = 0;
+    m_type = -1;
+}
+
+ImageDecoder JpegDecoder::newDecoder() const
+{
+    return makePtr<JpegDecoder>();
+}
+
+bool JpegDecoder::readHeader()
+{
+    close();
+
+    std::vector<uchar>* raw = new std::vector<uchar>();
+
+    if( !m_buf.empty() )
+    {
+        const uchar* p = m_buf.ptr();
+        size_t n = m_buf.total() * m_buf.elemSize();
+        raw->assign(p, p + n);
+    }
+    else
+    {
+        FILE* f = fopen( m_filename.c_str(), "rb" );
+        if( !f )
+        {
+            delete raw;
+            return false;
+        }
+        fseek(f, 0, SEEK_END);
+        long sz = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        if( sz <= 0 )
+        {
+            fclose(f);
+            delete raw;
+            return false;
+        }
+        raw->resize((size_t)sz);
+        size_t rd = fread(raw->data(), 1, (size_t)sz, f);
+        fclose(f);
+        if( rd != (size_t)sz )
+        {
+            delete raw;
+            return false;
+        }
+    }
+
+    int w = 0, h = 0, comp = 0;
+    if( raw->empty() || !stbi_info_from_memory(raw->data(), (int)raw->size(), &w, &h, &comp) )
+    {
+        delete raw;
+        return false;
+    }
+
+    m_state = raw;
+    m_width = w;
+    m_height = h;
+    m_type = comp > 1 ? CV_8UC3 : CV_8UC1;
+    return true;
+}
+
+bool JpegDecoder::readData( Mat& img )
+{
+    if( !m_state || !m_width || !m_height )
+        return false;
+
+    std::vector<uchar>* raw = (std::vector<uchar>*)m_state;
+    const bool color = img.channels() > 1;
+    const int req_comp = color ? 3 : 1;
+
+    int w = 0, h = 0, comp = 0;
+    uchar* pixels = stbi_load_from_memory(raw->data(), (int)raw->size(), &w, &h, &comp, req_comp);
+    if( !pixels )
+        return false;
+
+    if( w != m_width || h != m_height )
+    {
+        stbi_image_free(pixels);
+        return false;
+    }
+
+    if( color )
+    {
+        // stb decodes to RGB order; OpenCV Mats are BGR.
+        for( int y = 0; y < h; y++ )
+        {
+            const uchar* src = pixels + (size_t)y * w * 3;
+            uchar* dst = img.ptr<uchar>(y);
+            for( int x = 0; x < w; x++ )
+            {
+                dst[x*3+0] = src[x*3+2];
+                dst[x*3+1] = src[x*3+1];
+                dst[x*3+2] = src[x*3+0];
+            }
+        }
+    }
+    else
+    {
+        for( int y = 0; y < h; y++ )
+            memcpy( img.ptr<uchar>(y), pixels + (size_t)y * w, w );
+    }
+
+    stbi_image_free(pixels);
+    return true;
+}
+
+
+/////////////////////// JpegEncoder ///////////////////
+
+JpegEncoder::JpegEncoder()
+{
+    m_description = "JPEG files (*.jpeg;*.jpg;*.jpe)";
+    m_buf_supported = true;
+    m_support_metadata.assign((size_t)IMAGE_METADATA_MAX + 1, false);
+    m_supported_encode_key = {IMWRITE_JPEG_QUALITY};
+}
+
+JpegEncoder::~JpegEncoder()
+{
+}
+
+ImageEncoder JpegEncoder::newEncoder() const
+{
+    return makePtr<JpegEncoder>();
+}
+
+namespace {
+void stbWriteAppend(void* context, void* data, int size)
+{
+    std::vector<uchar>* dst = (std::vector<uchar>*)context;
+    const uchar* p = (const uchar*)data;
+    dst->insert(dst->end(), p, p + size);
+}
+}
+
+bool JpegEncoder::write( const Mat& img, const std::vector<int>& params )
+{
+    m_last_error.clear();
+
+    const int width = img.cols, height = img.rows;
+    const int _channels = img.channels();
+
+    int quality = 95;
+    for( size_t i = 0; i + 1 < params.size(); i += 2 )
+    {
+        if( params[i] == IMWRITE_JPEG_QUALITY )
+            quality = MIN(MAX(params[i+1], 0), 100);
+    }
+
+    int comp;
+    std::vector<uchar> packed;
+
+    if( _channels == 1 )
+    {
+        comp = 1;
+        packed.resize((size_t)width * height);
+        for( int y = 0; y < height; y++ )
+            memcpy( &packed[(size_t)y * width], img.ptr<uchar>(y), width );
+    }
+    else if( _channels == 3 || _channels == 4 )
+    {
+        comp = 3;
+        packed.resize((size_t)width * height * 3);
+        for( int y = 0; y < height; y++ )
+        {
+            const uchar* src = img.ptr<uchar>(y);
+            uchar* dst = &packed[(size_t)y * width * 3];
+            for( int x = 0; x < width; x++ )
+            {
+                dst[x*3+0] = src[x*_channels+2]; // R
+                dst[x*3+1] = src[x*_channels+1]; // G
+                dst[x*3+2] = src[x*_channels+0]; // B
+            }
+        }
+    }
+    else
+    {
+        CV_Error(cv::Error::StsError, cv::format("Unsupported number of _channels: %06d", _channels));
+    }
+
+    bool result;
+    if( m_buf )
+        result = stbi_write_jpg_to_func(&stbWriteAppend, m_buf, width, height, comp, packed.data(), quality) != 0;
+    else
+    {
+        std::vector<uchar> encoded;
+        result = stbi_write_jpg_to_func(&stbWriteAppend, &encoded, width, height, comp, packed.data(), quality) != 0;
+        if( result )
+        {
+            FILE* f = fopen( m_filename.c_str(), "wb" );
+            if( !f || fwrite(encoded.data(), 1, encoded.size(), f) != encoded.size() )
+                result = false;
+            if( f )
+                fclose(f);
+        }
+    }
+
+    if( !result )
+        m_last_error = "stb_image_write: failed to encode JPEG";
+
+    return result;
+}
+
+}
+
+#else  // !__EMSCRIPTEN__
+
 #ifdef _MSC_VER
 //interaction between '_setjmp' and C++ object destruction is non-portable
 #pragma warning(disable: 4611)
@@ -944,6 +1206,8 @@ _exit_:
 
 }
 
-#endif
+#endif  // !__EMSCRIPTEN__
+
+#endif  // HAVE_JPEG
 
 /* End of file. */
