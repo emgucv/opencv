@@ -39,25 +39,45 @@ set(MLAS_LOONGARCH64 FALSE CACHE INTERNAL "" FORCE)
 set(MLAS_S390X       FALSE CACHE INTERNAL "" FORCE)
 set(MLAS_WASM        FALSE CACHE INTERNAL "" FORCE)
 
+# On Apple platforms, CMAKE_SYSTEM_PROCESSOR reflects the host architecture
+# (e.g. always "arm64" on Apple Silicon) even when cross-compiling a single
+# other architecture via CMAKE_OSX_ARCHITECTURES (e.g.
+# -DCMAKE_OSX_ARCHITECTURES=x86_64 on an Apple Silicon host). CMake doesn't
+# treat that as a full cross-compiling toolchain scenario (no toolchain file,
+# CMAKE_CROSSCOMPILING stays FALSE), so CMAKE_SYSTEM_PROCESSOR is never
+# updated to match the actual target. Left unhandled, MLAS_ARM64 stays TRUE
+# and the AArch64 NEON .S kernels get compiled with an x86_64 assembler,
+# failing with "unknown token"/"invalid instruction mnemonic" errors.
+# Prefer CMAKE_OSX_ARCHITECTURES for MLAS's own arch detection when it names
+# exactly one architecture, mirroring the existing Win32/AMD64 workaround
+# below for the same class of host-vs-target mismatch.
+set(_MLAS_DETECT_PROCESSOR "${CMAKE_SYSTEM_PROCESSOR}")
+if(APPLE AND DEFINED CMAKE_OSX_ARCHITECTURES)
+  list(LENGTH CMAKE_OSX_ARCHITECTURES _MLAS_OSX_ARCH_COUNT)
+  if(_MLAS_OSX_ARCH_COUNT EQUAL 1)
+    set(_MLAS_DETECT_PROCESSOR "${CMAKE_OSX_ARCHITECTURES}")
+  endif()
+endif()
+
 if (CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
   set(MLAS_WASM TRUE CACHE INTERNAL "" FORCE)
-elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^arm64.*")
+elseif(_MLAS_DETECT_PROCESSOR MATCHES "^arm64.*")
   set(MLAS_ARM64 TRUE CACHE INTERNAL "" FORCE)
-elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^aarch64.*")
+elseif(_MLAS_DETECT_PROCESSOR MATCHES "^aarch64.*")
   set(MLAS_ARM64 TRUE CACHE INTERNAL "" FORCE)
-elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^arm.*")
+elseif(_MLAS_DETECT_PROCESSOR MATCHES "^arm.*")
   set(MLAS_ARM TRUE CACHE INTERNAL "" FORCE)
-elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(powerpc.*|ppc.*)")
+elseif(_MLAS_DETECT_PROCESSOR MATCHES "^(powerpc.*|ppc.*)")
   set(MLAS_POWER TRUE CACHE INTERNAL "" FORCE)
-elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(i.86|x86?)$")
+elseif(_MLAS_DETECT_PROCESSOR MATCHES "^(i.86|x86?)$")
   set(MLAS_X86 TRUE CACHE INTERNAL "" FORCE)
-elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+elseif(_MLAS_DETECT_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
   set(MLAS_X86_64 TRUE CACHE INTERNAL "" FORCE)
-elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^riscv64.*")
+elseif(_MLAS_DETECT_PROCESSOR MATCHES "^riscv64.*")
   set(MLAS_RISCV64 TRUE CACHE INTERNAL "" FORCE)
-elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^loongarch64.*")
+elseif(_MLAS_DETECT_PROCESSOR MATCHES "^loongarch64.*")
   set(MLAS_LOONGARCH64 TRUE CACHE INTERNAL "" FORCE)
-elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^s390x$")
+elseif(_MLAS_DETECT_PROCESSOR MATCHES "^s390x$")
   set(MLAS_S390X TRUE CACHE INTERNAL "" FORCE)
 endif()
 
