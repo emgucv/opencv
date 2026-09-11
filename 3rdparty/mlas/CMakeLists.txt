@@ -179,6 +179,25 @@ if(MLAS_X86_64 AND NOT MSVC)
                               PROPERTIES COMPILE_FLAGS "-mavx2 -mfma -mf16c")
   set_source_files_properties(${MLAS_SRC_DIR}/x86_64/SgemmKernelAvx512F.S
                               PROPERTIES COMPILE_FLAGS "-mavx512f")
+  # MacCatalyst: ASM files use C flags (not C++), so they don't inherit the
+  # -target x86_64-apple-ios<ver>-macabi flag set in CMAKE_CXX_FLAGS.
+  # Append it explicitly to avoid objects being tagged as macOS (platform 1)
+  # instead of Mac Catalyst (platform 6) -- mirrors the MLAS_ARM64 fix below.
+  if(MAC_CATALYST AND IPHONEOS_DEPLOYMENT_TARGET)
+    foreach(_mlas_x64_asm_src
+        ${MLAS_SRC_DIR}/x86_64/SgemmKernelSse2.S
+        ${MLAS_SRC_DIR}/x86_64/SgemmTransposePackB16x4Sse2.S
+        ${MLAS_SRC_DIR}/x86_64/SgemmKernelAvx.S
+        ${MLAS_SRC_DIR}/x86_64/SgemmKernelM1Avx.S
+        ${MLAS_SRC_DIR}/x86_64/SgemmKernelM1TransposeBAvx.S
+        ${MLAS_SRC_DIR}/x86_64/SgemmTransposePackB16x4Avx.S
+        ${MLAS_SRC_DIR}/x86_64/SgemmKernelFma3.S
+        ${MLAS_SRC_DIR}/x86_64/SgemmKernelAvx512F.S)
+      get_source_file_property(_mlas_x64_asm_flags ${_mlas_x64_asm_src} COMPILE_FLAGS)
+      set_source_files_properties(${_mlas_x64_asm_src}
+        PROPERTIES COMPILE_FLAGS "${_mlas_x64_asm_flags} -target x86_64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET}-macabi")
+    endforeach()
+  endif()
 endif()
 
 # i386 / 32-bit x86 SGEMM kernels.
