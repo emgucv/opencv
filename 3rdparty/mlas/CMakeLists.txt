@@ -22,7 +22,7 @@ set(MLAS_INC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/inc)
 # Hardware-agnostic core: SGEMM dispatch + softmax/exp kernels + flash-attention.
 set(mlas_common_srcs
   ${MLAS_SRC_DIR}/platform.cpp
-  ${CMAKE_SOURCE_DIR}/modules/dnn/src/layers/cpu_kernels/mlas_threading.cpp
+  ${OpenCV_SOURCE_DIR}/modules/dnn/src/layers/cpu_kernels/mlas_threading.cpp
   ${MLAS_SRC_DIR}/sgemm.cpp
   ${MLAS_SRC_DIR}/compute.cpp
   ${MLAS_SRC_DIR}/flashattn.cpp
@@ -87,8 +87,39 @@ else()
   endif()
 endif()
 
+# Compiler probe: correct MLAS_ARM / MLAS_ARM64 when the kernel is 64-bit but
+# the userspace compiler targets arm32 (e.g. Raspberry Pi OS 32-bit on Pi 4/5
+# hardware with a 64-bit kernel).  In that case uname -m returns "aarch64" so
+# CMAKE_SYSTEM_PROCESSOR = "aarch64" and the block above sets MLAS_ARM64=TRUE /
+# MLAS_ARM=FALSE.  But the native compiler defines __arm__ (not __aarch64__),
+# arm_neon.h uses always_inline intrinsics that need -mfpu=neon, and GCC 14
+# rejects them.  Override the detection so the arm32 guard below fires.
+if(NOT MLAS_ARM)
+  include(CheckCXXSourceCompiles)
+  check_cxx_source_compiles([=[
+    #if !defined(__arm__) || defined(__aarch64__)
+    #error not arm32
+    #endif
+    int main(){return 0;}]=] _MLAS_COMPILER_IS_ARM32)
+  if(_MLAS_COMPILER_IS_ARM32)
+    set(MLAS_ARM   TRUE  CACHE INTERNAL "" FORCE)
+    set(MLAS_ARM64 FALSE CACHE INTERNAL "" FORCE)
+  endif()
+endif()
+
 set(mlas_platform_srcs)
 set(mlas_platform_objects)
+
+# MSVC (Visual Studio generator) cannot compile GNU .S files for x86 or x86_64
+# SIMD kernels. platform.cpp references those symbols unconditionally, causing
+# LNK2019 unresolved externals at link time. Disable MLAS on all MSVC targets;
+# DNN uses its built-in SGEMM fallback instead.
+if(MSVC)
+  set(OPENCV_DNN_MLAS_SKIP_REASON "MSVC: x86/x86_64 .S kernels require GNU assembler"
+      CACHE INTERNAL "" FORCE)
+  message(STATUS "MLAS: disabled on MSVC — .S kernels require GNU assembler; DNN uses built-in SGEMM")
+  return()
+endif()
 
 # State flags consumed by the top-level config summary's PNG-style chain:
 #   OPENCV_DNN_MLAS_ENABLED      — 1 if MLAS compiled in, 0 if skipped/unavailable
@@ -146,7 +177,11 @@ endif()
 
 # x86_64 SGEMM kernels: MlasGemmFloatKernelSse / Avx / Fma3 / Avx512F
 # plus the M=1 fast paths and B-packing helpers.
-if(MLAS_X86_64)
+# MSVC (Visual Studio generator) cannot compile GNU .S files; skip them and
+# fall back to the scalar C++ SGEMM. This also covers Win32 (-A Win32) builds
+# where CMAKE_SYSTEM_PROCESSOR stays "AMD64" (the host) so MLAS_X86_64=TRUE
+# even though the target is 32-bit x86.
+if(MLAS_X86_64 AND NOT MSVC)
   list(APPEND mlas_platform_srcs
     ${MLAS_SRC_DIR}/x86_64/SgemmKernelSse2.S
     ${MLAS_SRC_DIR}/x86_64/SgemmTransposePackB16x4Sse2.S
@@ -172,7 +207,11 @@ if(MLAS_X86_64)
 endif()
 
 # i386 / 32-bit x86 SGEMM kernels.
-if(MLAS_X86)
+# The .S files use GNU assembler syntax (-msse2/-mavx flags). The Visual Studio
+# generator cannot compile .S files (it supports .asm/MASM only), so on MSVC
+# the kernels are silently absent but still referenced at link time, causing
+# LNK1181. Skip the .S kernels on MSVC x86; the scalar C++ fallback is used.
+if(MLAS_X86 AND NOT MSVC)
   list(APPEND mlas_platform_srcs
     ${MLAS_SRC_DIR}/x86/SgemmKernelSse2.S
     ${MLAS_SRC_DIR}/x86/SgemmKernelAvx.S
@@ -186,6 +225,20 @@ endif()
 
 # ARM 32-bit: pure C++ sgemmc (no .S kernels).
 if(MLAS_ARM)
+  if(NOT ANDROID)
+    # Non-Android 32-bit ARM (e.g. Raspberry Pi): GCC 14 tightened always_inline
+    # enforcement so that arm_neon.h intrinsics (e.g. vdupq_n_f32) require the
+    # caller to carry an explicit target("neon") attribute as well as the global
+    # -mfpu=neon flag.  mlasi.h's MlasBroadcastFloat32x4 does not have that
+    # attribute, so the build fails.  Disable MLAS here; the DNN module falls
+    # back to its built-in SGEMM just as it does on WASM / unknown arches.
+    set(OPENCV_DNN_MLAS_SKIP_REASON
+      "32-bit ARM (non-Android): GCC 14 always_inline target-attribute mismatch"
+      CACHE INTERNAL "" FORCE)
+    message(STATUS "MLAS: disabled on 32-bit ARM (non-Android) — "
+                   "GCC 14 always_inline incompatibility; DNN uses built-in SGEMM")
+    return()
+  endif()
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mfpu=neon")
   list(APPEND mlas_platform_srcs ${MLAS_SRC_DIR}/arm/sgemmc.cpp)
 endif()
@@ -216,6 +269,16 @@ if(MLAS_ARM64)
     list(APPEND mlas_platform_srcs
       ${MLAS_SRC_DIR}/aarch64/SgemmKernelNeon.S
       ${MLAS_SRC_DIR}/aarch64/SgemvKernelNeon.S
+    )
+  endif()
+  # MacCatalyst: ASM files use C flags (not C++), so they don't inherit the
+  # -target arm64-apple-ios<ver>-macabi flag set in CMAKE_CXX_FLAGS.
+  # Set it explicitly to avoid objects being tagged as macOS (platform 1).
+  if(MAC_CATALYST AND IPHONEOS_DEPLOYMENT_TARGET)
+    set_source_files_properties(
+      ${MLAS_SRC_DIR}/aarch64/SgemmKernelNeon.S
+      ${MLAS_SRC_DIR}/aarch64/SgemvKernelNeon.S
+      PROPERTIES COMPILE_FLAGS "-target arm64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET}-macabi"
     )
   endif()
 endif()
@@ -301,7 +364,7 @@ add_library(opencv_dnn_mlas OBJECT ${mlas_common_srcs} ${mlas_platform_srcs})
 set_target_properties(opencv_dnn_mlas PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(opencv_dnn_mlas PUBLIC  ${MLAS_INC_DIR})
 target_include_directories(opencv_dnn_mlas PRIVATE ${MLAS_SRC_DIR})
-target_include_directories(opencv_dnn_mlas PRIVATE ${CMAKE_SOURCE_DIR}/modules/core/include)
+target_include_directories(opencv_dnn_mlas PRIVATE ${OpenCV_SOURCE_DIR}/modules/core/include)
 
 target_compile_definitions(opencv_dnn_mlas PRIVATE
   BUILD_MLAS_NO_ONNXRUNTIME=1

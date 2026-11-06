@@ -21,9 +21,9 @@ if(NOT BUILD_SHARED_LIBS)
 endif()
 target_include_directories(ndsrvp_hal PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
-  ${CMAKE_SOURCE_DIR}/modules/core/include
-  ${CMAKE_SOURCE_DIR}/modules/imgproc/include
-  ${CMAKE_SOURCE_DIR}/modules/features/include)
+  ${OpenCV_SOURCE_DIR}/modules/core/include
+  ${OpenCV_SOURCE_DIR}/modules/imgproc/include
+  ${OpenCV_SOURCE_DIR}/modules/features/include)
 
 # project info
 

@@ -86,7 +86,10 @@ if(OPJ_USE_THREAD AND NOT Threads_FOUND)
   set(OCV_CAN_BUILD_OPENJPEG FALSE PARENT_SCOPE)
 endif()
 
-if(OPJ_USE_THREAD AND Threads_FOUND AND CMAKE_USE_PTHREADS_INIT)
+if(OPJ_USE_THREAD AND Threads_FOUND AND CMAKE_USE_PTHREADS_INIT AND NOT MSVC)
+  # MSVC uses Win32 threads (MUTEX_win32 above); skip linking pthreads to
+  # prevent LNK1181 errors when Strawberry Perl's libpthread.a is in PATH and
+  # causes find_package(Threads) to set CMAKE_USE_PTHREADS_INIT on Windows.
   target_link_libraries(${OPENJPEG_LIBRARY_NAME} PRIVATE ${CMAKE_THREAD_LIBS_INIT})
 endif()
 

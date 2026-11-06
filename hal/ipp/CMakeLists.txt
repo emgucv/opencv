@@ -53,8 +53,8 @@ ocv_warnings_disable(CMAKE_CXX_FLAGS -Wno-suggest-override)
 
 target_include_directories(ipphal PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/src"
-  ${CMAKE_SOURCE_DIR}/modules/core/include
-  ${CMAKE_SOURCE_DIR}/modules/imgproc/include
+  ${OpenCV_SOURCE_DIR}/modules/core/include
+  ${OpenCV_SOURCE_DIR}/modules/imgproc/include
   ${CMAKE_SOURCE_DIR}/modules/geometry/include
   ${IPP_INCLUDE_DIRS}
 )
