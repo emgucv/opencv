@@ -55,7 +55,7 @@ target_include_directories(ipphal PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/src"
   ${OpenCV_SOURCE_DIR}/modules/core/include
   ${OpenCV_SOURCE_DIR}/modules/imgproc/include
-  ${CMAKE_SOURCE_DIR}/modules/geometry/include
+  ${OpenCV_SOURCE_DIR}/modules/geometry/include
   ${IPP_INCLUDE_DIRS}
 )
 
