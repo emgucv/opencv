@@ -1246,12 +1246,16 @@ void cv::copyMakeBorder( InputArray _src, OutputArray _dst, int top, int bottom,
     CV_Assert( top >= 0 && bottom >= 0 && left >= 0 && right >= 0 && _src.dims() <= 2 );
     CV_Assert( !_src.empty() );
 
-    Mat src = _src.getMat();
-    CV_Assert( (int64_t)src.rows + top + bottom <= INT_MAX );
-    CV_Assert( (int64_t)src.cols + left + right <= INT_MAX );
+    Size srcSize = _src.size();
+    CV_Assert( (int64_t)srcSize.height + top + bottom <= INT_MAX );
+    CV_Assert( (int64_t)srcSize.width + left + right <= INT_MAX );
 
+    // Do not map a UMat source with getMat() before the OpenCL path: the mapping keeps
+    // u->refcount > 0 and ocl_copyMakeBorder() then fails in UMat::handle().
     CV_OCL_RUN(_dst.isUMat(),
                ocl_copyMakeBorder(_src, _dst, top, bottom, left, right, borderType, value))
+
+    Mat src = _src.getMat();
     int type = src.type();
 
     if( src.isSubmatrix() && (borderType & BORDER_ISOLATED) == 0 )

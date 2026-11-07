@@ -1438,16 +1438,22 @@ void cv::remap( InputArray _src, OutputArray _dst,
 
     CV_Assert( !_src.empty() );
     CV_Assert( !_map1.empty() );
-    Mat map1 = _map1.getMat(), map2 = _map2.getMat();
-    CV_Assert( (map1.type() == CV_16SC2 && (map2.empty() || map2.type() == CV_16UC1 || map2.type() == CV_16SC1)) ||
-               (map1.type() == CV_32FC1 && map2.type() == CV_32FC1) ||
-               (map1.type() == CV_32FC2 && map2.empty()) );
+    // Do not map UMat maps with getMat() before the OpenCL path: the mapping keeps
+    // u->refcount > 0 and ocl_remap() then fails in UMat::handle().
+    {
+        const int map1Type = _map1.type();
+        const bool map2Empty = _map2.empty();
+        const int map2Type = map2Empty ? -1 : _map2.type();
+        CV_Assert( (map1Type == CV_16SC2 && (map2Empty || map2Type == CV_16UC1 || map2Type == CV_16SC1)) ||
+                   (map1Type == CV_32FC1 && map2Type == CV_32FC1) ||
+                   (map1Type == CV_32FC2 && map2Empty) );
+    }
     CV_Assert( _map2.empty() || (_map2.size() == _map1.size()));
 
     CV_OCL_RUN(_src.dims() <= 2 && _dst.isUMat(),
                ocl_remap(_src, _dst, _map1, _map2, interpolation, borderType, borderValue))
 
-    Mat src = _src.getMat();
+    Mat src = _src.getMat(), map1 = _map1.getMat(), map2 = _map2.getMat();
     _dst.create( map1.size(), src.type() );
     Mat dst = _dst.getMat();
 
