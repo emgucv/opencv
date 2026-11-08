@@ -1123,17 +1123,6 @@ MlasComputeSoftmax<MLAS_FP16>(
     MLAS_THREADPOOL* ThreadPool
 );
 
-// This trimmed MLAS port ships no half-precision GEMM kernels, so HGEMM is
-// never supported regardless of architecture.
-bool
-MLASCALL
-MlasHGemmSupported(
-    CBLAS_TRANSPOSE,
-    CBLAS_TRANSPOSE
-) {
-    return false;
-}
-
 template <>
 bool
 MLASCALL
