@@ -31,6 +31,12 @@ target_compile_definitions(${HARFBUZZ_LIBRARY} PRIVATE
     HB_TINY
     HB_HAS_RASTER   # request the software rasterizer: keeps draw/paint/color + CFF under HB_TINY
     HB_NO_VAR_COMPOSITES  # drop the VARC table (variable composite glyphs, 2024 format; ~20 KB of code)
+    # Skip hb.hh's "error" and "warning" diagnostic pragmas (keep the "ignored" ones). They turn
+    # -Wunused into an error and re-enable -Wall over the warning flags below; newer clang (e.g.
+    # Emscripten 6) includes -Wunused-template in -Wunused, which fires on templates left unused
+    # by HB_NO_VAR_COMPOSITES.
+    HB_NO_PRAGMA_GCC_DIAGNOSTIC_ERROR
+    HB_NO_PRAGMA_GCC_DIAGNOSTIC_WARNING
     "HB_CONFIG_OVERRIDE_H=\"hb-opencv-config.hh\"")
 
 # Optimize HarfBuzz for size: it is ~0.5 MB of libopencv_imgproc at -O3 and ~18% less at -Os,
@@ -49,6 +55,7 @@ set_target_properties(${HARFBUZZ_LIBRARY} PROPERTIES
 ocv_warnings_disable(CMAKE_CXX_FLAGS
     -Wunused-variable -Wunused-function -Wunused-parameter
     -Wunused-but-set-variable    # clang15/gcc
+    -Wunused-template            # clang
     -Wshadow
     -Wmissing-declarations       # gcc
     -Wmissing-prototypes         # clang
